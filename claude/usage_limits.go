@@ -1,9 +1,13 @@
 package claude
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
-// Miscellaneous constants exported by the TypeScript SDK. ExitReason lives
-// with the SessionEnd hook input in hook_inputs.go.
+// Usage-limit message prefixes exported by the TypeScript SDK. The Is*
+// functions match against private copies taken at package initialization, so
+// modifying an exported list affects only the caller.
 
 // UsageLimitErrorPrefixes are the prefixes of messages meaning "a usage
 // limit was genuinely reached" (the CLI's limit-reached and
@@ -51,28 +55,31 @@ var OrgPolicyLimitPrefixes = []string{
 	"This service is disabled for your org",
 }
 
+// Private copies of the exported lists, which callers may modify.
+var (
+	usageLimitErrorPrefixes = slices.Clone(UsageLimitErrorPrefixes)
+	usageTransitionPrefixes = slices.Clone(UsageTransitionPrefixes)
+	usageWarningPrefixes    = slices.Clone(UsageWarningPrefixes)
+	orgPolicyLimitPrefixes  = slices.Clone(OrgPolicyLimitPrefixes)
+)
+
 // hasAnyPrefix reports whether text starts with one of prefixes.
 func hasAnyPrefix(text string, prefixes []string) bool {
-	for _, p := range prefixes {
-		if strings.HasPrefix(text, p) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(prefixes, func(p string) bool { return strings.HasPrefix(text, p) })
 }
 
 // IsUsageLimitError reports whether text starts with one of
 // UsageLimitErrorPrefixes. Alpha.
-func IsUsageLimitError(text string) bool { return hasAnyPrefix(text, UsageLimitErrorPrefixes) }
+func IsUsageLimitError(text string) bool { return hasAnyPrefix(text, usageLimitErrorPrefixes) }
 
 // IsUsageTransition reports whether text starts with one of
 // UsageTransitionPrefixes. Alpha.
-func IsUsageTransition(text string) bool { return hasAnyPrefix(text, UsageTransitionPrefixes) }
+func IsUsageTransition(text string) bool { return hasAnyPrefix(text, usageTransitionPrefixes) }
 
 // IsUsageWarning reports whether text starts with one of
 // UsageWarningPrefixes. Alpha.
-func IsUsageWarning(text string) bool { return hasAnyPrefix(text, UsageWarningPrefixes) }
+func IsUsageWarning(text string) bool { return hasAnyPrefix(text, usageWarningPrefixes) }
 
 // IsOrgPolicyLimit reports whether text starts with one of
 // OrgPolicyLimitPrefixes. Alpha.
-func IsOrgPolicyLimit(text string) bool { return hasAnyPrefix(text, OrgPolicyLimitPrefixes) }
+func IsOrgPolicyLimit(text string) bool { return hasAnyPrefix(text, orgPolicyLimitPrefixes) }

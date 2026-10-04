@@ -1,6 +1,23 @@
 package claude
 
-import "slices"
+import (
+	"maps"
+	"slices"
+)
+
+// SystemMessage is a metadata message. Data holds the full raw payload,
+// including fields not modeled by the specialized subtypes.
+type SystemMessage struct {
+	Subtype string `json:"subtype"`
+	// Data is the raw frame. It is left out of the JSON encoding, which
+	// carries the modeled fields only.
+	Data map[string]any `json:"-"`
+}
+
+func (*SystemMessage) isMessage() {}
+
+// systemBase gives decodeSystem access to the embedded SystemMessage.
+func (m *SystemMessage) systemBase() *SystemMessage { return m }
 
 // Typed system messages. Each embeds SystemMessage, so Subtype and the raw
 // payload in Data stay available, and a type switch on *SystemMessage does not
@@ -63,11 +80,7 @@ type InitMCPServer struct {
 }
 
 // InitPlugin is one loaded plugin on an InitMessage.
-type InitPlugin struct {
-	Name    string `json:"name"`
-	Path    string `json:"path"`
-	Version string `json:"version,omitempty"`
-}
+type InitPlugin = PluginInfo
 
 // InitPluginError is one plugin load failure on an InitMessage.
 type InitPluginError struct {
@@ -396,5 +409,163 @@ type MCPResourceLink struct {
 	Annotations map[string]any `json:"annotations,omitempty"`
 }
 
-// systemBase gives decodeSystem access to the embedded SystemMessage.
-func (m *SystemMessage) systemBase() *SystemMessage { return m }
+// ---------------------------------------------------------------------------
+// Tasks, hooks and mirroring
+// ---------------------------------------------------------------------------
+
+// TaskUsage reports usage statistics on task progress and notification
+// messages.
+type TaskUsage struct {
+	TotalTokens int `json:"total_tokens"`
+	ToolUses    int `json:"tool_uses"`
+	DurationMS  int `json:"duration_ms"`
+}
+
+// TerminalTaskStatuses lists the task statuses that mean the task has finished.
+// It spans both lifecycle vocabularies: task_notification reports "stopped"
+// while task_updated reports the raw "killed". The SDK checks statuses against
+// a private copy, so modifying it affects only the caller.
+var TerminalTaskStatuses = map[string]bool{
+	"completed": true,
+	"failed":    true,
+	"stopped":   true,
+	"killed":    true,
+}
+
+// terminalTaskStatuses is the private copy of TerminalTaskStatuses.
+var terminalTaskStatuses = maps.Clone(TerminalTaskStatuses)
+
+// isTerminalTaskStatus reports whether status means the task has finished.
+func isTerminalTaskStatus(status string) bool { return terminalTaskStatuses[status] }
+
+// TaskStartedMessage is emitted when a task starts. It embeds SystemMessage, so
+// a type switch on *SystemMessage does not match it — switch on the concrete
+// type or use Data for a uniform view.
+type TaskStartedMessage struct {
+	SystemMessage
+	TaskID      string `json:"task_id"`
+	Description string `json:"description"`
+	UUID        string `json:"uuid"`
+	SessionID   string `json:"session_id"`
+	ToolUseID   string `json:"tool_use_id,omitempty"`
+	TaskType    string `json:"task_type,omitempty"`
+	// SubagentType is the subagent type of an Agent tool task.
+	SubagentType string `json:"subagent_type,omitempty"`
+	// IsBackgrounded reports whether the task started in the background.
+	IsBackgrounded bool `json:"is_backgrounded,omitempty"`
+	// SpawnDepth is the nesting depth of a subagent task (1 = top level).
+	SpawnDepth int `json:"spawn_depth,omitempty"`
+	// WorkflowName is the workflow script name ("local_workflow" tasks).
+	WorkflowName string `json:"workflow_name,omitempty"`
+	Prompt       string `json:"prompt,omitempty"`
+	// SkipTranscript marks a housekeeping task to hide from the transcript.
+	SkipTranscript bool `json:"skip_transcript,omitempty"`
+	// Ambient marks a task that is not activity; exclude it from activity
+	// indicators.
+	Ambient bool `json:"ambient,omitempty"`
+}
+
+// TaskProgressMessage is emitted while a task is in progress.
+type TaskProgressMessage struct {
+	SystemMessage
+	TaskID       string    `json:"task_id"`
+	Description  string    `json:"description"`
+	Usage        TaskUsage `json:"usage"`
+	UUID         string    `json:"uuid"`
+	SessionID    string    `json:"session_id"`
+	ToolUseID    string    `json:"tool_use_id,omitempty"`
+	LastToolName string    `json:"last_tool_name,omitempty"`
+	// SubagentType is the subagent type of an Agent tool task.
+	SubagentType string `json:"subagent_type,omitempty"`
+	// Summary is a one-line status for the task's row, when available.
+	Summary string `json:"summary,omitempty"`
+}
+
+// TaskNotificationMessage is emitted when a task completes, fails or is
+// stopped. Not every terminal task emits one: a background task may report
+// completion only through a TaskUpdatedMessage with a terminal patch status.
+type TaskNotificationMessage struct {
+	SystemMessage
+	TaskID     string     `json:"task_id"`
+	Status     string     `json:"status"`
+	OutputFile string     `json:"output_file"`
+	Summary    string     `json:"summary"`
+	UUID       string     `json:"uuid"`
+	SessionID  string     `json:"session_id"`
+	ToolUseID  string     `json:"tool_use_id,omitempty"`
+	Usage      *TaskUsage `json:"usage,omitempty"`
+	// Reason is set when the task did not end normally, e.g.
+	// "worker_restart".
+	Reason string `json:"reason,omitempty"`
+	// ResourceLinks are the resource_link blocks of a backgrounded MCP task's
+	// final result.
+	ResourceLinks  []MCPResourceLink `json:"resource_links,omitempty"`
+	SkipTranscript bool              `json:"skip_transcript,omitempty"`
+	Ambient        bool              `json:"ambient,omitempty"`
+}
+
+// TaskUpdatedMessage is emitted when a background task's state changes. Patch
+// carries the changed fields; Data["patch"] holds them verbatim.
+type TaskUpdatedMessage struct {
+	SystemMessage
+	TaskID    string    `json:"task_id"`
+	Patch     TaskPatch `json:"patch"`
+	Status    string    `json:"-"`
+	SessionID string    `json:"session_id"`
+	UUID      string    `json:"uuid"`
+}
+
+// TaskPatch is the typed view of a task_updated patch. A field the patch does
+// not carry keeps its zero value; consult Data["patch"] to tell "absent" from
+// "zero".
+type TaskPatch struct {
+	// Status is pending, running, completed, failed, killed or paused.
+	Status        string `json:"status,omitempty"`
+	Description   string `json:"description,omitempty"`
+	EndTime       int64  `json:"end_time,omitempty"`
+	TotalPausedMS int64  `json:"total_paused_ms,omitempty"`
+	Error         string `json:"error,omitempty"`
+	// IsBackgrounded is set when the task moved to (or from) the background.
+	IsBackgrounded *bool `json:"is_backgrounded,omitempty"`
+}
+
+// MirrorErrorMessage reports that a batch of transcript entries could not be
+// mirrored to Options.SessionStore: SessionStore.Append failed on every retry,
+// or a single attempt timed out. The SDK synthesizes it; the CLI never sends
+// it. It is not fatal: the local transcript is already durable and the session
+// continues, but the store may be missing the batch (a timed-out Append may
+// still land). Subtype is "mirror_error" and Data carries the raw payload.
+type MirrorErrorMessage struct {
+	SystemMessage
+	// Key identifies the transcript whose batch was dropped. It may be nil.
+	Key *SessionKey `json:"key"`
+	// Error describes the last failure.
+	Error string `json:"error"`
+}
+
+// HookEventMessage is a hook lifecycle event (subtype hook_started,
+// hook_progress or hook_response), emitted when Options.IncludeHookEvents is
+// set.
+type HookEventMessage struct {
+	SystemMessage
+	// HookEventName is the hook event, e.g. "PreToolUse". Older CLIs send it
+	// as hook_event_name or only in hook_name.
+	HookEventName string `json:"hook_event"`
+	SessionID     string `json:"session_id"`
+	UUID          string `json:"uuid"`
+	// HookID identifies one hook execution across its started, progress and
+	// response messages.
+	HookID string `json:"hook_id"`
+	// HookName names the hook, e.g. "PreToolUse:Bash".
+	HookName string `json:"hook_name"`
+	// Stdout, Stderr and Output carry the hook's output so far
+	// (hook_progress) or in full (hook_response).
+	Stdout string `json:"stdout,omitempty"`
+	Stderr string `json:"stderr,omitempty"`
+	Output string `json:"output,omitempty"`
+	// ExitCode is the hook process's exit status (hook_response), when
+	// reported.
+	ExitCode *int `json:"exit_code,omitempty"`
+	// Outcome is success, error or cancelled (hook_response).
+	Outcome HookOutcome `json:"outcome,omitempty"`
+}

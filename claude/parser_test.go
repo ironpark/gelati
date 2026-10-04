@@ -296,6 +296,17 @@ func TestParseStreamEventAndResets(t *testing.T) {
 	}
 }
 
+// TestParseStreamEventDecodesEventOnce checks that the event subtree comes
+// from the decoded frame map and is not decoded from the payload again.
+func TestParseStreamEventDecodesEventOnce(t *testing.T) {
+	t.Parallel()
+	src := []byte(`{"type":"stream_event","uuid":"u1","event":{"type":"ping"}}`)
+	se := parseStreamEvent(map[string]any{}, src).(*StreamEvent)
+	if se.UUID != "u1" || se.Event != nil {
+		t.Fatalf("got %+v", se)
+	}
+}
+
 func TestParseUnknownTypeIsSkipped(t *testing.T) {
 	t.Parallel()
 	msg, err := ParseMessage([]byte(`{"type":"brand_new_message","x":1}`))

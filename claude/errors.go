@@ -171,24 +171,6 @@ func normalizeResultErrors(raw any) []string {
 	return out
 }
 
-func toInt(v any) (int, bool) {
-	switch n := v.(type) {
-	case int:
-		return n, true
-	case int64:
-		return int(n), true
-	case float64:
-		return int(n), true
-	case json.Number:
-		i, err := n.Int64()
-		if err != nil {
-			return 0, false
-		}
-		return int(i), true
-	}
-	return 0, false
-}
-
 // JSONDecodeError is returned when a line of CLI output is not valid JSON.
 // Ported from CLIJSONDecodeError.
 type JSONDecodeError struct {

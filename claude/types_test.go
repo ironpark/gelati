@@ -3,6 +3,8 @@ package claude
 import (
 	"encoding/json"
 	"errors"
+	"math"
+	"reflect"
 	"testing"
 )
 
@@ -118,23 +120,23 @@ func TestPermissionUpdateWireFormat(t *testing.T) {
 				Behavior:    BehaviorAllow,
 				Destination: DestinationSession,
 			},
-			`{"behavior":"allow","destination":"session","rules":[{"ruleContent":"npm test","toolName":"Bash"}],"type":"addRules"}`,
+			`{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"npm test"}],"behavior":"allow","destination":"session"}`,
 		},
 		{
 			"setMode",
 			PermissionUpdate{Type: PermissionUpdateSetMode, Mode: PermissionModeAcceptEdits},
-			`{"mode":"acceptEdits","type":"setMode"}`,
+			`{"type":"setMode","mode":"acceptEdits"}`,
 		},
 		{
 			"addDirectories",
 			PermissionUpdate{Type: PermissionUpdateAddDirectories, Directories: []string{"/tmp"}},
-			`{"directories":["/tmp"],"type":"addDirectories"}`,
+			`{"type":"addDirectories","directories":["/tmp"]}`,
 		},
 		{
 			// Fields that do not belong to the variant are dropped.
 			"setModeIgnoresRules",
 			PermissionUpdate{Type: PermissionUpdateSetMode, Mode: PermissionModePlan, Directories: []string{"/tmp"}},
-			`{"mode":"plan","type":"setMode"}`,
+			`{"type":"setMode","mode":"plan"}`,
 		},
 	}
 	for _, tc := range cases {
@@ -337,5 +339,202 @@ func TestJSONDecodeAndParseErrors(t *testing.T) {
 	var sdkErr Error
 	if !errors.As(error(pe), &sdkErr) {
 		t.Fatal("MessageParseError should satisfy claude.Error")
+	}
+}
+
+// TestNestedUnmarshalersAreLenient checks that a type mismatch inside a value
+// with a custom UnmarshalJSON neither fails nor cuts short the enclosing
+// decode.
+func TestNestedUnmarshalersAreLenient(t *testing.T) {
+	t.Parallel()
+	var got struct {
+		Tool   ToolResultBlock       `json:"tool"`
+		MCP    MCPToolResultBlock    `json:"mcp"`
+		Server ServerToolResultBlock `json:"server"`
+		Origin MessageOrigin         `json:"origin"`
+		Update PermissionUpdate      `json:"update"`
+		Wrong  PermissionUpdate      `json:"wrong"`
+		After  string                `json:"after"`
+	}
+	const raw = `{
+	  "tool":{"tool_use_id":"t","is_error":"yes","content":"c"},
+	  "mcp":{"tool_use_id":"m","is_error":1,"content":[{"type":"text"}]},
+	  "server":{"tool_use_id":7,"content":{"k":1}},
+	  "origin":{"kind":3,"verifiedPeerPid":"x","from":"agent://a"},
+	  "update":{"type":"setMode","mode":5,"destination":"session"},
+	  "wrong":"not an object",
+	  "after":"kept"}`
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.After != "kept" {
+		t.Fatalf("decode stopped early: %+v", got)
+	}
+	if got.Tool.ToolUseID != "t" || got.Tool.ContentText == nil || *got.Tool.ContentText != "c" {
+		t.Fatalf("tool = %+v", got.Tool)
+	}
+	if got.MCP.ToolUseID != "m" || len(got.MCP.ContentList) != 1 {
+		t.Fatalf("mcp = %+v", got.MCP)
+	}
+	if got.Server.ToolUseID != "" || got.Server.Content["k"] != 1.0 {
+		t.Fatalf("server = %+v", got.Server)
+	}
+	if got.Origin.Kind != OriginUnclassified || got.Origin.From != "agent://a" || got.Origin.Extra["kind"] != 3.0 {
+		t.Fatalf("origin = %+v", got.Origin)
+	}
+	if got.Update.Type != PermissionUpdateSetMode || got.Update.Mode != "" || got.Update.Destination != DestinationSession {
+		t.Fatalf("update = %+v", got.Update)
+	}
+	if got.Wrong.Type != "" {
+		t.Fatalf("wrong = %+v", got.Wrong)
+	}
+	// Syntax errors still fail.
+	var b ToolResultBlock
+	if err := b.UnmarshalJSON([]byte(`{"tool_use_id":`)); err == nil {
+		t.Fatal("want a syntax error")
+	}
+}
+
+func TestMessageOriginUnmarshalUnclassified(t *testing.T) {
+	t.Parallel()
+	var o MessageOrigin
+	if err := json.Unmarshal([]byte(`{"from":"agent://a"}`), &o); err != nil {
+		t.Fatal(err)
+	}
+	if o.Kind != OriginUnclassified || o.From != "agent://a" || o.Extra != nil {
+		t.Fatalf("origin = %+v", o)
+	}
+}
+
+func TestPermissionUpdateKeepsEmptyLists(t *testing.T) {
+	t.Parallel()
+	got, err := json.Marshal(PermissionUpdate{Type: PermissionUpdateReplaceRules, Rules: []PermissionRuleValue{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `{"type":"replaceRules","rules":[]}` {
+		t.Fatalf("marshal = %s", got)
+	}
+}
+
+func TestHookOutputEmptySpecificMap(t *testing.T) {
+	t.Parallel()
+	got, err := json.Marshal(HookOutput{HookSpecificOutput: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `{"hookSpecificOutput":{}}` {
+		t.Fatalf("marshal = %s", got)
+	}
+}
+
+func TestPermissionDecisionWire(t *testing.T) {
+	t.Parallel()
+	input := map[string]any{"command": "ls"}
+	request := map[string]any{"tool_use_id": "tu1", "input": input}
+	cases := []struct {
+		name    string
+		result  PermissionResult
+		request map[string]any
+		want    string
+	}{
+		{"hookAllow", &PermissionResultAllow{}, nil, `{"behavior":"allow"}`},
+		{"hookDeny", &PermissionResultDeny{}, nil, `{"behavior":"deny"}`},
+		{"replyAllowDefaultsInput", &PermissionResultAllow{DecisionClassification: DecisionUserPermanent}, request,
+			`{"behavior":"allow","decisionClassification":"user_permanent","toolUseID":"tu1","updatedInput":{"command":"ls"}}`},
+		{"replyAllowNoInput", &PermissionResultAllow{}, map[string]any{}, `{"behavior":"allow","updatedInput":null}`},
+		{"replyDenyAlwaysMessage", &PermissionResultDeny{Interrupt: true}, request,
+			`{"behavior":"deny","interrupt":true,"message":"","toolUseID":"tu1"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, ok := permissionDecisionWire(tc.result, tc.request)
+			if !ok {
+				t.Fatal("not ok")
+			}
+			got, err := json.Marshal(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("got %s, want %s", got, tc.want)
+			}
+		})
+	}
+	for _, bad := range []PermissionResult{nil, (*PermissionResultAllow)(nil), (*PermissionResultDeny)(nil)} {
+		if _, ok := permissionDecisionWire(bad, request); ok {
+			t.Fatalf("%#v: want not ok", bad)
+		}
+	}
+}
+
+func TestToolPermissionContextLenient(t *testing.T) {
+	t.Parallel()
+	request := map[string]any{
+		"tool_use_id":            "tu1",
+		"title":                  7,
+		"default_to_no":          "yes",
+		"permission_suggestions": []any{map[string]any{"type": "setMode", "mode": "plan"}},
+		"matched_ask_rule":       map[string]any{"source": "userSettings", "tool_name": "Bash"},
+	}
+	pc := toolPermissionContext("req1", request)
+	if pc.ToolUseID != "tu1" || pc.Title != "" || pc.DefaultToNo || pc.RequestID != "req1" || pc.Raw["title"] != 7 {
+		t.Fatalf("context = %+v", pc)
+	}
+	if len(pc.Suggestions) != 1 || pc.Suggestions[0].Mode != PermissionModePlan {
+		t.Fatalf("suggestions = %+v", pc.Suggestions)
+	}
+	if r := pc.MatchedAskRule; r == nil || r.ToolName != "Bash" || r.RuleContent != nil {
+		t.Fatalf("matched ask rule = %+v", pc.MatchedAskRule)
+	}
+}
+
+func TestToInt64(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in   any
+		want int64
+		ok   bool
+	}{
+		{float64(12.7), 12, true},
+		{json.Number("1700000000123"), 1700000000123, true},
+		{json.Number("12.9"), 12, true},
+		{int64(1) << 40, 1 << 40, true},
+		{"12", 0, false},
+		{math.NaN(), 0, false},
+		{nil, 0, false},
+	}
+	for _, tc := range cases {
+		if got, ok := toInt64(tc.in); got != tc.want || ok != tc.ok {
+			t.Errorf("toInt64(%#v) = %d, %v; want %d, %v", tc.in, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestDecodeControlLenient(t *testing.T) {
+	t.Parallel()
+	data := map[string]any{"canRewind": "yes", "insertions": 3.0, "future": true}
+	got, err := decodeControl[RewindFilesResult](data, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CanRewind || got.Insertions != 3 || got.Raw["future"] != true {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestJSONMemberNames(t *testing.T) {
+	t.Parallel()
+	if !hookOutputFields["asyncTimeout"] || !hookOutputFields["continue"] || hookOutputFields["Specific"] || hookOutputFields["Extra"] {
+		t.Fatalf("hook output fields = %v", hookOutputFields)
+	}
+	if len(originFields) != 9 || !originFields["verifiedPeerPid"] {
+		t.Fatalf("origin fields = %v", originFields)
+	}
+	// Embedded structs contribute their members.
+	names := jsonMemberNames(reflect.TypeFor[PreModelSwitchHookInput]())
+	if !names["hook_event_name"] || !names["from_model"] {
+		t.Fatalf("names = %v", names)
 	}
 }

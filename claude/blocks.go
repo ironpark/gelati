@@ -1,11 +1,35 @@
 package claude
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"maps"
 )
+
+// ContentBlock is one block inside a message's content array. The set of
+// implementations is closed: TextBlock, ThinkingBlock, RedactedThinkingBlock,
+// ToolUseBlock, ToolResultBlock, ServerToolUseBlock, ServerToolResultBlock,
+// MCPToolUseBlock, MCPToolResultBlock, MCPToolListingBlock,
+// ContainerUploadBlock, CompactionBlock, FallbackBlock, ImageBlock,
+// DocumentBlock and UnknownBlock. A block kind this SDK version does not model
+// arrives as an UnknownBlock carrying the raw payload.
+//
+// A block's JSON encoding is its wire object without the "type" key, which
+// BlockType reports.
+type ContentBlock interface {
+	isContentBlock()
+	// BlockType reports the wire discriminator of the block.
+	BlockType() string
+}
+
+// TextBlock is a plain text content block.
+type TextBlock struct {
+	Text string `json:"text"`
+	// Citations lists the sources the text cites, when the API attached any.
+	Citations []TextCitation `json:"citations,omitempty"`
+}
+
+func (*TextBlock) isContentBlock()   {}
+func (*TextBlock) BlockType() string { return "text" }
 
 // TextCitation is one source cited by a TextBlock. Type selects which of the
 // location fields are meaningful:
@@ -38,6 +62,15 @@ type TextCitation struct {
 	EncryptedIndex    string `json:"encrypted_index,omitempty"`
 }
 
+// ThinkingBlock is an extended-thinking content block.
+type ThinkingBlock struct {
+	Thinking  string `json:"thinking"`
+	Signature string `json:"signature"`
+}
+
+func (*ThinkingBlock) isContentBlock()   {}
+func (*ThinkingBlock) BlockType() string { return "thinking" }
+
 // RedactedThinkingBlock is a thinking block whose content the API encrypted.
 // Data must be passed back unchanged.
 type RedactedThinkingBlock struct {
@@ -46,6 +79,154 @@ type RedactedThinkingBlock struct {
 
 func (*RedactedThinkingBlock) isContentBlock()   {}
 func (*RedactedThinkingBlock) BlockType() string { return "redacted_thinking" }
+
+// ToolUseBlock records a tool invocation requested by the model.
+type ToolUseBlock struct {
+	ID    string         `json:"id"`
+	Name  string         `json:"name"`
+	Input map[string]any `json:"input"`
+	// Caller identifies who invoked the tool (direct, or a server tool such as
+	// code execution), when the API reports it.
+	Caller map[string]any `json:"caller,omitempty"`
+	// ToolsetName names the toolset the tool belongs to, when it has one.
+	ToolsetName string `json:"toolset_name,omitempty"`
+}
+
+func (*ToolUseBlock) isContentBlock()   {}
+func (*ToolUseBlock) BlockType() string { return "tool_use" }
+
+// ToolResultBlock carries the result of a tool invocation. The CLI sends the
+// content either as a plain string or as a list of nested content dicts, so
+// exactly one of ContentText and ContentList is set (both may be nil/empty when
+// the CLI omitted the field).
+type ToolResultBlock struct {
+	ToolUseID   string           `json:"tool_use_id"`
+	ContentText *string          `json:"-"`
+	ContentList []map[string]any `json:"-"`
+	IsError     *bool            `json:"is_error,omitempty"`
+}
+
+func (*ToolResultBlock) isContentBlock()   {}
+func (*ToolResultBlock) BlockType() string { return "tool_result" }
+
+// MarshalJSON writes the wire shape, with "content" holding whichever of
+// ContentText and ContentList is set.
+func (b ToolResultBlock) MarshalJSON() ([]byte, error) {
+	type alias ToolResultBlock
+	return marshalWithExtra(alias(b), contentMember(textOrList(b.ContentText, b.ContentList)))
+}
+
+// UnmarshalJSON reads the wire shape produced by MarshalJSON. A member of an
+// unexpected JSON type is left at its zero value.
+func (b *ToolResultBlock) UnmarshalJSON(data []byte) error {
+	type alias ToolResultBlock
+	var w struct {
+		alias
+		Content any `json:"content"`
+	}
+	if err := json.Unmarshal(data, &w); fatalDecodeErr(err) {
+		return err
+	}
+	*b = ToolResultBlock(w.alias)
+	b.ContentText, b.ContentList = splitContent(w.Content)
+	return nil
+}
+
+// ServerToolName enumerates the server-side tools the API may run on the
+// model's behalf. Newer CLI versions may report names not listed here.
+type ServerToolName = string
+
+// Known server-side tool names.
+const (
+	ServerToolAdvisor                 ServerToolName = "advisor"
+	ServerToolWebSearch               ServerToolName = "web_search"
+	ServerToolWebFetch                ServerToolName = "web_fetch"
+	ServerToolCodeExecution           ServerToolName = "code_execution"
+	ServerToolBashCodeExecution       ServerToolName = "bash_code_execution"
+	ServerToolTextEditorCodeExecution ServerToolName = "text_editor_code_execution"
+	ServerToolSearchToolRegex         ServerToolName = "tool_search_tool_regex"
+	ServerToolSearchToolBM25          ServerToolName = "tool_search_tool_bm25"
+)
+
+// ServerToolUseBlock is a server-side tool invocation. The caller never needs
+// to return a result for one.
+type ServerToolUseBlock struct {
+	ID    string         `json:"id"`
+	Name  ServerToolName `json:"name"`
+	Input map[string]any `json:"input"`
+	// Caller identifies who invoked the tool, when the API reports it.
+	Caller map[string]any `json:"caller,omitempty"`
+}
+
+func (*ServerToolUseBlock) isContentBlock()   {}
+func (*ServerToolUseBlock) BlockType() string { return "server_tool_use" }
+
+// Wire types of the server-side tool result blocks, all decoded as
+// ServerToolResultBlock.
+const (
+	BlockAdvisorToolResult                 = "advisor_tool_result"
+	BlockWebSearchToolResult               = "web_search_tool_result"
+	BlockWebFetchToolResult                = "web_fetch_tool_result"
+	BlockCodeExecutionToolResult           = "code_execution_tool_result"
+	BlockBashCodeExecutionToolResult       = "bash_code_execution_tool_result"
+	BlockTextEditorCodeExecutionToolResult = "text_editor_code_execution_tool_result"
+	BlockToolSearchToolResult              = "tool_search_tool_result"
+)
+
+// ServerToolResultBlock is the result of a server-side tool call: one of the
+// Block*ToolResult wire types, which share this shape. Content is passed
+// through from the API verbatim; it is an object for every kind except a
+// successful web search, whose result list arrives in ContentList instead.
+type ServerToolResultBlock struct {
+	// Type is the wire block type, e.g. BlockWebSearchToolResult. Empty
+	// means BlockAdvisorToolResult.
+	Type        string           `json:"type,omitempty"`
+	ToolUseID   string           `json:"tool_use_id"`
+	Content     map[string]any   `json:"-"`
+	ContentList []map[string]any `json:"-"`
+	// Caller identifies who invoked the tool, when the API reports it.
+	Caller map[string]any `json:"caller,omitempty"`
+}
+
+func (*ServerToolResultBlock) isContentBlock() {}
+
+// BlockType reports Type, defaulting to BlockAdvisorToolResult.
+func (b *ServerToolResultBlock) BlockType() string {
+	if b.Type == "" {
+		return BlockAdvisorToolResult
+	}
+	return b.Type
+}
+
+// MarshalJSON writes the wire shape, with "content" holding whichever of
+// Content and ContentList is set.
+func (b ServerToolResultBlock) MarshalJSON() ([]byte, error) {
+	type alias ServerToolResultBlock
+	var content any
+	switch {
+	case b.Content != nil:
+		content = b.Content
+	case b.ContentList != nil:
+		content = b.ContentList
+	}
+	return marshalWithExtra(alias(b), contentMember(content))
+}
+
+// UnmarshalJSON reads the wire shape produced by MarshalJSON. A member of an
+// unexpected JSON type is left at its zero value.
+func (b *ServerToolResultBlock) UnmarshalJSON(data []byte) error {
+	type alias ServerToolResultBlock
+	var w struct {
+		alias
+		Content any `json:"content"`
+	}
+	if err := json.Unmarshal(data, &w); fatalDecodeErr(err) {
+		return err
+	}
+	*b = ServerToolResultBlock(w.alias)
+	b.Content, b.ContentList = splitObjectContent(w.Content)
+	return nil
+}
 
 // MCPToolUseBlock is a call the API made to a tool of a remote MCP server
 // (the MCP connector).
@@ -76,26 +257,23 @@ func (*MCPToolResultBlock) BlockType() string { return "mcp_tool_result" }
 // ContentText and ContentList is set.
 func (b MCPToolResultBlock) MarshalJSON() ([]byte, error) {
 	type alias MCPToolResultBlock
-	return marshalWithContent(alias(b), contentValue(b.ContentText, b.ContentList))
+	return marshalWithExtra(alias(b), contentMember(textOrList(b.ContentText, b.ContentList)))
 }
 
-// UnmarshalJSON reads the wire shape produced by MarshalJSON.
+// UnmarshalJSON reads the wire shape produced by MarshalJSON. A member of an
+// unexpected JSON type is left at its zero value.
 func (b *MCPToolResultBlock) UnmarshalJSON(data []byte) error {
 	type alias MCPToolResultBlock
-	var a alias
-	err := json.Unmarshal(data, &a)
-	if fatalDecodeErr(err) {
-		return err
-	}
-	*b = MCPToolResultBlock(a)
-	var c struct {
+	var w struct {
+		alias
 		Content any `json:"content"`
 	}
-	if err := json.Unmarshal(data, &c); err != nil {
+	if err := json.Unmarshal(data, &w); fatalDecodeErr(err) {
 		return err
 	}
-	b.ContentText, b.ContentList = splitContent(c.Content)
-	return err
+	*b = MCPToolResultBlock(w.alias)
+	b.ContentText, b.ContentList = splitContent(w.Content)
+	return nil
 }
 
 // MCPToolListingBlock lists the tools a remote MCP server offers.
@@ -151,17 +329,6 @@ type FallbackBlock struct {
 
 func (*FallbackBlock) isContentBlock()   {}
 func (*FallbackBlock) BlockType() string { return "fallback" }
-
-// StopDetails explains a "refusal" stop reason on an AssistantMessage.
-type StopDetails struct {
-	// Type is "refusal".
-	Type string `json:"type,omitempty"`
-	// Category is the refusal policy category (cyber, bio, frontier_llm,
-	// reasoning_extraction, general_harms); empty when none applies.
-	Category string `json:"category,omitempty"`
-	// Explanation is display-only prose; never parse it.
-	Explanation string `json:"explanation,omitempty"`
-}
 
 // Block source types for BlockSource.Type.
 const (
@@ -236,16 +403,18 @@ func (b UnknownBlock) MarshalJSON() ([]byte, error) {
 	return json.Marshal(b.wire())
 }
 
-// UnmarshalJSON keeps the whole object in Raw.
+// UnmarshalJSON keeps the whole object in Raw. A value that is not an object
+// leaves b empty.
 func (b *UnknownBlock) UnmarshalJSON(data []byte) error {
 	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := json.Unmarshal(data, &raw); fatalDecodeErr(err) {
 		return err
 	}
 	*b = UnknownBlock{Type: str(raw["type"]), Raw: raw}
 	return nil
 }
 
+// wire returns a copy of Raw with Type as its "type" key.
 func (b UnknownBlock) wire() map[string]any {
 	out := maps.Clone(b.Raw)
 	if out == nil {
@@ -255,115 +424,4 @@ func (b UnknownBlock) wire() map[string]any {
 		out["type"] = b.Type
 	}
 	return out
-}
-
-// ---------------------------------------------------------------------------
-// Block encoding helpers
-// ---------------------------------------------------------------------------
-
-// contentBlockWire renders a block as its stream-json wire object.
-func contentBlockWire(b ContentBlock) (map[string]any, error) {
-	if u, ok := b.(*UnknownBlock); ok {
-		return u.wire(), nil
-	}
-	out, err := toWireMap(b, "content block")
-	if err != nil {
-		return nil, err
-	}
-	if out == nil {
-		out = map[string]any{}
-	}
-	out["type"] = b.BlockType()
-	return out, nil
-}
-
-// wireBlock marshals a block in its stream-json wire form, "type" included.
-type wireBlock struct{ ContentBlock }
-
-func (w wireBlock) MarshalJSON() ([]byte, error) {
-	m, err := contentBlockWire(w.ContentBlock)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(m)
-}
-
-// contentValue picks the populated one of a text-or-list content pair, or nil.
-func contentValue(text *string, list []map[string]any) any {
-	switch {
-	case text != nil:
-		return *text
-	case list != nil:
-		return list
-	}
-	return nil
-}
-
-// marshalWithContent marshals v (a struct) and appends a "content" key when
-// content is non-nil, preserving v's field order.
-func marshalWithContent(v any, content any) ([]byte, error) {
-	b, err := json.Marshal(v)
-	if err != nil || content == nil {
-		return b, err
-	}
-	c, err := json.Marshal(content)
-	if err != nil {
-		return nil, err
-	}
-	b = bytes.TrimSuffix(b, []byte("}"))
-	if len(b) > 1 {
-		b = append(b, ',')
-	}
-	b = append(b, `"content":`...)
-	b = append(b, c...)
-	return append(b, '}'), nil
-}
-
-// splitContent splits string-or-list content. A list yields a non-nil slice of
-// its object items, possibly empty.
-func splitContent(v any) (*string, []map[string]any) {
-	switch c := v.(type) {
-	case string:
-		return &c, nil
-	case []any:
-		return nil, objectItems(c)
-	}
-	return nil, nil
-}
-
-// splitObjectContent splits object-or-list content.
-func splitObjectContent(v any) (map[string]any, []map[string]any) {
-	switch c := v.(type) {
-	case map[string]any:
-		return c, nil
-	case []any:
-		return nil, objectItems(c)
-	}
-	return nil, nil
-}
-
-func objectItems(items []any) []map[string]any {
-	out := make([]map[string]any, 0, len(items))
-	for _, it := range items {
-		if m, ok := it.(map[string]any); ok {
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
-// decodeLenient fills v from data the way the TypeScript SDK reads frames:
-// without validation. A field whose JSON type does not match is left at its
-// zero value; the rest is still decoded.
-func decodeLenient(data []byte, v any) {
-	_ = json.Unmarshal(data, v)
-}
-
-// fatalDecodeErr reports whether err is worse than a field type mismatch.
-// Custom UnmarshalJSON methods keep decoding past mismatches, so that lenient
-// parsing still sees the rest of the block, and return the mismatch at the
-// end.
-func fatalDecodeErr(err error) bool {
-	var te *json.UnmarshalTypeError
-	return err != nil && !errors.As(err, &te)
 }

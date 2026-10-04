@@ -1,77 +1,7 @@
 package claude
 
-import (
-	"encoding/json"
-	"fmt"
-)
-
-// MCPServerConnectionStatus is the connection state of an MCP server.
-type MCPServerConnectionStatus = string
-
-// Known MCP server connection states.
-const (
-	MCPStatusConnected MCPServerConnectionStatus = "connected"
-	MCPStatusFailed    MCPServerConnectionStatus = "failed"
-	MCPStatusNeedsAuth MCPServerConnectionStatus = "needs-auth"
-	MCPStatusPending   MCPServerConnectionStatus = "pending"
-	MCPStatusDisabled  MCPServerConnectionStatus = "disabled"
-)
-
-// MCPToolAnnotations are the tool hints reported in MCP server status.
-type MCPToolAnnotations struct {
-	ReadOnly    *bool `json:"readOnly,omitempty"`
-	Destructive *bool `json:"destructive,omitempty"`
-	OpenWorld   *bool `json:"openWorld,omitempty"`
-}
-
-// MCPToolInfo describes one tool provided by an MCP server.
-type MCPToolInfo struct {
-	Name        string              `json:"name"`
-	Description string              `json:"description,omitempty"`
-	Annotations *MCPToolAnnotations `json:"annotations,omitempty"`
-	// Meta holds the MCP Apps members of the tool's _meta (ui,
-	// ui/resourceUri), for hosts that render the tool's ui:// resource.
-	Meta map[string]any `json:"_meta,omitempty"`
-}
-
-// MCPServerInfo is the server identity from the MCP initialize handshake.
-type MCPServerInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
-
-// MCPServerStatus is the status of one MCP server connection.
-type MCPServerStatus struct {
-	// Name is the server name as configured.
-	Name string `json:"name"`
-	// Status is the current connection state.
-	Status MCPServerConnectionStatus `json:"status"`
-	// ServerInfo is set once the server is connected.
-	ServerInfo *MCPServerInfo `json:"serverInfo,omitempty"`
-	// Error is set when Status is "failed".
-	Error string `json:"error,omitempty"`
-	// Config is the server's configuration as the CLI reports it. Its "type"
-	// field is one of stdio, sse, http, sdk or the output-only
-	// claudeai-proxy.
-	Config map[string]any `json:"config,omitempty"`
-	// Scope is the configuration scope (project, user, local, claudeai,
-	// managed, ...).
-	Scope string `json:"scope,omitempty"`
-	// Source is where the server definition came from: "sdk" for an
-	// in-process server this host registered, "plugin", or the
-	// configuration scope. Key trust decisions on it rather than on the
-	// name. Empty on CLIs that predate the field.
-	Source string `json:"source,omitempty"`
-	// Tools lists the server's tools, when connected.
-	Tools []MCPToolInfo `json:"tools,omitempty"`
-}
-
-// MCPStatusResponse is the result of [Client.MCPServerStatus].
-type MCPStatusResponse struct {
-	MCPServers []MCPServerStatus `json:"mcpServers"`
-	// Raw is the full response payload, including fields not modeled above.
-	Raw map[string]any `json:"-"`
-}
+// Context window usage: the /context breakdown returned by
+// Client.ContextUsage, and its structured twin carried on assistant messages.
 
 // ContextUsageCategory is one slice of the context window (system prompt,
 // tools, messages, ...).
@@ -218,53 +148,62 @@ type ContextUsageResponse struct {
 	Raw map[string]any `json:"-"`
 }
 
-// toWireMap renders v as the generic JSON object it marshals to, so typed
-// values can be merged into wire maps. A value that marshals to null yields a
-// nil map. what names the value in errors.
-func toWireMap(v any, what string) (map[string]any, error) {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return nil, fmt.Errorf("claude: encoding %s: %w", what, err)
-	}
-	var out map[string]any
-	if err := json.Unmarshal(b, &out); err != nil {
-		return nil, fmt.Errorf("claude: encoding %s: %w", what, err)
-	}
-	return out, nil
-}
-
-// decodeResponse converts a control response payload into a typed value.
-func decodeResponse(data map[string]any, out any) error {
-	b, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("claude: re-encoding control response: %w", err)
-	}
-	if err := json.Unmarshal(b, out); err != nil {
-		return fmt.Errorf("claude: decoding control response: %w", err)
-	}
-	return nil
-}
-
-// rawHolder is implemented by response types that keep the full payload in a
-// Raw field.
-type rawHolder interface{ setRaw(map[string]any) }
-
-// decodeControl decodes a control response into a new T, filling its Raw field
-// when it has one. Its parameters match a control call's results, so it can
-// wrap one directly: decodeControl[T](c.call(ctx, subtype, fields)).
-func decodeControl[T any](data map[string]any, err error) (*T, error) {
-	if err != nil {
-		return nil, err
-	}
-	out := new(T)
-	if h, ok := any(out).(rawHolder); ok {
-		h.setRaw(data)
-	}
-	if err := decodeResponse(data, out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (r *MCPStatusResponse) setRaw(m map[string]any)    { r.Raw = m }
 func (r *ContextUsageResponse) setRaw(m map[string]any) { r.Raw = m }
+
+// ContextUsageReport is the structured twin of a /context report, carried on
+// AssistantMessage.ContextUsage.
+type ContextUsageReport struct {
+	// Model is the main-loop model the usage was computed for.
+	Model string `json:"model"`
+	// TotalTokens is the estimated usage; it may exceed RawMaxTokens.
+	TotalTokens  int     `json:"total_tokens"`
+	RawMaxTokens int     `json:"raw_max_tokens"`
+	Percentage   float64 `json:"percentage"`
+	// OverLimit is set when TotalTokens exceeds RawMaxTokens.
+	OverLimit   *ContextReportOverLimit   `json:"over_limit,omitempty"`
+	Categories  []ContextReportCategory   `json:"categories"`
+	MCPTools    []ContextReportMCPTool    `json:"mcp_tools"`
+	MemoryFiles []ContextReportMemoryFile `json:"memory_files"`
+	Agents      []ContextReportAgent      `json:"agents"`
+	Skills      []ContextReportSkill      `json:"skills,omitempty"`
+}
+
+// ContextReportOverLimit says by how much a context window is exceeded.
+type ContextReportOverLimit struct {
+	TokensOver int `json:"tokens_over"`
+	// Kind is "hard_limit" or "compaction_window".
+	Kind string `json:"kind"`
+}
+
+// ContextReportCategory is one row of the usage-by-category breakdown.
+type ContextReportCategory struct {
+	Name   string `json:"name"`
+	Tokens int    `json:"tokens"`
+	// Kind is used, free, buffer or deferred; classify rows by it.
+	Kind string `json:"kind"`
+}
+
+// ContextReportMCPTool is the context cost of one MCP tool.
+type ContextReportMCPTool struct {
+	Name       string `json:"name"`
+	ServerName string `json:"server_name"`
+	Tokens     int    `json:"tokens"`
+}
+
+// ContextReportMemoryFile is the context cost of one memory file.
+type ContextReportMemoryFile = ContextUsageMemoryFile
+
+// ContextReportAgent is the context cost of one custom agent.
+type ContextReportAgent struct {
+	AgentType string `json:"agent_type"`
+	Source    string `json:"source"`
+	Tokens    int    `json:"tokens"`
+}
+
+// ContextReportSkill is the context cost of one skill.
+type ContextReportSkill struct {
+	Name       string `json:"name"`
+	Source     string `json:"source"`
+	PluginName string `json:"plugin_name,omitempty"`
+	Tokens     int    `json:"tokens"`
+}

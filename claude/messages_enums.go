@@ -1,8 +1,9 @@
 package claude
 
-// String enumerations used by the message types. Each is a string alias with
-// constants for the values the CLI is known to send; newer CLIs may send
-// values not listed here, which pass through unchanged.
+// String enumerations of the stream-json protocol, used by the message and
+// hook types. Each is a string alias with constants for the values the CLI is
+// known to send; newer CLIs may send values not listed here, which pass
+// through unchanged.
 
 // Result subtypes (ResultMessage.Subtype).
 const (
@@ -207,3 +208,131 @@ const (
 	NotificationPriorityHigh      = "high"
 	NotificationPriorityImmediate = "immediate"
 )
+
+// MessageOriginKind enumerates the known values of MessageOrigin.Kind. Newer
+// CLI versions may emit kinds not listed here; treat anything unrecognized as
+// "not human".
+type MessageOriginKind = string
+
+// Known message origin kinds.
+const (
+	OriginHuman            MessageOriginKind = "human"
+	OriginChannel          MessageOriginKind = "channel"
+	OriginPeer             MessageOriginKind = "peer"
+	OriginTaskNotification MessageOriginKind = "task-notification"
+	OriginCoordinator      MessageOriginKind = "coordinator"
+	OriginUnclassified     MessageOriginKind = "unclassified"
+	OriginObserver         MessageOriginKind = "observer"
+	OriginAutoContinuation MessageOriginKind = "auto-continuation"
+	OriginObserverActivity MessageOriginKind = "observer-activity"
+)
+
+// AssistantMessageError enumerates the known error kinds on an assistant
+// message.
+type AssistantMessageError = string
+
+// Known assistant message error kinds.
+const (
+	AssistantErrorAuthenticationFailed AssistantMessageError = "authentication_failed"
+	AssistantErrorOAuthOrgNotAllowed   AssistantMessageError = "oauth_org_not_allowed"
+	AssistantErrorAccountOnHold        AssistantMessageError = "account_on_hold"
+	AssistantErrorVerificationRequired AssistantMessageError = "verification_required"
+	AssistantErrorBilling              AssistantMessageError = "billing_error"
+	AssistantErrorRateLimit            AssistantMessageError = "rate_limit"
+	AssistantErrorOverloaded           AssistantMessageError = "overloaded"
+	AssistantErrorInvalidRequest       AssistantMessageError = "invalid_request"
+	AssistantErrorModelNotFound        AssistantMessageError = "model_not_found"
+	AssistantErrorServer               AssistantMessageError = "server_error"
+	AssistantErrorUnknown              AssistantMessageError = "unknown"
+	AssistantErrorMaxOutputTokens      AssistantMessageError = "max_output_tokens"
+	AssistantErrorCloudCredential      AssistantMessageError = "cloud_credential_error"
+)
+
+// RateLimitStatus enumerates the rate limit states the CLI reports.
+type RateLimitStatus = string
+
+// Known rate limit statuses.
+const (
+	RateLimitAllowed        RateLimitStatus = "allowed"
+	RateLimitAllowedWarning RateLimitStatus = "allowed_warning"
+	RateLimitRejected       RateLimitStatus = "rejected"
+)
+
+// HookEvent names a point in the agent lifecycle a hook can observe.
+type HookEvent = string
+
+// Supported hook events.
+const (
+	HookPreToolUse         HookEvent = "PreToolUse"
+	HookPostToolUse        HookEvent = "PostToolUse"
+	HookPostToolUseFailure HookEvent = "PostToolUseFailure"
+	HookUserPromptSubmit   HookEvent = "UserPromptSubmit"
+	HookStop               HookEvent = "Stop"
+	HookSubagentStop       HookEvent = "SubagentStop"
+	HookPreCompact         HookEvent = "PreCompact"
+	HookNotification       HookEvent = "Notification"
+	HookSubagentStart      HookEvent = "SubagentStart"
+	HookPermissionRequest  HookEvent = "PermissionRequest"
+
+	// Hook events the TypeScript SDK adds to the set above.
+
+	HookPostToolBatch       HookEvent = "PostToolBatch"
+	HookUserPromptExpansion HookEvent = "UserPromptExpansion"
+	HookSessionStart        HookEvent = "SessionStart"
+	HookSessionEnd          HookEvent = "SessionEnd"
+	HookStopFailure         HookEvent = "StopFailure"
+	HookPostCompact         HookEvent = "PostCompact"
+	HookPreModelSwitch      HookEvent = "PreModelSwitch"
+	HookPostModelSwitch     HookEvent = "PostModelSwitch"
+	HookPermissionDenied    HookEvent = "PermissionDenied"
+	HookSetup               HookEvent = "Setup"
+	HookTeammateIdle        HookEvent = "TeammateIdle"
+	HookTaskCreated         HookEvent = "TaskCreated"
+	HookTaskCompleted       HookEvent = "TaskCompleted"
+	HookElicitation         HookEvent = "Elicitation"
+	HookElicitationResult   HookEvent = "ElicitationResult"
+	HookConfigChange        HookEvent = "ConfigChange"
+	HookWorktreeCreate      HookEvent = "WorktreeCreate"
+	HookWorktreeRemove      HookEvent = "WorktreeRemove"
+	HookInstructionsLoaded  HookEvent = "InstructionsLoaded"
+	HookCwdChanged          HookEvent = "CwdChanged"
+	HookFileChanged         HookEvent = "FileChanged"
+	HookDirectoryAdded      HookEvent = "DirectoryAdded"
+	HookMessageDisplay      HookEvent = "MessageDisplay"
+)
+
+// HookEvents lists every hook event this SDK version knows, in the order the
+// TypeScript SDK's HOOK_EVENTS uses. Options.Hooks accepts any event name, so
+// events newer than this list still reach the CLI. The SDK never reads the
+// list, so modifying it affects only the caller.
+var HookEvents = []HookEvent{
+	HookPreToolUse, HookPostToolUse, HookPostToolUseFailure, HookPostToolBatch,
+	HookNotification, HookUserPromptSubmit, HookUserPromptExpansion,
+	HookSessionStart, HookSessionEnd, HookStop, HookStopFailure,
+	HookSubagentStart, HookSubagentStop, HookPreCompact, HookPostCompact,
+	HookPreModelSwitch, HookPostModelSwitch, HookPermissionRequest,
+	HookPermissionDenied, HookSetup, HookTeammateIdle, HookTaskCreated,
+	HookTaskCompleted, HookElicitation, HookElicitationResult,
+	HookConfigChange, HookWorktreeCreate, HookWorktreeRemove,
+	HookInstructionsLoaded, HookCwdChanged, HookFileChanged,
+	HookDirectoryAdded, HookMessageDisplay,
+}
+
+// ExitReason is why a session ended (SessionEndHookInput.Reason).
+type ExitReason = string
+
+// Known exit reasons, in the TypeScript SDK's EXIT_REASONS order.
+const (
+	ExitReasonClear           ExitReason = "clear"
+	ExitReasonResume          ExitReason = "resume"
+	ExitReasonLogout          ExitReason = "logout"
+	ExitReasonPromptInputExit ExitReason = "prompt_input_exit"
+	ExitReasonOther           ExitReason = "other"
+)
+
+// ExitReasons lists the known exit reasons. The SDK never reads the list, so
+// modifying it affects only the caller.
+var ExitReasons = []ExitReason{
+	ExitReasonClear, ExitReasonResume, ExitReasonLogout,
+	ExitReasonPromptInputExit, ExitReasonOther,
+}

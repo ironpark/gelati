@@ -50,7 +50,7 @@ func TestHookOutputWireFormatTS(t *testing.T) {
 		{"approve", HookOutput{Decision: HookDecisionApprove}, `{"decision":"approve"}`},
 		{"extraMergedModeledWins",
 			HookOutput{Reason: "r", Extra: map[string]any{"reason": "lost", "newKey": 1}},
-			`{"newKey":1,"reason":"r"}`},
+			`{"reason":"r","newKey":1}`},
 		{"asyncKeepsExtra",
 			HookOutput{Async: true, AsyncTimeout: &timeout, Reason: "ignored", Extra: map[string]any{"x": true}},
 			`{"async":true,"asyncTimeout":100,"x":true}`},

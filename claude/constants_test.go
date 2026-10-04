@@ -48,3 +48,22 @@ func TestConstantsUsagePrefixes(t *testing.T) {
 		t.Error("prefix list sizes differ from the TS SDK")
 	}
 }
+
+// TestExportedListsAreCopies checks that modifying an exported list does not
+// change what the SDK matches. It mutates package state, so it is not
+// parallel.
+func TestExportedListsAreCopies(t *testing.T) {
+	saved := UsageLimitErrorPrefixes[0]
+	UsageLimitErrorPrefixes[0] = "zzz"
+	defer func() { UsageLimitErrorPrefixes[0] = saved }()
+	if !IsUsageLimitError("You've hit your limit") || IsUsageLimitError("zzz") {
+		t.Fatal("modifying UsageLimitErrorPrefixes changed IsUsageLimitError")
+	}
+	// TerminalTaskStatuses is still read by the engine, so it is compared
+	// rather than modified.
+	for _, s := range []string{"completed", "failed", "stopped", "killed", "running", ""} {
+		if isTerminalTaskStatus(s) != TerminalTaskStatuses[s] {
+			t.Errorf("isTerminalTaskStatus(%q) disagrees with TerminalTaskStatuses", s)
+		}
+	}
+}

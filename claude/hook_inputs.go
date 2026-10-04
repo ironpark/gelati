@@ -81,24 +81,6 @@ type PostToolBatchToolCall struct {
 	ToolResponse any            `json:"tool_response,omitempty"`
 }
 
-// ExitReason is why a session ended, reported by SessionEnd hooks.
-type ExitReason = string
-
-// Known exit reasons, in the TypeScript SDK's EXIT_REASONS order.
-const (
-	ExitReasonClear           ExitReason = "clear"
-	ExitReasonResume          ExitReason = "resume"
-	ExitReasonLogout          ExitReason = "logout"
-	ExitReasonPromptInputExit ExitReason = "prompt_input_exit"
-	ExitReasonOther           ExitReason = "other"
-)
-
-// ExitReasons lists the known exit reasons.
-var ExitReasons = []ExitReason{
-	ExitReasonClear, ExitReasonResume, ExitReasonLogout,
-	ExitReasonPromptInputExit, ExitReasonOther,
-}
-
 // PreToolUseHookInput is the input of a PreToolUse hook.
 type PreToolUseHookInput struct {
 	BaseHookInput

@@ -4,7 +4,111 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"reflect"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
+
+// HookDecision is the top-level decision a hook may return in
+// HookOutput.Decision.
+type HookDecision = string
+
+// Hook decisions.
+const (
+	HookDecisionApprove HookDecision = "approve"
+	HookDecisionBlock   HookDecision = "block"
+)
+
+// HookPermissionDecision is a PreToolUse hook's verdict on a tool call, sent
+// as hookSpecificOutput.permissionDecision.
+type HookPermissionDecision = string
+
+// Hook permission decisions. PermissionDecisionDefer hands the call back to
+// the host, which surfaces it as ResultMessage.DeferredToolUse.
+const (
+	PermissionDecisionAllow HookPermissionDecision = "allow"
+	PermissionDecisionDeny  HookPermissionDecision = "deny"
+	PermissionDecisionAsk   HookPermissionDecision = "ask"
+	PermissionDecisionDefer HookPermissionDecision = "defer"
+)
+
+// HookOutput is what a hook callback returns. A zero value means "no opinion":
+// nothing is sent back beyond an empty object.
+//
+// Field names on the wire follow the CLI's documented JSON schema; Continue and
+// Async are emitted as "continue" and "async".
+type HookOutput struct {
+	// Continue reports whether Claude should proceed. nil leaves it unset
+	// (the CLI defaults to true).
+	Continue *bool `json:"continue,omitempty"`
+	// SuppressOutput hides stdout from transcript mode.
+	SuppressOutput *bool `json:"suppressOutput,omitempty"`
+	// StopReason is shown to the user when Continue is false.
+	StopReason string `json:"stopReason,omitempty"`
+	// Decision is HookDecisionBlock to block the action or
+	// HookDecisionApprove to approve it.
+	Decision HookDecision `json:"decision,omitempty"`
+	// SystemMessage is a warning displayed to the user.
+	SystemMessage string `json:"systemMessage,omitempty"`
+	// Reason is feedback for Claude about the decision.
+	Reason string `json:"reason,omitempty"`
+	// TerminalSequence is a terminal escape sequence the CLI writes to its
+	// terminal: an OSC 0/1/2 title, OSC 9/99/777 notification or BEL.
+	TerminalSequence string `json:"terminalSequence,omitempty"`
+	// HookSpecificOutput carries event-specific fields, e.g.
+	// {"hookEventName": "PreToolUse", "permissionDecision": "allow"}.
+	HookSpecificOutput map[string]any `json:"hookSpecificOutput,omitzero"`
+	// Specific is the typed form of HookSpecificOutput (for example
+	// *PreToolUseHookSpecificOutput). Its fields, including hookEventName,
+	// are merged over HookSpecificOutput on the wire.
+	Specific HookSpecific `json:"-"`
+	// Async defers hook execution; the CLI continues without waiting.
+	Async bool `json:"async,omitempty"`
+	// AsyncTimeout is the timeout in milliseconds for an async hook.
+	AsyncTimeout *int `json:"asyncTimeout,omitempty"`
+	// Extra holds output keys this SDK version does not model. The
+	// TypeScript SDK forwards a callback's output verbatim, so Extra is
+	// merged in on marshal; modeled fields win.
+	Extra map[string]any `json:"-"`
+}
+
+// hookOutputFields are the output keys HookOutput has a field for.
+var hookOutputFields = jsonMemberNames(reflect.TypeFor[HookOutput]())
+
+// MarshalJSON emits the CLI wire format. An async output carries only async
+// and asyncTimeout; otherwise Specific is merged into hookSpecificOutput.
+func (h HookOutput) MarshalJSON() ([]byte, error) {
+	type alias HookOutput
+	out := alias(h)
+	if h.Async {
+		out = alias{Async: true, AsyncTimeout: h.AsyncTimeout}
+	} else {
+		out.AsyncTimeout = nil
+		specific, err := mergeHookSpecificOutput(h.HookSpecificOutput, h.Specific)
+		if err != nil {
+			return nil, err
+		}
+		out.HookSpecificOutput = specific
+	}
+	return marshalWithExtra(out, h.Extra)
+}
+
+// UnmarshalJSON reads the CLI wire format produced by MarshalJSON. The
+// event-specific output lands in HookSpecificOutput; Specific stays nil.
+func (h *HookOutput) UnmarshalJSON(data []byte) error {
+	type alias HookOutput
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	extra, err := jsonx.ExtraFields(data, func(k string) bool { return hookOutputFields[k] })
+	if err != nil {
+		return err
+	}
+	*h = HookOutput(a)
+	h.Extra = extra
+	return nil
+}
 
 // ---------------------------------------------------------------------------
 // Typed hook-specific outputs
@@ -14,6 +118,10 @@ import (
 // to a per-event struct such as *PreToolUseHookSpecificOutput. The event name
 // is supplied by the type, so hookEventName never has to be set by hand. For
 // events without a struct here, use the HookSpecificOutput map.
+//
+// The interface is intentionally open: a type of your own that marshals to
+// the event's fields and reports its event name also works, e.g. for an event
+// newer than this SDK version.
 type HookSpecific interface {
 	// HookEventName names the event the output belongs to.
 	HookEventName() HookEvent
@@ -176,28 +284,12 @@ func (*PermissionRequestHookSpecificOutput) HookEventName() HookEvent {
 // MarshalJSON emits {"decision": {"behavior": ...}}.
 func (o *PermissionRequestHookSpecificOutput) MarshalJSON() ([]byte, error) {
 	out := map[string]any{}
-	switch d := o.Decision.(type) {
-	case nil:
-	case *PermissionResultAllow:
-		decision := map[string]any{"behavior": "allow"}
-		if d.UpdatedInput != nil {
-			decision["updatedInput"] = d.UpdatedInput
-		}
-		if d.UpdatedPermissions != nil {
-			decision["updatedPermissions"] = d.UpdatedPermissions
+	if o.Decision != nil {
+		decision, ok := permissionDecisionWire(o.Decision, nil)
+		if !ok {
+			return nil, fmt.Errorf("claude: PermissionRequest hook decision %T, want *PermissionResultAllow or *PermissionResultDeny", o.Decision)
 		}
 		out["decision"] = decision
-	case *PermissionResultDeny:
-		decision := map[string]any{"behavior": "deny"}
-		if d.Message != "" {
-			decision["message"] = d.Message
-		}
-		if d.Interrupt {
-			decision["interrupt"] = true
-		}
-		out["decision"] = decision
-	default:
-		return nil, fmt.Errorf("claude: PermissionRequest hook decision %T, want *PermissionResultAllow or *PermissionResultDeny", d)
 	}
 	return json.Marshal(out)
 }
