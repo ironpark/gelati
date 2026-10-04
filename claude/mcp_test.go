@@ -67,7 +67,7 @@ func rpc(t *testing.T, s *MCPServer, message map[string]any) map[string]any {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := s.handle(t.Context(), raw)
+	out, err := s.HandleMCPMessage(t.Context(), raw)
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestMCPToolContentConversion(t *testing.T) {
 func TestMCPMalformedMessage(t *testing.T) {
 	t.Parallel()
 	s := calculatorServer(t)
-	out, err := s.handle(t.Context(), json.RawMessage(`not json`))
+	out, err := s.HandleMCPMessage(t.Context(), json.RawMessage(`not json`))
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}

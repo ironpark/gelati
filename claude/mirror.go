@@ -517,24 +517,12 @@ func (e *engine) reportMirrorError(key *SessionKey, errMsg string) {
 		Key:           keyCopy,
 		Error:         errMsg,
 	}
-	e.msgMu.Lock()
-	defer e.msgMu.Unlock()
-	if e.msgClosed {
-		return
-	}
-	select {
-	case e.messages <- messageOrError{msg: msg}:
-	default:
-	}
+	e.messages.tryPush(messageOrError{msg: msg})
 }
 
-// closeMessages ends the message stream. Only the read loop sends blocking on
-// e.messages; other senders go through msgMu and check msgClosed.
+// closeMessages ends the message stream. Only the read loop calls it.
 func (e *engine) closeMessages() {
-	e.msgMu.Lock()
-	defer e.msgMu.Unlock()
-	e.msgClosed = true
-	close(e.messages)
+	e.messages.close()
 }
 
 // randomUUID returns a random RFC 4122 version 4 UUID, used for message,

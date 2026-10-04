@@ -13,6 +13,26 @@ import (
 	"time"
 )
 
+// buildCommandArgs returns the CLI flags resolveLaunch renders for opts.
+func buildCommandArgs(opts *Options) ([]string, error) {
+	launch, err := resolveLaunch(opts)
+	if err != nil {
+		return nil, err
+	}
+	return launch.args, nil
+}
+
+// initializeExtras returns the initialize fields resolveLaunch renders for
+// opts.
+func initializeExtras(t *testing.T, opts *Options) map[string]any {
+	t.Helper()
+	launch, err := resolveLaunch(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return launch.initFields
+}
+
 func TestBuildCommandArgsDefaults(t *testing.T) {
 	t.Parallel()
 	args, err := buildCommandArgs(&Options{})
@@ -235,11 +255,15 @@ func TestApplySkillsDefaults(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			allowed, err := applySkillsDefaults(&tc.opts)
+			args, err := buildCommandArgs(&tc.opts)
 			if err != nil {
-				t.Fatalf("applySkillsDefaults: %v", err)
+				t.Fatalf("buildCommandArgs: %v", err)
 			}
-			if !slices.Equal(allowed, tc.want) {
+			i := slices.Index(args, "--allowedTools")
+			if i < 0 {
+				t.Fatalf("args = %q, want --allowedTools", args)
+			}
+			if allowed := strings.Split(args[i+1], ","); !slices.Equal(allowed, tc.want) {
 				t.Fatalf("allowed = %q, want %q", allowed, tc.want)
 			}
 		})
@@ -289,10 +313,18 @@ func TestBuildEnv(t *testing.T) {
 	if got["CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING"] != "true" || got["PWD"] != "/tmp" {
 		t.Fatalf("env = %#v", got)
 	}
-	// Default entrypoint when the caller does not override it.
-	env = buildEnv(&Options{})
-	if !slices.Contains(env, "CLAUDE_CODE_ENTRYPOINT="+entrypoint) {
-		t.Fatal("default entrypoint missing")
+	// The entrypoint comes from Options.Env, where prepareOptions puts it;
+	// buildEnv adds none of its own.
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+	if got := envMap(buildEnv(&Options{}))["CLAUDE_CODE_ENTRYPOINT"]; got != "cli" {
+		t.Fatalf("entrypoint = %q, want the inherited value", got)
+	}
+	prepared, err := prepareOptions(&Options{}, entrypoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := envMap(buildEnv(prepared))["CLAUDE_CODE_ENTRYPOINT"]; got != entrypoint {
+		t.Fatalf("entrypoint = %q, want %q", got, entrypoint)
 	}
 }
 
@@ -621,10 +653,11 @@ func TestSubprocessTransportConnectErrors(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 
-	// A bad option is reported from Connect, not swallowed.
-	tr = newSubprocessTransport(&Options{CLIPath: "/bin/echo", Skills: SkillList{"bad,name"}})
-	if err := tr.Connect(t.Context()); err == nil {
-		t.Fatal("expected a skill validation error")
+	// An option that cannot be rendered is reported from Connect, not
+	// swallowed.
+	tr = newSubprocessTransport(&Options{CLIPath: "/bin/echo", Settings: []string{"x"}})
+	if err := tr.Connect(t.Context()); err == nil || !strings.Contains(err.Error(), "JSON object") {
+		t.Fatalf("error = %v, want a settings encoding error", err)
 	}
 }
 

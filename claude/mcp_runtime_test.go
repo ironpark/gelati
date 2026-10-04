@@ -195,7 +195,7 @@ func TestSDKMCPInitializeFields(t *testing.T) {
 		"fs":      &MCPStdioServerConfig{Command: "node"},
 		"bare":    &MCPSDKServerConfig{Name: "bare"},
 	}}
-	fields := sdkMCPInitializeFields(opts)
+	fields := sdkMCPInitializeFields(sdkMCPServers(opts))
 
 	names, _ := json.Marshal(fields["sdkMcpServers"])
 	if string(names) != `["calc","failing","noTools","slow"]` {
@@ -223,7 +223,7 @@ func TestSDKMCPInitializeFields(t *testing.T) {
 		t.Fatalf("clientInfo = %#v", info)
 	}
 
-	if sdkMCPInitializeFields(&Options{MCPServers: map[string]MCPServerConfig{"fs": &MCPStdioServerConfig{}}}) != nil {
+	if sdkMCPInitializeFields(sdkMCPServers(&Options{MCPServers: map[string]MCPServerConfig{"fs": &MCPStdioServerConfig{}}})) != nil {
 		t.Fatal("no in-process servers means no fields")
 	}
 }
@@ -231,7 +231,7 @@ func TestSDKMCPInitializeFields(t *testing.T) {
 func TestSDKMCPInitializeFieldsManifestOptOut(t *testing.T) {
 	// Not parallel: it sets an environment variable.
 	t.Setenv("CLAUDE_AGENT_SDK_DISABLE_MCP_MANIFESTS", "true")
-	fields := sdkMCPInitializeFields(&Options{MCPServers: map[string]MCPServerConfig{"calc": NewSDKMCPServer("calc", "")}})
+	fields := sdkMCPInitializeFields(sdkMCPServers(&Options{MCPServers: map[string]MCPServerConfig{"calc": NewSDKMCPServer("calc", "")}}))
 	if _, ok := fields["sdkMcpServerManifests"]; ok {
 		t.Fatalf("fields = %#v", fields)
 	}
@@ -245,7 +245,6 @@ func mcpEngine(t *testing.T, servers map[string]MCPServerConfig) (*engine, *fake
 	t.Helper()
 	opts := &Options{MCPServers: servers}
 	eng, ft := startEngine(t, opts)
-	attachSDKMCPServers(eng, opts)
 	return eng, ft
 }
 
@@ -349,7 +348,7 @@ func TestMCPServerNotifiesConnectedSessions(t *testing.T) {
 	}
 
 	// Closing the session detaches the server.
-	_ = eng.Close()
+	_ = eng.close()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		server.mu.RLock()

@@ -51,7 +51,7 @@ func TestUserInputFrame(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			payload, err := marshalFrame(tc.input.frame())
+			payload, err := encodeFrame(tc.input.frame())
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -77,7 +77,7 @@ func TestUserInputFrameParsesBack(t *testing.T) {
 		Content: "look", UUID: "u1", SessionID: "s1", Priority: MessagePriorityNow, IsSynthetic: true,
 		Blocks: []ContentBlock{&ImageBlock{Source: BlockSource{Type: SourceURL, URL: "https://x/a.png"}}},
 	}
-	payload, err := marshalFrame(in.frame())
+	payload, err := encodeFrame(in.frame())
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

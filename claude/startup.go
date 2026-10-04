@@ -3,7 +3,6 @@ package claude
 import (
 	"context"
 	"errors"
-	"fmt"
 	"iter"
 	"slices"
 	"sync"
@@ -26,9 +25,9 @@ type WarmQuery struct {
 }
 
 // Startup starts a CLI session and performs the initialize handshake,
-// returning a WarmQuery that runs one prompt on it. Unless ctx has an earlier
-// deadline the handshake is bounded by DefaultInitializeTimeout, after which
-// the session is torn down.
+// returning a WarmQuery that runs one prompt on it. When ctx has no deadline
+// the handshake is bounded by DefaultInitializeTimeout; a handshake that does
+// not complete tears the session down.
 //
 // As with Client.Connect, ctx governs the whole session: cancelling it after
 // Startup returns terminates the CLI. Use a context that outlives the query.
@@ -38,36 +37,16 @@ func Startup(ctx context.Context, opts *Options) (*WarmQuery, error) {
 
 // startup is Startup with replaceable session dependencies.
 func startup(ctx context.Context, opts *Options, deps *sessionDeps) (*WarmQuery, error) {
-	sess, err := openSession(ctx, opts, entrypoint, deps)
+	sess, err := startSession(ctx, opts, entrypoint, deps)
 	if err != nil {
-		return nil, err
-	}
-	if err := initializeWarm(ctx, sess); err != nil {
 		return nil, err
 	}
 	return &WarmQuery{sess: sess}, nil
 }
 
-// initializeWarm starts the engine and runs the handshake under
-// DefaultInitializeTimeout, closing the session on failure.
-func initializeWarm(ctx context.Context, sess *session) error {
-	sess.eng.Start(ctx)
-	initCtx, cancel := context.WithTimeout(ctx, DefaultInitializeTimeout)
-	defer cancel()
-	if _, err := sess.eng.Initialize(initCtx); err != nil {
-		_ = sess.close()
-		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
-			return fmt.Errorf("claude: CLI initialization did not complete within %s; "+
-				"check authentication and network connectivity: %w", DefaultInitializeTimeout, err)
-		}
-		return err
-	}
-	return nil
-}
-
 // InitializationResult reports the session's initialize response.
 func (w *WarmQuery) InitializationResult() *InitializeResult {
-	return w.sess.eng.InitializeResult()
+	return w.sess.eng.initializeResult()
 }
 
 // Query sends prompt and yields the messages it produces, ending with a
@@ -94,16 +73,23 @@ func (w *WarmQuery) QueryStream(ctx context.Context, inputs iter.Seq[UserInput])
 	if err != nil {
 		return func(yield func(Message, error) bool) { yield(nil, err) }
 	}
+	return singleUse(func(yield func(Message, error) bool) {
+		runQuery(ctx, w.sess, inputs, yield)
+	}, "claude: a WarmQuery sequence can be ranged over only once")
+}
 
+// singleUse makes seq rangeable once: ranging over it again yields an error
+// with errMsg. A concurrent second range waits for the first to finish.
+func singleUse(seq iter.Seq2[Message, error], errMsg string) iter.Seq2[Message, error] {
 	var once sync.Once
 	return func(yield func(Message, error) bool) {
 		ran := false
 		once.Do(func() {
 			ran = true
-			runQuery(ctx, w.sess, inputs, yield)
+			seq(yield)
 		})
 		if !ran {
-			yield(nil, errors.New("claude: a WarmQuery sequence can be ranged over only once"))
+			yield(nil, errors.New(errMsg))
 		}
 	}
 }

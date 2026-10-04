@@ -2,7 +2,6 @@ package claude
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -47,27 +46,18 @@ func (c *Client) SetMCPServers(ctx context.Context, servers map[string]MCPServer
 		}
 		wire[name] = cfg
 	}
-	if len(sdk) > 0 && registry == nil {
-		return nil, errors.New("claude: this session cannot host in-process MCP servers")
-	}
 
-	if registry != nil {
-		for _, name := range registry.names() {
-			if _, keep := sdk[name]; !keep {
-				registry.remove(name)
-			}
+	for _, name := range registry.names() {
+		if _, keep := sdk[name]; !keep {
+			registry.remove(name)
 		}
-		for _, name := range slices.Sorted(maps.Keys(sdk)) {
-			registry.connect(name, sdk[name])
-			entry := registry.get(name)
-			if entry == nil {
-				continue
-			}
-			decl := map[string]any{"type": "sdk", "name": name}
-			if entry.timeout > 0 {
-				decl["timeout"] = entry.timeout
-			}
-			wire[name] = decl
+	}
+	for _, name := range slices.Sorted(maps.Keys(sdk)) {
+		registry.connect(name, sdk[name])
+		if entry := registry.get(name); entry != nil {
+			// The registered config, which encodes as the CLI's
+			// {"type":"sdk",...} declaration.
+			wire[name] = entry.config
 		}
 	}
 

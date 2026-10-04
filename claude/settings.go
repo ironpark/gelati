@@ -1,12 +1,8 @@
 package claude
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"maps"
-	"strings"
 )
 
 // Settings is a Claude Code settings object, the same shape as a
@@ -94,99 +90,6 @@ func (s SandboxSettings) MarshalJSON() ([]byte, error) {
 	}
 	maps.Copy(merged, fields)
 	return json.Marshal(merged)
-}
-
-// encodeJSONObject encodes v and decodes it back as a JSON object. A nil
-// value, or one that encodes to null, reports ok == false.
-func encodeJSONObject(v any, what string) (map[string]any, bool, error) {
-	var raw []byte
-	switch value := v.(type) {
-	case nil:
-		return nil, false, nil
-	case json.RawMessage:
-		raw = value
-	case []byte:
-		raw = value
-	default:
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			return nil, false, fmt.Errorf("claude: encoding %s: %w", what, err)
-		}
-		raw = encoded
-	}
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil, false, nil
-	}
-	var obj map[string]any
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		return nil, false, fmt.Errorf("claude: %s must be a JSON object: %w", what, err)
-	}
-	return obj, true, nil
-}
-
-// isInlineJSONObject reports whether a --settings string is inline JSON
-// rather than a file path, using the TypeScript SDK's test.
-func isInlineJSONObject(s string) bool {
-	t := strings.TrimSpace(s)
-	return strings.HasPrefix(t, "{") && strings.HasSuffix(t, "}")
-}
-
-// buildSettingsValue renders --settings: Options.Settings, with
-// Options.Sandbox merged in as its "sandbox" key. A sandbox that is enabled
-// without failIfUnavailable gets failIfUnavailable: true.
-func buildSettingsValue(opts *Options) (string, error) {
-	var (
-		text   string
-		isPath bool
-	)
-	switch value := opts.Settings.(type) {
-	case nil:
-	case string:
-		text = value
-		isPath = strings.TrimSpace(value) != "" && !isInlineJSONObject(value)
-	default:
-		obj, ok, err := encodeJSONObject(value, "Options.Settings")
-		if err != nil {
-			return "", err
-		}
-		if ok {
-			encoded, err := json.Marshal(obj)
-			if err != nil {
-				return "", fmt.Errorf("claude: encoding Options.Settings: %w", err)
-			}
-			text = string(encoded)
-		}
-	}
-
-	sandbox, ok, err := encodeJSONObject(opts.Sandbox, "Options.Sandbox")
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return text, nil
-	}
-	if isPath {
-		return "", errors.New("claude: cannot use both a settings file path and Options.Sandbox; " +
-			"include the sandbox configuration in the settings file instead")
-	}
-	if sandbox["enabled"] == true {
-		if _, set := sandbox["failIfUnavailable"]; !set {
-			sandbox["failIfUnavailable"] = true
-		}
-	}
-	settings := map[string]any{}
-	if strings.TrimSpace(text) != "" {
-		if err := json.Unmarshal([]byte(text), &settings); err != nil {
-			return "", fmt.Errorf("claude: parsing inline settings: %w", err)
-		}
-	}
-	settings["sandbox"] = sandbox
-	payload, err := json.Marshal(settings)
-	if err != nil {
-		return "", fmt.Errorf("claude: encoding settings: %w", err)
-	}
-	return string(payload), nil
 }
 
 // ---------------------------------------------------------------------------

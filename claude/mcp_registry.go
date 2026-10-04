@@ -3,9 +3,9 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
-	"reflect"
 	"slices"
 	"sync"
 )
@@ -53,7 +53,8 @@ func (e *mcpServerNotFoundError) Error() string {
 // notifications/cancelled, and carries server-initiated messages back to the
 // CLI. Servers can be added and removed while the session runs.
 type sdkMCPRegistry struct {
-	eng *engine
+	// send writes a control frame to the CLI.
+	send func(ctx context.Context, frame map[string]any) error
 
 	mu      sync.Mutex
 	servers map[string]*sdkMCPEntry
@@ -62,9 +63,9 @@ type sdkMCPRegistry struct {
 
 // sdkMCPEntry is one registered server.
 type sdkMCPEntry struct {
-	name       string
-	handler    MCPHandler
-	timeout    int
+	// config is the server as registered: named after its registry key,
+	// with the timeout normalized.
+	config     *MCPSDKServerConfig
 	disconnect func()
 
 	mu       sync.Mutex
@@ -77,17 +78,17 @@ type mcpInflight struct {
 	cancel context.CancelFunc
 }
 
-func newSDKMCPRegistry(eng *engine) *sdkMCPRegistry {
-	return &sdkMCPRegistry{eng: eng, servers: map[string]*sdkMCPEntry{}}
+// newSDKMCPRegistry builds an empty registry whose servers reach the CLI
+// through send.
+func newSDKMCPRegistry(send func(ctx context.Context, frame map[string]any) error) *sdkMCPRegistry {
+	return &sdkMCPRegistry{send: send, servers: map[string]*sdkMCPEntry{}}
 }
 
 // connect registers a server under name. A name already registered is left
 // alone; the caller decides whether that is a replacement.
 func (r *sdkMCPRegistry) connect(name string, cfg *MCPSDKServerConfig) {
 	entry := &sdkMCPEntry{
-		name:     name,
-		handler:  cfg.Instance,
-		timeout:  positiveTimeout(cfg.Timeout),
+		config:   &MCPSDKServerConfig{Name: name, Instance: cfg.Instance, Timeout: positiveTimeout(cfg.Timeout)},
 		inflight: map[string]*mcpInflight{},
 	}
 	r.mu.Lock()
@@ -148,27 +149,20 @@ func (r *sdkMCPRegistry) get(name string) *sdkMCPEntry {
 	return r.servers[name]
 }
 
-// configs snapshots the registered servers as configs, keyed by name, for
-// declaring the live set to the CLI. It is safe on a nil registry.
+// configs snapshots the registered servers, keyed by name, for declaring the
+// live set to the CLI.
 func (r *sdkMCPRegistry) configs() map[string]*MCPSDKServerConfig {
-	if r == nil {
-		return nil
-	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make(map[string]*MCPSDKServerConfig, len(r.servers))
 	for name, entry := range r.servers {
-		out[name] = &MCPSDKServerConfig{Name: name, Instance: entry.handler, Timeout: entry.timeout}
+		out[name] = entry.config
 	}
 	return out
 }
 
-// hasServers reports whether any server is registered. It is safe on a nil
-// registry.
+// hasServers reports whether any server is registered.
 func (r *sdkMCPRegistry) hasServers() bool {
-	if r == nil {
-		return false
-	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.servers) > 0
@@ -230,7 +224,7 @@ func (r *sdkMCPRegistry) route(ctx context.Context, serverName string, message j
 			err = fmt.Errorf("MCP server '%s' panicked: %v", serverName, p)
 		}
 	}()
-	return entry.handler.HandleMCPMessage(ctx, message)
+	return entry.config.Instance.HandleMCPMessage(ctx, message)
 }
 
 // track registers an in-flight request so notifications/cancelled can cancel
@@ -288,29 +282,56 @@ func (r *sdkMCPRegistry) sendToCLI(ctx context.Context, entry *sdkMCPEntry, mess
 	entry.mu.Lock()
 	removed := entry.removed
 	entry.mu.Unlock()
+	name := entry.config.Name
 	if removed {
-		return NewConnectionError(fmt.Sprintf("MCP server '%s' is no longer registered", entry.name))
-	}
-	if r.eng.isClosed() {
-		return NewConnectionError("connection closed")
+		return NewConnectionError(fmt.Sprintf("MCP server '%s' is no longer registered", name))
 	}
 	if !json.Valid(message) {
-		return fmt.Errorf("claude: MCP server '%s' sent invalid JSON", entry.name)
+		return fmt.Errorf("claude: MCP server '%s' sent invalid JSON", name)
 	}
-	frame := map[string]any{
-		"type":       "control_request",
-		"request_id": randomUUID(),
-		"request": map[string]any{
-			"subtype":     "mcp_message",
-			"server_name": entry.name,
-			"message":     message,
-		},
+	return r.send(ctx, controlRequestFrame(randomUUID(), map[string]any{
+		"subtype":     "mcp_message",
+		"server_name": name,
+		"message":     message,
+	}))
+}
+
+// handleControl answers an mcp_message control request from the CLI: the
+// JSON-RPC message is routed to the named server, and its reply, or a
+// JSON-RPC error, is carried back as mcp_response.
+func (r *sdkMCPRegistry) handleControl(ctx context.Context, request map[string]any) (map[string]any, error) {
+	serverName := str(request["server_name"])
+	message, ok := request["message"]
+	if serverName == "" || !ok || message == nil {
+		return nil, errors.New("Missing server_name or message for MCP request")
 	}
-	payload, err := json.Marshal(frame)
+	raw, err := json.Marshal(message)
 	if err != nil {
-		return fmt.Errorf("claude: encoding mcp message: %w", err)
+		return nil, fmt.Errorf("claude: encoding mcp message: %w", err)
 	}
-	return r.eng.transport.Write(ctx, payload)
+	var id any
+	if m, ok := message.(map[string]any); ok {
+		id = m["id"]
+	}
+	response, err := r.route(ctx, serverName, raw)
+	if err != nil {
+		code := jsonRPCInternalError
+		if _, notFound := errors.AsType[*mcpServerNotFoundError](err); notFound {
+			code = jsonRPCMethodNotFound
+		}
+		return map[string]any{"mcp_response": jsonRPCError(id, code, err.Error())}, nil
+	}
+	if response == nil {
+		// A JSON-RPC notification or response gets no reply, but the
+		// control request that carried it still expects an
+		// acknowledgement; the TypeScript SDK sends this exact shape.
+		return map[string]any{"mcp_response": map[string]any{"jsonrpc": "2.0", "result": map[string]any{}, "id": 0}}, nil
+	}
+	var decoded any
+	if err := json.Unmarshal(response, &decoded); err != nil {
+		return nil, fmt.Errorf("claude: decoding mcp response: %w", err)
+	}
+	return map[string]any{"mcp_response": decoded}, nil
 }
 
 // positiveTimeout keeps a timeout only when it is a positive number of
@@ -320,82 +341,4 @@ func positiveTimeout(ms int) int {
 		return ms
 	}
 	return 0
-}
-
-// ---------------------------------------------------------------------------
-// Engine wiring
-// ---------------------------------------------------------------------------
-
-// attachSDKMCPServers registers the in-process MCP servers configured in opts
-// with the engine. The registry always exists so Client.SetMCPServers can add
-// servers later.
-func attachSDKMCPServers(eng *engine, opts *Options) {
-	registry := newSDKMCPRegistry(eng)
-	configs := sdkMCPServers(opts)
-	for _, name := range slices.Sorted(maps.Keys(configs)) {
-		registry.connect(name, configs[name])
-	}
-	eng.mcpServers = registry
-	go func() {
-		<-eng.closed
-		registry.closeAll()
-	}()
-}
-
-// sdkMCPServers returns the in-process MCP servers configured on opts, keyed
-// by the name they are registered under. Servers without an instance are not
-// in-process servers and are left to --mcp-config.
-func sdkMCPServers(opts *Options) map[string]*MCPSDKServerConfig {
-	if opts == nil {
-		return nil
-	}
-	var out map[string]*MCPSDKServerConfig
-	for name, cfg := range opts.MCPServers {
-		sdk, ok := asSDKServer(cfg)
-		if !ok {
-			continue
-		}
-		if out == nil {
-			out = map[string]*MCPSDKServerConfig{}
-		}
-		out[name] = sdk
-	}
-	return out
-}
-
-// processMCPServers returns the servers the CLI runs itself, which go to
-// --mcp-config. In-process SDK servers are declared in the initialize
-// request instead.
-func processMCPServers(servers map[string]MCPServerConfig) map[string]MCPServerConfig {
-	out := make(map[string]MCPServerConfig, len(servers))
-	for name, cfg := range servers {
-		if _, ok := asSDKServer(cfg); ok {
-			continue
-		}
-		out[name] = cfg
-	}
-	return out
-}
-
-// asSDKServer reports whether cfg is an in-process SDK server, one with a
-// live handler. An SDK config without an instance is left to --mcp-config.
-func asSDKServer(cfg MCPServerConfig) (*MCPSDKServerConfig, bool) {
-	sdk, ok := cfg.(*MCPSDKServerConfig)
-	if !ok || sdk == nil || isNilHandler(sdk.Instance) {
-		return nil, false
-	}
-	return sdk, true
-}
-
-// isNilHandler reports whether h is nil or a typed nil pointer.
-func isNilHandler(h MCPHandler) bool {
-	if h == nil {
-		return true
-	}
-	v := reflect.ValueOf(h)
-	switch v.Kind() {
-	case reflect.Pointer, reflect.Map, reflect.Func, reflect.Interface, reflect.Slice, reflect.Chan:
-		return v.IsNil()
-	}
-	return false
 }

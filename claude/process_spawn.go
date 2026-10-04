@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 )
 
 // SpawnOptions describes the CLI process the SDK wants to start. It is passed
@@ -88,29 +87,6 @@ func (p *localProcess) Wait() error           { return p.cmd.Wait() }
 func (p *localProcess) Kill() error           { return p.cmd.Process.Kill() }
 
 func (p *localProcess) Signal(sig os.Signal) error { return p.cmd.Process.Signal(sig) }
-
-// jsExtensions mark a CLI path that must run under a JavaScript runtime.
-var jsExtensions = []string{".js", ".mjs", ".tsx", ".ts", ".jsx"}
-
-// resolveCommand picks the program and argument list for cliPath, as the
-// TypeScript SDK does: a native CLI runs directly with ExecutableArgs before
-// the flags; a JavaScript CLI runs under Executable (default "node") with
-// ExecutableArgs, then the script path, then the flags.
-func resolveCommand(cliPath string, opts *Options, flags []string) (string, []string) {
-	args := make([]string, 0, len(opts.ExecutableArgs)+1+len(flags))
-	args = append(args, opts.ExecutableArgs...)
-	for _, ext := range jsExtensions {
-		if strings.HasSuffix(cliPath, ext) {
-			runtime := opts.Executable
-			if runtime == "" {
-				runtime = "node"
-			}
-			args = append(args, cliPath)
-			return runtime, append(args, flags...)
-		}
-	}
-	return cliPath, append(args, flags...)
-}
 
 // exitCoder is implemented by process errors that carry an exit status, such
 // as *exec.ExitError.

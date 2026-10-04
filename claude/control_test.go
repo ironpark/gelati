@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"iter"
 	"sync"
 	"testing"
 	"time"
@@ -15,10 +16,31 @@ func startEngine(t *testing.T, opts *Options) (*engine, *fakeTransport) {
 	if err := ft.Connect(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	eng := newEngine(ft, opts)
-	eng.Start(t.Context())
-	t.Cleanup(func() { _ = eng.Close() })
+	launch, err := resolveLaunch(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := newEngine(ft, opts, launch)
+	eng.start(t.Context())
+	t.Cleanup(func() { _ = eng.close() })
 	return eng, ft
+}
+
+// interrupt sends an interrupt control request on eng.
+func interrupt(ctx context.Context, eng *engine) error {
+	_, err := eng.request(ctx, "interrupt", nil)
+	return err
+}
+
+// rawInputs yields each frame as a UserInput sent verbatim.
+func rawInputs(frames ...map[string]any) iter.Seq[UserInput] {
+	return func(yield func(UserInput) bool) {
+		for _, f := range frames {
+			if !yield(UserInput{Raw: f}) {
+				return
+			}
+		}
+	}
 }
 
 func TestEngineMessageStream(t *testing.T) {
@@ -35,7 +57,7 @@ func TestEngineMessageStream(t *testing.T) {
 	ft.finish(nil)
 
 	var kinds []string
-	for msg, err := range eng.Messages() {
+	for msg, err := range eng.receive(context.Background()) {
 		if err != nil {
 			t.Fatalf("stream error: %v", err)
 		}
@@ -54,65 +76,6 @@ func TestEngineMessageStream(t *testing.T) {
 	// than surfaced or treated as fatal.
 	if len(kinds) != 3 || kinds[0] != "system" || kinds[2] != "result" {
 		t.Fatalf("kinds = %q", kinds)
-	}
-}
-
-func TestEngineControlRequestRoundTrip(t *testing.T) {
-	t.Parallel()
-	eng, ft := startEngine(t, nil)
-	ft.respondSuccess(map[string]any{"ok": true})
-
-	if err := eng.Interrupt(t.Context()); err != nil {
-		t.Fatalf("interrupt: %v", err)
-	}
-	if err := eng.SetPermissionMode(t.Context(), PermissionModeAcceptEdits); err != nil {
-		t.Fatalf("set permission mode: %v", err)
-	}
-	if err := eng.SetModel(t.Context(), "opus"); err != nil {
-		t.Fatalf("set model: %v", err)
-	}
-	if _, err := eng.RewindFiles(t.Context(), "u1", false); err != nil {
-		t.Fatalf("rewind: %v", err)
-	}
-	if err := eng.ReconnectMCPServer(t.Context(), "fs"); err != nil {
-		t.Fatalf("reconnect: %v", err)
-	}
-	if err := eng.ToggleMCPServer(t.Context(), "fs", false); err != nil {
-		t.Fatalf("toggle: %v", err)
-	}
-	if err := eng.StopTask(t.Context(), "t1"); err != nil {
-		t.Fatalf("stop task: %v", err)
-	}
-	if _, err := eng.MCPStatus(t.Context()); err != nil {
-		t.Fatalf("mcp status: %v", err)
-	}
-	if _, err := eng.ContextUsage(t.Context(), ""); err != nil {
-		t.Fatalf("context usage: %v", err)
-	}
-
-	var subtypes []string
-	ids := map[string]bool{}
-	for _, frame := range ft.frames(t) {
-		if frame["type"] != "control_request" {
-			continue
-		}
-		req := frame["request"].(map[string]any)
-		subtypes = append(subtypes, req["subtype"].(string))
-		id := frame["request_id"].(string)
-		if ids[id] {
-			t.Fatalf("duplicate request id %q", id)
-		}
-		ids[id] = true
-	}
-	want := []string{"interrupt", "set_permission_mode", "set_model", "rewind_files",
-		"mcp_reconnect", "mcp_toggle", "stop_task", "mcp_status", "get_context_usage"}
-	if len(subtypes) != len(want) {
-		t.Fatalf("subtypes = %q, want %q", subtypes, want)
-	}
-	for i := range want {
-		if subtypes[i] != want[i] {
-			t.Fatalf("subtypes = %q, want %q", subtypes, want)
-		}
 	}
 }
 
@@ -154,7 +117,7 @@ func TestEngineConcurrentControlRequests(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs[i] = eng.StopTask(t.Context(), "task")
+			_, errs[i] = eng.request(t.Context(), "stop_task", map[string]any{"task_id": "task"})
 		}()
 	}
 	wg.Wait()
@@ -181,7 +144,7 @@ func TestEngineControlErrorResponse(t *testing.T) {
 	}
 	ft.mu.Unlock()
 
-	err := eng.Interrupt(t.Context())
+	err := interrupt(t.Context(), eng)
 	var ctrlErr *ControlError
 	if !errors.As(err, &ctrlErr) {
 		t.Fatalf("error = %T (%v), want *ControlError", err, err)
@@ -239,14 +202,14 @@ func TestEngineInitializeRegistersHooks(t *testing.T) {
 	eng, ft := startEngine(t, opts)
 	ft.respondSuccess(map[string]any{"commands": []any{"/help"}, "output_style": "default"})
 
-	info, err := eng.Initialize(t.Context())
+	info, err := eng.initialize(t.Context())
 	if err != nil {
 		t.Fatalf("initialize: %v", err)
 	}
-	if info["output_style"] != "default" {
-		t.Fatalf("server info = %#v", info)
+	if info.Raw["output_style"] != "default" {
+		t.Fatalf("server info = %#v", info.Raw)
 	}
-	if eng.ServerInfo()["output_style"] != "default" {
+	if eng.initializeResult().Raw["output_style"] != "default" {
 		t.Fatal("server info should be retained")
 	}
 
@@ -322,7 +285,7 @@ func TestEngineHookErrors(t *testing.T) {
 	}
 	eng, ft := startEngine(t, opts)
 	ft.respondSuccess(nil)
-	if _, err := eng.Initialize(t.Context()); err != nil {
+	if _, err := eng.initialize(t.Context()); err != nil {
 		t.Fatalf("initialize: %v", err)
 	}
 	ft.mu.Lock()
@@ -458,7 +421,7 @@ func TestEngineUnsupportedControlRequest(t *testing.T) {
 	}
 }
 
-func TestEngineMCPMessageWithoutRouter(t *testing.T) {
+func TestEngineMCPMessageUnknownServer(t *testing.T) {
 	t.Parallel()
 	_, ft := startEngine(t, nil)
 	ft.push(map[string]any{"type": "control_request", "request_id": "m1", "request": map[string]any{
@@ -478,8 +441,7 @@ func TestEngineMCPMessageWithoutRouter(t *testing.T) {
 func TestEngineMCPMessageRouted(t *testing.T) {
 	t.Parallel()
 	eng, ft := startEngine(t, nil)
-	registry := newSDKMCPRegistry(eng)
-	registry.connect("calc", &MCPSDKServerConfig{Name: "calc", Instance: mcpHandlerFunc(func(_ context.Context, message json.RawMessage) (json.RawMessage, error) {
+	eng.mcpServers.connect("calc", &MCPSDKServerConfig{Name: "calc", Instance: mcpHandlerFunc(func(_ context.Context, message json.RawMessage) (json.RawMessage, error) {
 		var req map[string]any
 		if err := json.Unmarshal(message, &req); err != nil {
 			return nil, err
@@ -492,7 +454,6 @@ func TestEngineMCPMessageRouted(t *testing.T) {
 		}
 		return json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`), nil
 	})})
-	eng.mcpServers = registry
 
 	ft.push(map[string]any{"type": "control_request", "request_id": "m1", "request": map[string]any{
 		"subtype": "mcp_message", "server_name": "calc",
@@ -566,7 +527,7 @@ func TestEngineProcessErrorBecomesResultError(t *testing.T) {
 	ft.finish(NewProcessError("Command failed with exit code 1", &code, ""))
 
 	var last error
-	for _, err := range eng.Messages() {
+	for _, err := range eng.receive(context.Background()) {
 		if err != nil {
 			last = err
 		}
@@ -595,7 +556,7 @@ func TestEngineProcessErrorKeptAfterOtherMessages(t *testing.T) {
 	ft.finish(NewProcessError("Command failed with exit code 1", &code, "stderr tail"))
 
 	var last error
-	for _, err := range eng.Messages() {
+	for _, err := range eng.receive(context.Background()) {
 		if err != nil {
 			last = err
 		}
@@ -614,7 +575,7 @@ func TestEngineReadErrorFailsPendingRequests(t *testing.T) {
 	t.Parallel()
 	eng, ft := startEngine(t, nil)
 	done := make(chan error, 1)
-	go func() { done <- eng.Interrupt(t.Context()) }()
+	go func() { done <- interrupt(t.Context(), eng) }()
 	ft.nextWrite(t) // the control request
 
 	ft.finish(errors.New("stream broke"))
@@ -631,17 +592,10 @@ func TestEngineReadErrorFailsPendingRequests(t *testing.T) {
 func TestEngineStreamInput(t *testing.T) {
 	t.Parallel()
 	eng, ft := startEngine(t, nil)
-	inputs := []map[string]any{
-		{"type": "user", "message": map[string]any{"role": "user", "content": "one"}},
-		{"type": "user", "message": map[string]any{"role": "user", "content": "two"}},
-	}
-	if err := eng.StreamInput(t.Context(), func(yield func(map[string]any) bool) {
-		for _, in := range inputs {
-			if !yield(in) {
-				return
-			}
-		}
-	}); err != nil {
+	if err := eng.streamInput(t.Context(), rawInputs(
+		map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": "one"}},
+		map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": "two"}},
+	)); err != nil {
 		t.Fatalf("stream input: %v", err)
 	}
 	frames := ft.frames(t)
@@ -667,9 +621,7 @@ func TestEngineStreamInputWaitsForResult(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = eng.StreamInput(t.Context(), func(yield func(map[string]any) bool) {
-			yield(map[string]any{"type": "user", "message": map[string]any{"content": "hi"}})
-		})
+		_ = eng.streamInput(t.Context(), rawInputs(map[string]any{"type": "user", "message": map[string]any{"content": "hi"}}))
 	}()
 
 	// The hold is released only by a run-ending result.
@@ -710,9 +662,7 @@ func TestEngineStreamInputHeldByInflightTask(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = eng.StreamInput(t.Context(), func(yield func(map[string]any) bool) {
-			yield(map[string]any{"type": "user", "message": map[string]any{"content": "hi"}})
-		})
+		_ = eng.streamInput(t.Context(), rawInputs(map[string]any{"type": "user", "message": map[string]any{"content": "hi"}}))
 	}()
 	select {
 	case <-done:
@@ -750,7 +700,7 @@ func TestEngineCloseJoinsHandlers(t *testing.T) {
 	<-running
 
 	closed := make(chan error, 1)
-	go func() { closed <- eng.Close() }()
+	go func() { closed <- eng.close() }()
 	select {
 	case <-closed:
 		t.Fatal("Close returned while a handler was still running")
@@ -771,7 +721,7 @@ func TestEngineCloseJoinsHandlers(t *testing.T) {
 		t.Fatal("handler did not finish before Close returned")
 	}
 	// The message stream terminates once the engine is closed.
-	for range eng.Messages() {
+	for range eng.receive(context.Background()) {
 	}
 }
 
@@ -779,9 +729,9 @@ func TestEngineCloseUnblocksControlRequests(t *testing.T) {
 	t.Parallel()
 	eng, _ := startEngine(t, nil)
 	done := make(chan error, 1)
-	go func() { done <- eng.Interrupt(t.Context()) }()
+	go func() { done <- interrupt(t.Context(), eng) }()
 	time.Sleep(50 * time.Millisecond)
-	_ = eng.Close()
+	_ = eng.close()
 	select {
 	case err := <-done:
 		var connErr *ConnectionError
@@ -798,7 +748,7 @@ func TestEngineContextCancelsControlRequest(t *testing.T) {
 	eng, _ := startEngine(t, nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	go func() { done <- eng.Interrupt(ctx) }()
+	go func() { done <- interrupt(ctx, eng) }()
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 	select {

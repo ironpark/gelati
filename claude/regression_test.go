@@ -144,7 +144,7 @@ func TestEngineCloseCancelsInflightHandlers(t *testing.T) {
 		t.Fatal("the permission callback was never called")
 	}
 
-	finishesWithin(t, 3*time.Second, "engine Close", func() { _ = eng.Close() })
+	finishesWithin(t, 3*time.Second, "engine Close", func() { _ = eng.close() })
 	select {
 	case <-cancelled:
 	default:

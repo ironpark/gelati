@@ -85,10 +85,40 @@ type ClaimError struct {
 	Claim *ClaimResult
 	// Err is the underlying error, if any.
 	Err error
+
+	// reason is the reason the SDK itself reported, one of the claim*
+	// constants; empty for the CLI's refusals.
+	reason string
 }
 
 // Unwrap returns the underlying error.
 func (e *ClaimError) Unwrap() error { return e.Err }
+
+// Reasons the SDK reports in a ClaimError.
+const (
+	claimSpareExited        = "spare_exited"
+	claimSpareClosed        = "spare_closed"
+	claimFailed             = "claim_failed"
+	claimSettingsNotApplied = "settings_not_applied"
+	claimOptionNotApplied   = "option_not_applied"
+)
+
+// newClaimError builds a ClaimError whose message is reason: detail.
+func newClaimError(reason, detail string, claim *ClaimResult, err error) *ClaimError {
+	return &ClaimError{baseError: baseError{Msg: reason + ": " + detail}, Claim: claim, Err: err, reason: reason}
+}
+
+// spareState is where a SpareProcess is in its life.
+type spareState int
+
+const (
+	// spareParked waits for a claim.
+	spareParked spareState = iota
+	// spareClaimed has been claimed; it stays so when the session ends.
+	spareClaimed
+	// spareClosed was closed before a claim.
+	spareClosed
+)
 
 // SpareProcess is a pre-started CLI process parked until a session claims it,
 // so the first response of a session arrives without the startup latency.
@@ -100,9 +130,8 @@ type SpareProcess struct {
 	parkDir    string
 	sdkServers []string
 
-	mu      sync.Mutex
-	claimed bool
-	closed  bool
+	mu    sync.Mutex
+	state spareState
 
 	settleOnce sync.Once
 	settled    chan struct{}
@@ -114,8 +143,8 @@ type SpareProcess struct {
 
 // Prewarm starts a CLI process that waits for a session to claim it (the
 // CLI's --await-claim mode) and completes the initialize handshake, bounded by
-// DefaultInitializeTimeout unless ctx has an earlier deadline. A spare has no
-// session yet, so Resume, ContinueConversation and ForkSession are rejected.
+// DefaultInitializeTimeout when ctx has no deadline. A spare has no session
+// yet, so Resume, ContinueConversation and ForkSession are rejected.
 //
 // Without Options.Cwd the process is parked in a fresh private directory under
 // the Claude config directory (spares/spare-*), removed once the spare is
@@ -128,26 +157,51 @@ func Prewarm(ctx context.Context, opts *Options) (*SpareProcess, error) {
 }
 
 func prewarm(ctx context.Context, opts *Options, deps *sessionDeps) (*SpareProcess, error) {
+	spareOpts, parkDir, err := spareOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+	sess, err := startSession(ctx, spareOpts, entrypoint, deps)
+	if err != nil {
+		if parkDir != "" {
+			_ = os.RemoveAll(parkDir)
+		}
+		return nil, err
+	}
+	s := &SpareProcess{
+		sess:       sess,
+		parkDir:    parkDir,
+		sdkServers: slices.Sorted(maps.Keys(sdkMCPServers(spareOpts))),
+		settled:    make(chan struct{}),
+	}
+	go s.watchExit()
+	return s, nil
+}
+
+// spareOptions copies opts for a spare process: started with --await-claim
+// and, without a Cwd, parked in a fresh private directory, which is returned
+// (empty when opts name a Cwd).
+func spareOptions(opts *Options) (*Options, string, error) {
 	var copied Options
 	if opts != nil {
 		copied = *opts
 	}
 	if copied.Resume != "" || copied.ContinueConversation || copied.ForkSession {
-		return nil, errors.New("claude: Prewarm: Resume, ContinueConversation and ForkSession describe a session; " +
+		return nil, "", errors.New("claude: Prewarm: Resume, ContinueConversation and ForkSession describe a session; " +
 			"a spare has none, so pass them to Query instead")
 	}
 	parkDir := ""
 	if copied.Cwd == "" {
 		root, err := spareParkRoot(copied.Env)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		if err := os.MkdirAll(root, 0o700); err != nil {
-			return nil, fmt.Errorf("claude: Prewarm: creating %s: %w", root, err)
+			return nil, "", fmt.Errorf("claude: Prewarm: creating %s: %w", root, err)
 		}
 		dir, err := os.MkdirTemp(root, "spare-")
 		if err != nil {
-			return nil, fmt.Errorf("claude: Prewarm: creating park directory: %w", err)
+			return nil, "", fmt.Errorf("claude: Prewarm: creating park directory: %w", err)
 		}
 		parkDir = dir
 		copied.Cwd = dir
@@ -156,40 +210,7 @@ func prewarm(ctx context.Context, opts *Options, deps *sessionDeps) (*SpareProce
 	maps.Copy(extra, copied.ExtraArgs)
 	extra["await-claim"] = nil
 	copied.ExtraArgs = extra
-
-	removePark := func() {
-		if parkDir != "" {
-			_ = os.RemoveAll(parkDir)
-		}
-	}
-	sess, err := openSession(ctx, &copied, entrypoint, deps)
-	if err != nil {
-		removePark()
-		return nil, err
-	}
-	if err := initializeWarm(ctx, sess); err != nil {
-		removePark()
-		return nil, err
-	}
-
-	sdkServers := slices.Sorted(maps.Keys(sdkMCPServers(&copied)))
-	s := &SpareProcess{
-		sess:       sess,
-		parkDir:    parkDir,
-		sdkServers: sdkServers,
-		settled:    make(chan struct{}),
-	}
-	go func() {
-		<-sess.eng.readerDone
-		s.mu.Lock()
-		claimed := s.claimed
-		s.mu.Unlock()
-		if !claimed {
-			s.settle(nil, &ClaimError{baseError: baseError{Msg: "spare_exited: the spare process exited before it was claimed"}})
-		}
-		s.removePark()
-	}()
-	return s, nil
+	return &copied, parkDir, nil
 }
 
 // spareParkRoot picks the directory spares are parked under:
@@ -217,6 +238,19 @@ func spareParkRoot(env map[string]string) (string, error) {
 			"set CLAUDE_CONFIG_DIR or HOME to an absolute path, or set Options.Cwd")
 	}
 	return filepath.Join(dir, "spares"), nil
+}
+
+// watchExit reports a spare whose process ends before a claim, and removes the
+// park directory once the process is gone.
+func (s *SpareProcess) watchExit() {
+	<-s.sess.eng.outputDone()
+	s.mu.Lock()
+	claimed := s.state == spareClaimed
+	s.mu.Unlock()
+	if !claimed {
+		s.settle(nil, newClaimError(claimSpareExited, "the spare process exited before it was claimed", nil, nil))
+	}
+	s.removePark()
 }
 
 func (s *SpareProcess) removePark() {
@@ -251,13 +285,13 @@ func (s *SpareProcess) Claimed(ctx context.Context) (*ClaimResult, error) {
 // Exited is closed when the spare's process ends, claimed or not. A parked
 // spare that exits should be replaced.
 func (s *SpareProcess) Exited() <-chan struct{} {
-	return s.sess.eng.readerDone
+	return s.sess.eng.outputDone()
 }
 
 // InitializationResult reports the initialize response: of the parked process
 // before a claim, and of the claimed session once the claim succeeded.
 func (s *SpareProcess) InitializationResult() *InitializeResult {
-	return s.sess.eng.InitializeResult()
+	return s.sess.eng.initializeResult()
 }
 
 // Claim binds the spare to a session and sends prompt as its first message,
@@ -271,165 +305,192 @@ func (s *SpareProcess) Claim(ctx context.Context, prompt string, opts ClaimOptio
 
 // ClaimStream is Claim with several user turns known up front.
 func (s *SpareProcess) ClaimStream(ctx context.Context, inputs iter.Seq[UserInput], opts ClaimOptions) (iter.Seq2[Message, error], error) {
-	var hookKeys []string
-	for _, key := range claimHookSettingKeys {
-		if v, ok := opts.Settings[key]; ok && v != nil {
-			hookKeys = append(hookKeys, key)
-		}
+	if err := validateClaimSettings(opts.Settings); err != nil {
+		return nil, err
 	}
-	if len(hookKeys) > 0 {
-		return nil, fmt.Errorf("claude: SpareProcess.Claim: hook settings (%s) cannot be applied at claim, "+
-			"because the claimed folder's SessionStart hooks start with the claim; pass them to Prewarm in "+
-			"Options.Settings. Nothing was sent: the spare can still be claimed without them",
-			strings.Join(hookKeys, ", "))
-	}
-
-	s.mu.Lock()
-	switch {
-	case s.claimed:
-		s.mu.Unlock()
-		return nil, errors.New("claude: SpareProcess.Claim can be called only once")
-	case s.closed || s.exited():
-		s.mu.Unlock()
-		return nil, errors.New("claude: SpareProcess.Claim: the spare was closed or has exited; start the session with Query")
-	}
-	s.claimed = true
-	s.mu.Unlock()
-
-	cwd := opts.Cwd
-	if strings.TrimSpace(cwd) != "" && !filepath.IsAbs(cwd) && cwd != "~" && !strings.HasPrefix(cwd, "~/") {
-		if abs, err := filepath.Abs(cwd); err == nil {
-			cwd = abs
-		}
-	}
-	eng := s.sess.eng
-
-	// The claim, then the per-session options, are written in order before
-	// the prompt can be.
-	claimReq := map[string]any{
-		"subtype":            "claim_session",
-		"cwd":                cwd,
-		"sdk_mcp_servers":    nonNilStrings(s.sdkServers),
-		"include_initialize": true,
-	}
-	if opts.PermissionMode != "" {
-		claimReq["permission_mode"] = opts.PermissionMode
-	}
-	if opts.Env != nil {
-		claimReq["env"] = opts.Env
-	}
-	if opts.AdditionalDirectories != nil {
-		claimReq["additional_directories"] = opts.AdditionalDirectories
-	}
-	if opts.AppendSystemPrompt != "" {
-		claimReq["append_system_prompt"] = opts.AppendSystemPrompt
-	}
-	if opts.Title != "" {
-		claimReq["title"] = opts.Title
-	}
-	if opts.Agents != nil {
-		claimReq["agents"] = opts.Agents
-	}
-	claimWait, err := eng.beginControlRequest(ctx, claimReq)
-	if err != nil {
-		s.settle(nil, &ClaimError{baseError: baseError{Msg: "claim_failed: " + err.Error()}, Err: err})
+	if err := s.reserveClaim(); err != nil {
 		return nil, err
 	}
 
-	type option struct {
-		name string
-		wait func(context.Context) (map[string]any, error)
-		err  error
+	// The claim, then the per-session options, are written in order before
+	// the prompt can be.
+	cwd := resolveClaimCwd(opts.Cwd)
+	claimWait, err := s.sess.eng.beginControlRequest(ctx, claimRequest(cwd, s.sdkServers, opts))
+	if err != nil {
+		s.settle(nil, newClaimError(claimFailed, err.Error(), nil, err))
+		return nil, err
 	}
-	var options []*option
-	var settingsOpt *option
-	if opts.Model != "" {
-		o := &option{name: "model"}
-		o.wait, o.err = eng.beginControlRequest(ctx, map[string]any{"subtype": "set_model", "model": opts.Model})
-		options = append(options, o)
-	}
-	if opts.Settings != nil {
-		settingsOpt = &option{name: "settings"}
-		settingsOpt.wait, settingsOpt.err = eng.beginControlRequest(ctx,
-			map[string]any{"subtype": "apply_flag_settings", "settings": opts.Settings})
-		options = append(options, settingsOpt)
-	}
-
-	go func() {
-		resp, err := claimWait(ctx)
-		if err != nil {
-			// The CLI answers a prompt sent to a refused claim with a
-			// not_claimed error result; close the input so it exits.
-			_ = s.sess.eng.transport.EndInput()
-			s.settle(nil, &ClaimError{baseError: baseError{Msg: err.Error()}, Err: err})
-			return
-		}
-		s.removePark()
-		result := s.applyClaimResponse(resp, cwd)
-		var failed []string
-		var settingsErr error
-		for _, o := range options {
-			oerr := o.err
-			if oerr == nil {
-				_, oerr = o.wait(ctx)
-			}
-			if oerr == nil {
-				continue
-			}
-			if o == settingsOpt {
-				settingsErr = oerr
-			} else {
-				failed = append(failed, o.name+": "+oerr.Error())
-			}
-		}
-		switch {
-		case settingsErr != nil:
-			s.mu.Lock()
-			s.closed = true
-			s.mu.Unlock()
-			_ = s.sess.close()
-			s.settle(nil, &ClaimError{
-				baseError: baseError{Msg: "settings_not_applied: " + settingsErr.Error() +
-					"; the prompt was not sent and the process was closed; start the session with Query"},
-				Claim: result, Err: settingsErr,
-			})
-		case len(failed) > 0:
-			s.settle(nil, &ClaimError{
-				baseError: baseError{Msg: "option_not_applied: " + strings.Join(failed, "; ") + "; the session runs without these options"},
-				Claim:     result,
-			})
-		default:
-			s.settle(result, nil)
-		}
-	}()
+	options := s.sendClaimOptions(ctx, opts)
+	go s.awaitClaim(ctx, claimWait, options, cwd)
 
 	holdForSettings := opts.Settings != nil
-	var once sync.Once
-	return func(yield func(Message, error) bool) {
-		ran := false
-		once.Do(func() {
-			ran = true
-			if holdForSettings {
-				select {
-				case <-s.settled:
-				case <-ctx.Done():
-					_ = s.sess.close()
-					yield(nil, ctx.Err())
-					return
-				}
-				var claimErr *ClaimError
-				if s.err != nil && (!errors.As(s.err, &claimErr) || !strings.HasPrefix(claimErr.Msg, "option_not_applied")) {
-					_ = s.sess.close()
-					yield(nil, s.err)
-					return
-				}
-			}
-			runQuery(ctx, s.sess, inputs, yield)
-		})
-		if !ran {
-			yield(nil, errors.New("claude: a claimed session's sequence can be ranged over only once"))
+	return singleUse(func(yield func(Message, error) bool) {
+		s.runClaimed(ctx, inputs, holdForSettings, yield)
+	}, "claude: a claimed session's sequence can be ranged over only once"), nil
+}
+
+// validateClaimSettings refuses a claim settings overlay that governs hooks.
+func validateClaimSettings(settings map[string]any) error {
+	var hookKeys []string
+	for _, key := range claimHookSettingKeys {
+		if v, ok := settings[key]; ok && v != nil {
+			hookKeys = append(hookKeys, key)
 		}
-	}, nil
+	}
+	if len(hookKeys) == 0 {
+		return nil
+	}
+	return fmt.Errorf("claude: SpareProcess.Claim: hook settings (%s) cannot be applied at claim, "+
+		"because the claimed folder's SessionStart hooks start with the claim; pass them to Prewarm in "+
+		"Options.Settings. Nothing was sent: the spare can still be claimed without them",
+		strings.Join(hookKeys, ", "))
+}
+
+// reserveClaim moves a parked spare to claimed, refusing a second claim and
+// a spare that was closed or has exited.
+func (s *SpareProcess) reserveClaim() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch {
+	case s.state == spareClaimed:
+		return errors.New("claude: SpareProcess.Claim can be called only once")
+	case s.state == spareClosed || isDone(s.sess.eng.outputDone()):
+		return errors.New("claude: SpareProcess.Claim: the spare was closed or has exited; start the session with Query")
+	}
+	s.state = spareClaimed
+	return nil
+}
+
+// resolveClaimCwd makes a relative claim directory absolute against this
+// process's working directory; ~ forms are left for the CLI to expand.
+func resolveClaimCwd(cwd string) string {
+	if strings.TrimSpace(cwd) != "" && !filepath.IsAbs(cwd) && cwd != "~" && !strings.HasPrefix(cwd, "~/") {
+		if abs, err := filepath.Abs(cwd); err == nil {
+			return abs
+		}
+	}
+	return cwd
+}
+
+// claimRequest builds the claim_session control request.
+func claimRequest(cwd string, sdkServers []string, opts ClaimOptions) map[string]any {
+	req := map[string]any{
+		"subtype":            "claim_session",
+		"cwd":                cwd,
+		"sdk_mcp_servers":    nonNilStrings(sdkServers),
+		"include_initialize": true,
+	}
+	if opts.PermissionMode != "" {
+		req["permission_mode"] = opts.PermissionMode
+	}
+	if opts.Env != nil {
+		req["env"] = opts.Env
+	}
+	if opts.AdditionalDirectories != nil {
+		req["additional_directories"] = opts.AdditionalDirectories
+	}
+	if opts.AppendSystemPrompt != "" {
+		req["append_system_prompt"] = opts.AppendSystemPrompt
+	}
+	if opts.Title != "" {
+		req["title"] = opts.Title
+	}
+	if opts.Agents != nil {
+		req["agents"] = opts.Agents
+	}
+	return req
+}
+
+// claimOption is a per-session option request written right after the claim.
+type claimOption struct {
+	name string
+	// settings marks the flag-settings overlay, whose refusal fails the
+	// claim rather than letting the session run without it.
+	settings bool
+	wait     func(context.Context) (map[string]any, error)
+	err      error
+}
+
+// sendClaimOptions writes the option requests of a claim: the model, then the
+// settings overlay.
+func (s *SpareProcess) sendClaimOptions(ctx context.Context, opts ClaimOptions) []*claimOption {
+	var options []*claimOption
+	send := func(name string, settings bool, request map[string]any) {
+		o := &claimOption{name: name, settings: settings}
+		o.wait, o.err = s.sess.eng.beginControlRequest(ctx, request)
+		options = append(options, o)
+	}
+	if opts.Model != "" {
+		send("model", false, map[string]any{"subtype": "set_model", "model": opts.Model})
+	}
+	if opts.Settings != nil {
+		send("settings", true, map[string]any{"subtype": "apply_flag_settings", "settings": opts.Settings})
+	}
+	return options
+}
+
+// awaitClaim waits for the claim and its options to be answered and settles
+// the outcome.
+func (s *SpareProcess) awaitClaim(ctx context.Context, claimWait func(context.Context) (map[string]any, error), options []*claimOption, cwd string) {
+	resp, err := claimWait(ctx)
+	if err != nil {
+		// The CLI answers a prompt sent to a refused claim with a
+		// not_claimed error result; close the input so it exits.
+		_ = s.sess.eng.endInput()
+		s.settle(nil, &ClaimError{baseError: baseError{Msg: err.Error()}, Err: err})
+		return
+	}
+	s.removePark()
+	result := s.applyClaimResponse(resp, cwd)
+	var failed []string
+	var settingsErr error
+	for _, o := range options {
+		oerr := o.err
+		if oerr == nil {
+			_, oerr = o.wait(ctx)
+		}
+		switch {
+		case oerr == nil:
+		case o.settings:
+			settingsErr = oerr
+		default:
+			failed = append(failed, o.name+": "+oerr.Error())
+		}
+	}
+	switch {
+	case settingsErr != nil:
+		_ = s.sess.close()
+		s.settle(nil, newClaimError(claimSettingsNotApplied, settingsErr.Error()+
+			"; the prompt was not sent and the process was closed; start the session with Query", result, settingsErr))
+	case len(failed) > 0:
+		s.settle(nil, newClaimError(claimOptionNotApplied,
+			strings.Join(failed, "; ")+"; the session runs without these options", result, nil))
+	default:
+		s.settle(result, nil)
+	}
+}
+
+// runClaimed runs the claimed session's query. With a settings overlay the
+// prompt first waits for the claim's outcome, and is not sent unless the
+// session runs.
+func (s *SpareProcess) runClaimed(ctx context.Context, inputs iter.Seq[UserInput], holdForSettings bool, yield func(Message, error) bool) {
+	if holdForSettings {
+		select {
+		case <-s.settled:
+		case <-ctx.Done():
+			_ = s.sess.close()
+			yield(nil, ctx.Err())
+			return
+		}
+		if s.err != nil {
+			if claimErr, ok := errors.AsType[*ClaimError](s.err); !ok || claimErr.reason != claimOptionNotApplied {
+				_ = s.sess.close()
+				yield(nil, s.err)
+				return
+			}
+		}
+	}
+	runQuery(ctx, s.sess, inputs, yield)
 }
 
 // applyClaimResponse turns a claim_session response into a ClaimResult and
@@ -453,7 +514,7 @@ func (s *SpareProcess) applyClaimResponse(resp map[string]any, cwd string) *Clai
 	}
 	eng := s.sess.eng
 	merged := maps.Clone(initialize)
-	if prev := eng.InitializeResult(); prev != nil {
+	if prev := eng.initializeResult(); prev != nil {
 		for _, key := range []string{"hooks_applied", "plugins_applied"} {
 			if _, has := merged[key]; !has {
 				if v, ok := prev.Raw[key]; ok {
@@ -466,25 +527,18 @@ func (s *SpareProcess) applyClaimResponse(resp map[string]any, cwd string) *Clai
 	return result
 }
 
-func (s *SpareProcess) exited() bool {
-	select {
-	case <-s.sess.eng.readerDone:
-		return true
-	default:
-		return false
-	}
-}
-
 // Close terminates the process. Before a claim this discards the spare and
 // Claimed reports spare_closed; after one it ends the session. It is
 // idempotent.
 func (s *SpareProcess) Close() error {
 	s.mu.Lock()
-	s.closed = true
-	claimed := s.claimed
+	claimed := s.state == spareClaimed
+	if !claimed {
+		s.state = spareClosed
+	}
 	s.mu.Unlock()
 	if !claimed {
-		s.settle(nil, &ClaimError{baseError: baseError{Msg: "spare_closed: the spare was closed before it was claimed"}})
+		s.settle(nil, newClaimError(claimSpareClosed, "the spare was closed before it was claimed", nil, nil))
 	}
 	err := s.sess.close()
 	s.removePark()

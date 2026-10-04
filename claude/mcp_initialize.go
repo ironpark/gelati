@@ -23,7 +23,7 @@ const mcpManifestCaptureTimeout = 250 * time.Millisecond
 const mcpManifestIDPrefix = "sdk-manifest-capture:"
 
 // sdkMCPInitializeFields returns the initialize-request fields that declare
-// in-process SDK MCP servers, matching the TypeScript SDK:
+// the in-process SDK MCP servers, keyed by name, matching the TypeScript SDK:
 //
 //   - sdkMcpServers: the server names;
 //   - sdkMcpServerConfigs: {name: {timeout}} for servers with a timeout;
@@ -32,14 +32,8 @@ const mcpManifestIDPrefix = "sdk-manifest-capture:"
 //     without mcp_message round trips. Setting
 //     CLAUDE_AGENT_SDK_DISABLE_MCP_MANIFESTS turns this off.
 //
-// It returns nil when no in-process server is configured.
-func sdkMCPInitializeFields(opts *Options) map[string]any {
-	return sdkMCPDeclarationFields(sdkMCPServers(opts))
-}
-
-// sdkMCPDeclarationFields is sdkMCPInitializeFields for an explicit server
-// set, such as a session's live registry.
-func sdkMCPDeclarationFields(servers map[string]*MCPSDKServerConfig) map[string]any {
+// It returns nil when there is no server.
+func sdkMCPInitializeFields(servers map[string]*MCPSDKServerConfig) map[string]any {
 	if len(servers) == 0 {
 		return nil
 	}
@@ -48,7 +42,7 @@ func sdkMCPDeclarationFields(servers map[string]*MCPSDKServerConfig) map[string]
 
 	configs := map[string]any{}
 	for _, name := range names {
-		if timeout := positiveTimeout(servers[name].Timeout); timeout > 0 {
+		if timeout := servers[name].Timeout; timeout > 0 {
 			configs[name] = map[string]any{"timeout": timeout}
 		}
 	}

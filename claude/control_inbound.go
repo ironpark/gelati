@@ -2,21 +2,10 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 )
-
-// ErrRespondedOutOfBand is returned (or wrapped) by a CanUseTool,
-// OnElicitation or OnUserDialog callback that has already sent the
-// control_response some other way, for example a signed HTTP POST echoing
-// the request ID. The SDK then writes no reply of its own.
-//
-// Use it only after the reply was really sent: the CLI keeps waiting for a
-// reply that never comes otherwise. A permission prompt has no deadline, so
-// its tool stays blocked indefinitely.
-var ErrRespondedOutOfBand = errors.New("claude: control request answered out of band")
 
 // errSuppressReply makes handleControlRequest write no reply. It covers the
 // requests the TypeScript SDK deliberately leaves unanswered.
@@ -33,151 +22,183 @@ var unansweredSubtypes = map[string]bool{
 }
 
 // ---------------------------------------------------------------------------
-// MCP elicitation
+// Dispatch
 // ---------------------------------------------------------------------------
 
-// ElicitationMode is how an MCP server collects the input it asks for.
-type ElicitationMode = string
-
-// Elicitation modes.
-const (
-	// ElicitationModeForm asks for structured input described by
-	// ElicitationRequest.RequestedSchema.
-	ElicitationModeForm ElicitationMode = "form"
-	// ElicitationModeURL asks the user to complete a flow in a browser at
-	// ElicitationRequest.URL.
-	ElicitationModeURL ElicitationMode = "url"
-)
-
-// ElicitationRequest is an MCP server's request for user input.
-type ElicitationRequest struct {
-	// ServerName names the MCP server asking.
-	ServerName string
-	// Message is the text to show the user.
-	Message string
-	// Mode is "form", "url" or empty.
-	Mode ElicitationMode
-	// URL is the page to open in "url" mode.
-	URL string
-	// ElicitationID correlates a "url" elicitation with its completion
-	// notification.
-	ElicitationID string
-	// RequestedSchema is the JSON Schema of the input asked for in "form"
-	// mode.
-	RequestedSchema map[string]any
-	// Title, DisplayName and Description come from the server's
-	// permission-display metadata, for prompts driven by an elicitation.
-	Title       string
-	DisplayName string
-	Description string
-	// RequestID is the control request's request_id. A reply sent out of
-	// band (see ErrRespondedOutOfBand) must echo it.
-	RequestID string
-	// Raw is the complete request payload.
-	Raw map[string]any
-}
-
-// ElicitationAction is the user's answer to an elicitation.
-type ElicitationAction = string
-
-// Elicitation actions.
-const (
-	ElicitationAccept  ElicitationAction = "accept"
-	ElicitationDecline ElicitationAction = "decline"
-	ElicitationCancel  ElicitationAction = "cancel"
-)
-
-// ElicitationResult answers an elicitation (MCP ElicitResult).
-type ElicitationResult struct {
-	Action ElicitationAction `json:"action"`
-	// Content holds the submitted values when Action is "accept" in form
-	// mode.
-	Content map[string]any `json:"content,omitempty"`
-	// Meta is the result's _meta object.
-	Meta map[string]any `json:"_meta,omitempty"`
-}
-
-// OnElicitation answers an MCP elicitation. ctx is cancelled when the CLI
-// withdraws the request. Returning an error wrapping ErrRespondedOutOfBand
-// sends no reply; the elicitation then stays pending until the server times
-// it out unless the reply really went out some other way.
-type OnElicitation func(ctx context.Context, req ElicitationRequest) (*ElicitationResult, error)
-
-// ---------------------------------------------------------------------------
-// User dialogs
-// ---------------------------------------------------------------------------
-
-// UserDialogRequest asks the host to render a blocking dialog. Each kind
-// defines its own payload and result shape; the protocol carries both
-// opaquely.
-type UserDialogRequest struct {
-	// DialogKind identifies the dialog. The set is open: answer a kind you
-	// cannot render with UserDialogCancelled.
-	DialogKind string
-	// Payload is the dialog-specific data for the renderer.
-	Payload map[string]any
-	// ToolUseID is set when the dialog belongs to a tool call; it matches
-	// ToolPermissionContext.ToolUseID.
-	ToolUseID string
-	// RequestID is the control request's request_id. A reply sent out of
-	// band (see ErrRespondedOutOfBand) must echo it.
-	RequestID string
-	// Raw is the complete request payload.
-	Raw map[string]any
-}
-
-// UserDialogBehavior is how a dialog was settled.
-type UserDialogBehavior = string
-
-// Dialog outcomes.
-const (
-	// UserDialogCompleted reports the user's choice in UserDialogResult.Result.
-	UserDialogCompleted UserDialogBehavior = "completed"
-	// UserDialogCancelled dismisses the dialog; the CLI applies its default
-	// behavior.
-	UserDialogCancelled UserDialogBehavior = "cancelled"
-)
-
-// UserDialogResult is the host's answer to a UserDialogRequest.
-type UserDialogResult struct {
-	// Behavior is UserDialogCompleted or UserDialogCancelled. Empty means
-	// completed.
-	Behavior UserDialogBehavior
-	// Result is the dialog-specific answer when completed.
-	Result any
-}
-
-// MarshalJSON emits {"behavior":"completed","result":...} or
-// {"behavior":"cancelled"}.
-func (r UserDialogResult) MarshalJSON() ([]byte, error) {
-	if r.Behavior == UserDialogCancelled {
-		return json.Marshal(map[string]any{"behavior": UserDialogCancelled})
+// spawnControlHandler answers one control request from the CLI in its own
+// goroutine, so a slow callback cannot stall the read loop. A request whose ID
+// is already being answered (a duplicate delivery) is skipped.
+func (e *engine) spawnControlHandler(ctx context.Context, frame map[string]any) {
+	requestID := str(frame["request_id"])
+	handlerCtx, cancel := context.WithCancel(ctx)
+	h := &inflightHandler{cancel: cancel}
+	e.mu.Lock()
+	if _, dup := e.inflight[requestID]; dup || e.isClosed() {
+		// A closed engine has already cancelled its handlers (see close).
+		e.mu.Unlock()
+		cancel()
+		return
 	}
-	return json.Marshal(map[string]any{"behavior": UserDialogCompleted, "result": r.Result})
+	e.inflight[requestID] = h
+	e.mu.Unlock()
+
+	e.handlers.Add(1)
+	go func() {
+		defer e.handlers.Done()
+		defer cancel()
+		defer func() {
+			e.mu.Lock()
+			if e.inflight[requestID] == h {
+				delete(e.inflight, requestID)
+			}
+			e.mu.Unlock()
+		}()
+		e.handleControlRequest(handlerCtx, requestID, frame)
+	}()
 }
 
-// OnUserDialog renders a dialog the CLI requested and returns the user's
-// answer. ctx is cancelled when the CLI withdraws the request. Returning an
-// error wrapping ErrRespondedOutOfBand sends no reply; the dialog then stays
-// parked until the CLI's deadline unless the reply went out some other way.
-type OnUserDialog func(ctx context.Context, req UserDialogRequest) (*UserDialogResult, error)
-
-// validateCallbackOptions rejects callback option combinations the CLI could
-// not serve.
-func validateCallbackOptions(opts *Options) error {
-	if opts != nil && len(opts.SupportedDialogKinds) > 0 && opts.OnUserDialog == nil {
-		return errors.New("claude: Options.SupportedDialogKinds requires Options.OnUserDialog; " +
-			"declaring dialog kinds without a handler would park dialogs nothing can answer")
+// cancelInbound withdraws the handler answering request id, after the CLI
+// sent a control_cancel_request for it.
+func (e *engine) cancelInbound(id string) {
+	e.mu.Lock()
+	h := e.inflight[id]
+	delete(e.inflight, id)
+	e.mu.Unlock()
+	if h != nil {
+		h.cancel()
 	}
-	return nil
+}
+
+// handleControlRequest answers one control request and writes the reply.
+func (e *engine) handleControlRequest(ctx context.Context, requestID string, frame map[string]any) {
+	request, _ := frame["request"].(map[string]any)
+	data, err := e.dispatchControlRequest(ctx, requestID, request)
+	if ctx.Err() != nil {
+		// The CLI cancelled the request and is no longer listening for a
+		// reply.
+		return
+	}
+	if errors.Is(err, errSuppressReply) || errors.Is(err, ErrRespondedOutOfBand) {
+		return
+	}
+	reply := controlSuccessFrame(requestID, data)
+	if err != nil {
+		reply = controlErrorFrame(requestID, err.Error())
+	}
+	_ = e.writeFrame(ctx, reply)
+}
+
+// dispatchControlRequest runs the handler for one control request subtype.
+func (e *engine) dispatchControlRequest(ctx context.Context, requestID string, request map[string]any) (map[string]any, error) {
+	subtype := str(request["subtype"])
+	if unansweredSubtypes[subtype] {
+		return nil, errSuppressReply
+	}
+	switch subtype {
+	case "can_use_tool":
+		return e.handleCanUseTool(ctx, requestID, request)
+	case "hook_callback":
+		return e.handleHookCallback(ctx, request)
+	case "mcp_message":
+		return e.mcpServers.handleControl(ctx, request)
+	case "elicitation":
+		return e.handleElicitation(ctx, requestID, request)
+	case "request_user_dialog":
+		return e.handleUserDialog(ctx, requestID, request)
+	default:
+		return nil, fmt.Errorf("Unsupported control request subtype: %s", subtype)
+	}
+}
+
+// guardCallback runs fn, the part of a handler that calls user code, so a
+// panicking callback becomes an error reply naming what panicked rather than
+// taking the process down.
+func guardCallback(what string, fn func() (map[string]any, error)) (data map[string]any, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			data, err = nil, fmt.Errorf("%s panicked: %v", what, r)
+		}
+	}()
+	return fn()
+}
+
+// callbackReply renders the result of a callback that must either answer or
+// return an error: a nil result is refused, since the way to send no reply is
+// ErrRespondedOutOfBand.
+func callbackReply[T any](what string, result *T, err error) (map[string]any, error) {
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, fmt.Errorf("%s returned a nil result; return ErrRespondedOutOfBand to send no reply", what)
+	}
+	return toWireMap(result, "control response")
 }
 
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
-func (e *engine) handleElicitation(ctx context.Context, requestID string, request map[string]any) (data map[string]any, err error) {
-	if e.opts.OnElicitation == nil {
+func (e *engine) handleCanUseTool(ctx context.Context, requestID string, request map[string]any) (map[string]any, error) {
+	if e.cfg.canUseTool == nil {
+		return nil, errors.New("canUseTool callback is not provided")
+	}
+	input, _ := request["input"].(map[string]any)
+	permCtx := toolPermissionContext(requestID, request)
+	return guardCallback("can_use_tool callback", func() (map[string]any, error) {
+		result, err := e.cfg.canUseTool(ctx, str(request["tool_name"]), input, permCtx)
+		if err != nil {
+			return nil, err
+		}
+		return permissionReply(result, input, request)
+	})
+}
+
+// permissionReply renders a CanUseTool decision. An allow without
+// UpdatedInput keeps the tool's original input.
+func permissionReply(result PermissionResult, input, request map[string]any) (map[string]any, error) {
+	switch r := result.(type) {
+	case *PermissionResultAllow:
+		updated := r.UpdatedInput
+		if updated == nil {
+			updated = input
+		}
+		out := map[string]any{"behavior": "allow", "updatedInput": updated}
+		if r.UpdatedPermissions != nil {
+			out["updatedPermissions"] = r.UpdatedPermissions
+		}
+		stampPermissionReply(out, request, r.DecisionClassification)
+		return out, nil
+	case *PermissionResultDeny:
+		out := map[string]any{"behavior": "deny", "message": r.Message}
+		if r.Interrupt {
+			out["interrupt"] = true
+		}
+		stampPermissionReply(out, request, r.DecisionClassification)
+		return out, nil
+	default:
+		return nil, fmt.Errorf("permission callback returned %T, want *PermissionResultAllow or *PermissionResultDeny", result)
+	}
+}
+
+func (e *engine) handleHookCallback(ctx context.Context, request map[string]any) (map[string]any, error) {
+	id := str(request["callback_id"])
+	callback, ok := e.hookCallbacks[id]
+	if !ok {
+		return nil, fmt.Errorf("No hook callback found for ID: %s", id)
+	}
+	input, _ := request["input"].(map[string]any)
+	return guardCallback("hook callback", func() (map[string]any, error) {
+		out, err := callback(ctx, input, str(request["tool_use_id"]), HookContext{Raw: input})
+		if err != nil {
+			return nil, err
+		}
+		return toWireMap(out, "hook output")
+	})
+}
+
+func (e *engine) handleElicitation(ctx context.Context, requestID string, request map[string]any) (map[string]any, error) {
+	if e.cfg.onElicitation == nil {
 		return map[string]any{"action": ElicitationDecline}, nil
 	}
 	req := ElicitationRequest{
@@ -193,32 +214,23 @@ func (e *engine) handleElicitation(ctx context.Context, requestID string, reques
 		Raw:           request,
 	}
 	req.RequestedSchema, _ = request["requested_schema"].(map[string]any)
-
-	defer func() {
-		if r := recover(); r != nil {
-			data, err = nil, fmt.Errorf("elicitation callback panicked: %v", r)
-		}
-	}()
-	result, err := e.opts.OnElicitation(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	if result == nil {
-		return nil, errors.New("elicitation callback returned a nil result; return ErrRespondedOutOfBand to send no reply")
-	}
-	return toWireMap(result, "control response")
+	const what = "elicitation callback"
+	return guardCallback(what, func() (map[string]any, error) {
+		result, err := e.cfg.onElicitation(ctx, req)
+		return callbackReply(what, result, err)
+	})
 }
 
-func (e *engine) handleUserDialog(ctx context.Context, requestID string, request map[string]any) (data map[string]any, err error) {
+func (e *engine) handleUserDialog(ctx context.Context, requestID string, request map[string]any) (map[string]any, error) {
 	kind := str(request["dialog_kind"])
 	// Without a handler, or for a kind this host did not declare, stay
 	// silent: an error reply would be discarded and a "cancelled" one is a
 	// real settlement, so silence lets a capable client or the CLI's
 	// deadline settle the dialog.
-	if e.opts.OnUserDialog == nil {
+	if e.cfg.onUserDialog == nil {
 		return nil, errSuppressReply
 	}
-	if len(e.opts.SupportedDialogKinds) > 0 && !slices.Contains(e.opts.SupportedDialogKinds, kind) {
+	if len(e.cfg.dialogKinds) > 0 && !slices.Contains(e.cfg.dialogKinds, kind) {
 		return nil, errSuppressReply
 	}
 	req := UserDialogRequest{
@@ -228,18 +240,9 @@ func (e *engine) handleUserDialog(ctx context.Context, requestID string, request
 		Raw:        request,
 	}
 	req.Payload, _ = request["payload"].(map[string]any)
-
-	defer func() {
-		if r := recover(); r != nil {
-			data, err = nil, fmt.Errorf("user dialog callback panicked: %v", r)
-		}
-	}()
-	result, err := e.opts.OnUserDialog(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	if result == nil {
-		return nil, errors.New("user dialog callback returned a nil result; return ErrRespondedOutOfBand to send no reply")
-	}
-	return toWireMap(result, "control response")
+	const what = "user dialog callback"
+	return guardCallback(what, func() (map[string]any, error) {
+		result, err := e.cfg.onUserDialog(ctx, req)
+		return callbackReply(what, result, err)
+	})
 }
