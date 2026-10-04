@@ -7,8 +7,9 @@ import (
 )
 
 // Transport moves newline-delimited JSON between this process and a Claude Code
-// CLI session. The subprocess implementation is the only one used in
-// production; tests substitute fakes.
+// CLI session. By default the SDK runs the CLI as a subprocess; set
+// Options.Transport to substitute another implementation, for tests or for a
+// host that already owns the session.
 //
 // The lifecycle is: Connect, then any number of Write calls while
 // ReadMessages is being ranged over, then EndInput and Close. Close is

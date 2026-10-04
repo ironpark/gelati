@@ -237,3 +237,23 @@ func TestPrewarmRejections(t *testing.T) {
 		t.Fatal("claim after Close should fail")
 	}
 }
+
+func TestPrewarmOptionNotAppliedStillRuns(t *testing.T) {
+	t.Parallel()
+	ft := warmCLI(map[string]map[string]any{"set_model": {"error": "unknown model"}})
+	spare, _ := prewarmWith(t, ft, &Options{Cwd: t.TempDir()})
+	// The settings overlay holds the prompt until the claim settles; a
+	// refused model alone must not keep it from running.
+	seq, err := spare.Claim(t.Context(), "go", ClaimOptions{Cwd: "/w", Model: "nope", Settings: map[string]any{"x": 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := collectMessages(t, seq); err != nil || n != 2 {
+		t.Fatalf("messages = %d, err = %v", n, err)
+	}
+	_, err = spare.Claimed(t.Context())
+	var claimErr *ClaimError
+	if !errors.As(err, &claimErr) || !strings.HasPrefix(claimErr.Msg, "option_not_applied: model: unknown model") || claimErr.Claim == nil {
+		t.Fatalf("claimed error = %v", err)
+	}
+}

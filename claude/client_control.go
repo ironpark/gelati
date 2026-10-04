@@ -30,16 +30,112 @@ func (c *Client) SendControlRequest(ctx context.Context, subtype string, fields 
 	return c.call(ctx, subtype, fields)
 }
 
+// Interrupt aborts the current turn. InterruptWithReceipt also reports which
+// queued messages survive it.
+func (c *Client) Interrupt(ctx context.Context) error {
+	_, err := c.InterruptWithReceipt(ctx, nil)
+	return err
+}
+
 // InterruptWithReceipt aborts the current turn like Interrupt and returns the
 // CLI's receipt: the queued messages that survive the interrupt, or with
 // opts.CancelQueued the ones it cancelled. The receipt is nil from a CLI that
 // predates it (no interrupt_receipt_v1 capability). opts may be nil.
 func (c *Client) InterruptWithReceipt(ctx context.Context, opts *InterruptOptions) (*InterruptReceipt, error) {
-	eng, err := c.engineOrErr()
+	fields := map[string]any{}
+	if opts != nil && opts.CancelQueued {
+		fields["cancel_queued"] = true
+	}
+	resp, err := c.call(ctx, "interrupt", fields)
 	if err != nil {
 		return nil, err
 	}
-	return eng.InterruptWithReceipt(ctx, opts != nil && opts.CancelQueued)
+	stillQueued, ok := resp["still_queued"].([]any)
+	if !ok {
+		return nil, nil
+	}
+	receipt := &InterruptReceipt{StillQueued: stringItems(stillQueued)}
+	if cancelled, ok := resp["cancelled"].([]any); ok {
+		receipt.Cancelled = stringItems(cancelled)
+	}
+	return receipt, nil
+}
+
+// stringItems keeps the string elements of a JSON array.
+func stringItems(list []any) []string {
+	out := make([]string, 0, len(list))
+	for _, v := range list {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// SetPermissionMode changes the permission mode mid-conversation.
+func (c *Client) SetPermissionMode(ctx context.Context, mode PermissionMode) error {
+	_, err := c.call(ctx, "set_permission_mode", map[string]any{"mode": mode})
+	return err
+}
+
+// SetModel changes the model mid-conversation. An empty model restores the CLI
+// default.
+func (c *Client) SetModel(ctx context.Context, model string) error {
+	var value any
+	if model != "" {
+		value = model
+	}
+	_, err := c.call(ctx, "set_model", map[string]any{"model": value})
+	return err
+}
+
+// RewindFiles restores tracked files to their state at the given user message
+// and reports what changed; with opts.DryRun it only reports what would
+// change. opts may be nil. It requires Options.EnableFileCheckpointing, and
+// the message UUIDs it takes arrive on UserMessage values (enable them with
+// the CLI's replay-user-messages flag via Options.ExtraArgs).
+func (c *Client) RewindFiles(ctx context.Context, userMessageID string, opts *RewindFilesOptions) (*RewindFilesResult, error) {
+	fields := map[string]any{"user_message_id": userMessageID}
+	if opts != nil && opts.DryRun {
+		fields["dry_run"] = true
+	}
+	return decodeControl[RewindFilesResult](c.call(ctx, "rewind_files", fields))
+}
+
+// MCPServerStatus reports the live connection status of every configured MCP
+// server.
+func (c *Client) MCPServerStatus(ctx context.Context) (*MCPStatusResponse, error) {
+	return decodeControl[MCPStatusResponse](c.call(ctx, "mcp_status", nil))
+}
+
+// ContextUsage reports the context window usage breakdown, the same data the
+// CLI's /context command shows. opts may be nil.
+func (c *Client) ContextUsage(ctx context.Context, opts *ContextUsageOptions) (*ContextUsageResponse, error) {
+	fields := map[string]any{}
+	if opts != nil && opts.Detail != "" {
+		fields["detail"] = opts.Detail
+	}
+	return decodeControl[ContextUsageResponse](c.call(ctx, "get_context_usage", fields))
+}
+
+// ReconnectMCPServer retries a disconnected or failed MCP server.
+func (c *Client) ReconnectMCPServer(ctx context.Context, serverName string) error {
+	_, err := c.call(ctx, "mcp_reconnect", map[string]any{"serverName": serverName})
+	return err
+}
+
+// ToggleMCPServer enables or disables an MCP server, connecting or
+// disconnecting it and adding or removing its tools.
+func (c *Client) ToggleMCPServer(ctx context.Context, serverName string, enabled bool) error {
+	_, err := c.call(ctx, "mcp_toggle", map[string]any{"serverName": serverName, "enabled": enabled})
+	return err
+}
+
+// StopTask stops a running background task. A task_notification with status
+// "stopped" follows in the message stream.
+func (c *Client) StopTask(ctx context.Context, taskID string) error {
+	_, err := c.call(ctx, "stop_task", map[string]any{"task_id": taskID})
+	return err
 }
 
 // InitializationResult reports the typed initialize response: commands,
@@ -47,7 +143,7 @@ func (c *Client) InterruptWithReceipt(ctx context.Context, opts *InterruptOption
 // Reinitialize it reports the latest response.
 func (c *Client) InitializationResult() *InitializeResult {
 	if eng, err := c.engineOrErr(); err == nil {
-		return eng.InitializeResult()
+		return eng.initializeResult()
 	}
 	return nil
 }
@@ -57,7 +153,7 @@ func (c *Client) InitializationResult() *InitializeResult {
 // (a commands_changed system message). It is nil before Connect.
 func (c *Client) SupportedCommands() []SlashCommand {
 	if eng, err := c.engineOrErr(); err == nil {
-		return eng.SupportedCommands()
+		return eng.supportedCommands()
 	}
 	return nil
 }
@@ -93,7 +189,8 @@ func (c *Client) AccountInfo() *AccountInfo {
 // host that lost track of it (a transport gap, a reattached client). The same
 // hook registrations are sent again, and permission prompts and dialogs the
 // CLI still has open are delivered again to CanUseTool and OnUserDialog; a
-// request already being answered is not answered twice.
+// request already being answered is not answered twice. As for Connect,
+// DefaultInitializeTimeout bounds the handshake when ctx has no deadline.
 func (c *Client) Reinitialize(ctx context.Context) (*InitializeResult, error) {
 	eng, err := c.engineOrErr()
 	if err != nil {

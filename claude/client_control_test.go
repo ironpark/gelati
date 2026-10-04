@@ -312,3 +312,55 @@ func TestClientInitializeAccessors(t *testing.T) {
 		t.Fatal("Reinitialize did not send initialize")
 	}
 }
+
+func TestClientControlRequestRoundTrip(t *testing.T) {
+	t.Parallel()
+	client, ft := connectedClientWith(t, nil, nil)
+	ctx := t.Context()
+	calls := []struct {
+		name string
+		call func() error
+		want map[string]any
+	}{
+		{"interrupt", func() error { return client.Interrupt(ctx) }, map[string]any{"subtype": "interrupt"}},
+		{"permission mode", func() error { return client.SetPermissionMode(ctx, PermissionModeAcceptEdits) },
+			map[string]any{"subtype": "set_permission_mode", "mode": "acceptEdits"}},
+		{"model", func() error { return client.SetModel(ctx, "opus") }, map[string]any{"subtype": "set_model", "model": "opus"}},
+		{"default model", func() error { return client.SetModel(ctx, "") }, map[string]any{"subtype": "set_model", "model": nil}},
+		{"rewind", func() error {
+			_, err := client.RewindFiles(ctx, "u1", &RewindFilesOptions{DryRun: true})
+			return err
+		}, map[string]any{"subtype": "rewind_files", "user_message_id": "u1", "dry_run": true}},
+		{"reconnect", func() error { return client.ReconnectMCPServer(ctx, "fs") },
+			map[string]any{"subtype": "mcp_reconnect", "serverName": "fs"}},
+		{"toggle", func() error { return client.ToggleMCPServer(ctx, "fs", false) },
+			map[string]any{"subtype": "mcp_toggle", "serverName": "fs", "enabled": false}},
+		{"stop task", func() error { return client.StopTask(ctx, "t1") }, map[string]any{"subtype": "stop_task", "task_id": "t1"}},
+		{"mcp status", func() error {
+			_, err := client.MCPServerStatus(ctx)
+			return err
+		}, map[string]any{"subtype": "mcp_status"}},
+		{"context usage", func() error {
+			_, err := client.ContextUsage(ctx, &ContextUsageOptions{Detail: "full"})
+			return err
+		}, map[string]any{"subtype": "get_context_usage", "detail": "full"}},
+	}
+	for _, c := range calls {
+		if err := c.call(); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		assertJSONEqual(t, lastRequest(t, ft), c.want)
+	}
+
+	ids := map[string]bool{}
+	for _, frame := range ft.frames(t) {
+		if frame["type"] != "control_request" {
+			continue
+		}
+		id := frame["request_id"].(string)
+		if ids[id] {
+			t.Fatalf("duplicate request id %q", id)
+		}
+		ids[id] = true
+	}
+}

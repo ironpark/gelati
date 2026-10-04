@@ -403,12 +403,6 @@ func (s *MCPServer) ConnectMCP(send MCPSendFunc) (disconnect func()) {
 	}
 }
 
-// HandleMCPMessage answers one JSON-RPC message from the CLI's MCP client,
-// implementing MCPHandler. It returns nil for notifications and responses.
-func (s *MCPServer) HandleMCPMessage(ctx context.Context, message json.RawMessage) (json.RawMessage, error) {
-	return s.handle(ctx, message)
-}
-
 // jsonRPCRequest is one message from the CLI's MCP client.
 type jsonRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -417,12 +411,13 @@ type jsonRPCRequest struct {
 	Params  json.RawMessage `json:"params"`
 }
 
-// handle answers one JSON-RPC message. It returns nil for notifications, which
-// get no reply.
-func (s *MCPServer) handle(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+// HandleMCPMessage answers one JSON-RPC message from the CLI's MCP client,
+// implementing MCPHandler. It returns nil for notifications and responses,
+// which get no reply.
+func (s *MCPServer) HandleMCPMessage(ctx context.Context, message json.RawMessage) (json.RawMessage, error) {
 	var req jsonRPCRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
-		return s.errorReply(nil, jsonRPCInvalidRequest, "Invalid JSON-RPC message")
+	if err := json.Unmarshal(message, &req); err != nil {
+		return jsonRPCErrorReply(nil, jsonRPCInvalidRequest, "Invalid JSON-RPC message")
 	}
 	if len(req.ID) == 0 || string(req.ID) == "null" {
 		// A notification: nothing to answer.
@@ -439,15 +434,15 @@ func (s *MCPServer) handle(ctx context.Context, raw json.RawMessage) (json.RawMe
 		if s.instructions != "" {
 			result["instructions"] = s.instructions
 		}
-		return s.reply(req.ID, result)
+		return jsonRPCReply(req.ID, result)
 	case "ping":
-		return s.reply(req.ID, map[string]any{})
+		return jsonRPCReply(req.ID, map[string]any{})
 	case "tools/list":
-		return s.reply(req.ID, map[string]any{"tools": s.toolDescriptors()})
+		return jsonRPCReply(req.ID, map[string]any{"tools": s.toolDescriptors()})
 	case "tools/call":
-		return s.reply(req.ID, s.callTool(ctx, req.Params).wire())
+		return jsonRPCReply(req.ID, s.callTool(ctx, req.Params).wire())
 	default:
-		return s.errorReply(req.ID, jsonRPCMethodNotFound, "Method not found: "+req.Method)
+		return jsonRPCErrorReply(req.ID, jsonRPCMethodNotFound, "Method not found: "+req.Method)
 	}
 }
 
@@ -535,24 +530,28 @@ func (s *MCPServer) callTool(ctx context.Context, params json.RawMessage) (resul
 	return out
 }
 
-func (s *MCPServer) reply(id json.RawMessage, result any) (json.RawMessage, error) {
-	return json.Marshal(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"result":  result,
-	})
+// jsonRPCReply encodes a JSON-RPC success response.
+func jsonRPCReply(id json.RawMessage, result any) (json.RawMessage, error) {
+	return json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
 }
 
-func (s *MCPServer) errorReply(id json.RawMessage, code int, message string) (json.RawMessage, error) {
+// jsonRPCErrorReply encodes a JSON-RPC error response. A missing id is sent as
+// null.
+func jsonRPCErrorReply(id json.RawMessage, code int, message string) (json.RawMessage, error) {
 	var rawID any
 	if len(id) > 0 {
 		rawID = id
 	}
-	return json.Marshal(map[string]any{
+	return json.Marshal(jsonRPCError(rawID, code, message))
+}
+
+// jsonRPCError builds a JSON-RPC error response object.
+func jsonRPCError(id any, code int, message string) map[string]any {
+	return map[string]any{
 		"jsonrpc": "2.0",
-		"id":      rawID,
+		"id":      id,
 		"error":   map[string]any{"code": code, "message": message},
-	})
+	}
 }
 
 // negotiateProtocolVersion echoes the client's protocol version when it named

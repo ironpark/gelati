@@ -2,7 +2,6 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 )
 
@@ -118,118 +117,6 @@ func (SkillList) isSkillsConfig() {}
 type SkillsAll struct{}
 
 func (SkillsAll) isSkillsConfig() {}
-
-// ---------------------------------------------------------------------------
-// MCP server configuration
-// ---------------------------------------------------------------------------
-
-// MCPServerConfig configures one MCP server. Implementations are
-// MCPStdioServerConfig, MCPSSEServerConfig, MCPHTTPServerConfig and
-// MCPSDKServerConfig.
-type MCPServerConfig interface {
-	isMCPServerConfig()
-}
-
-// MCPStdioServerConfig launches an MCP server as a subprocess.
-type MCPStdioServerConfig struct {
-	Command string            `json:"command"`
-	Args    []string          `json:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-	// Timeout is the per-call tool timeout in milliseconds, overriding
-	// MCP_TOOL_TIMEOUT for this server. Zero leaves the default; the CLI
-	// ignores values below 1000.
-	Timeout int `json:"timeout,omitempty"`
-	// AlwaysLoad keeps every tool of the server in the prompt instead of
-	// deferring it behind tool search, and makes startup wait for the
-	// server to connect.
-	AlwaysLoad bool `json:"alwaysLoad,omitempty"`
-}
-
-func (*MCPStdioServerConfig) isMCPServerConfig() {}
-
-// MarshalJSON emits the stdio server shape with its type discriminator.
-func (c *MCPStdioServerConfig) MarshalJSON() ([]byte, error) {
-	type alias MCPStdioServerConfig
-	return json.Marshal(struct {
-		Type string `json:"type"`
-		*alias
-	}{"stdio", (*alias)(c)})
-}
-
-// MCPSSEServerConfig connects to an MCP server over server-sent events.
-type MCPSSEServerConfig struct {
-	URL     string            `json:"url"`
-	Headers map[string]string `json:"headers,omitempty"`
-	// Tools sets per-tool permission policies.
-	Tools []MCPServerToolPolicy `json:"tools,omitempty"`
-	// Timeout is the per-call tool timeout in milliseconds; see
-	// MCPStdioServerConfig.Timeout.
-	Timeout int `json:"timeout,omitempty"`
-	// AlwaysLoad: see MCPStdioServerConfig.AlwaysLoad.
-	AlwaysLoad bool `json:"alwaysLoad,omitempty"`
-}
-
-func (*MCPSSEServerConfig) isMCPServerConfig() {}
-
-// MarshalJSON emits the SSE server shape with its type discriminator.
-func (c *MCPSSEServerConfig) MarshalJSON() ([]byte, error) {
-	type alias MCPSSEServerConfig
-	return json.Marshal(struct {
-		Type string `json:"type"`
-		*alias
-	}{"sse", (*alias)(c)})
-}
-
-// MCPHTTPServerConfig connects to an MCP server over streamable HTTP.
-type MCPHTTPServerConfig struct {
-	URL     string            `json:"url"`
-	Headers map[string]string `json:"headers,omitempty"`
-	// Tools sets per-tool permission policies.
-	Tools []MCPServerToolPolicy `json:"tools,omitempty"`
-	// Timeout is the per-call tool timeout in milliseconds; see
-	// MCPStdioServerConfig.Timeout.
-	Timeout int `json:"timeout,omitempty"`
-	// AlwaysLoad: see MCPStdioServerConfig.AlwaysLoad.
-	AlwaysLoad bool `json:"alwaysLoad,omitempty"`
-}
-
-func (*MCPHTTPServerConfig) isMCPServerConfig() {}
-
-// MarshalJSON emits the HTTP server shape with its type discriminator.
-func (c *MCPHTTPServerConfig) MarshalJSON() ([]byte, error) {
-	type alias MCPHTTPServerConfig
-	return json.Marshal(struct {
-		Type string `json:"type"`
-		*alias
-	}{"http", (*alias)(c)})
-}
-
-// MCPSDKServerConfig serves an in-process MCP server to the CLI over the
-// control protocol. Build one with NewSDKMCPServer; the server is declared to
-// the CLI in the initialize request (or by Client.SetMCPServers) and its
-// instance stays in this process.
-type MCPSDKServerConfig struct {
-	Name string
-	// Instance answers the server's mcp_message traffic: an *MCPServer, or
-	// any MCPHandler (for example an adapter over another MCP library).
-	Instance MCPHandler
-	// Timeout is the per-call tool timeout in milliseconds, overriding
-	// MCP_TOOL_TIMEOUT for this server. Zero leaves the default; the CLI
-	// ignores values below 1000. It applies when the server is first
-	// registered.
-	Timeout int
-}
-
-func (*MCPSDKServerConfig) isMCPServerConfig() {}
-
-// MarshalJSON emits only the serializable fields; the instance is not sent.
-func (c *MCPSDKServerConfig) MarshalJSON() ([]byte, error) {
-	out := map[string]any{"type": "sdk", "name": c.Name}
-	if c.Timeout > 0 {
-		out["timeout"] = c.Timeout
-	}
-	return json.Marshal(out)
-}
 
 // ---------------------------------------------------------------------------
 // Misc option value types
@@ -365,14 +252,14 @@ type AgentDefinition struct {
 	Skills []string `json:"skills,omitempty"`
 	// Memory is the agent-memory scope: AgentMemoryUser,
 	// AgentMemoryProject or AgentMemoryLocal.
-	Memory string `json:"memory,omitempty"`
+	Memory AgentMemoryScope `json:"memory,omitempty"`
 	// MCPServers holds server names or inline {name: config} objects.
-	MCPServers     []any  `json:"mcpServers,omitempty"`
-	InitialPrompt  string `json:"initialPrompt,omitempty"`
-	MaxTurns       *int   `json:"maxTurns,omitempty"`
-	Background     *bool  `json:"background,omitempty"`
-	Effort         any    `json:"effort,omitempty"`
-	PermissionMode string `json:"permissionMode,omitempty"`
+	MCPServers     []any          `json:"mcpServers,omitempty"`
+	InitialPrompt  string         `json:"initialPrompt,omitempty"`
+	MaxTurns       *int           `json:"maxTurns,omitempty"`
+	Background     *bool          `json:"background,omitempty"`
+	Effort         any            `json:"effort,omitempty"`
+	PermissionMode PermissionMode `json:"permissionMode,omitempty"`
 	// OmitClaudeMD runs the agent, as a subagent, without the user,
 	// project and local CLAUDE.md files; managed policy files are kept.
 	OmitClaudeMD bool `json:"omitClaudeMd,omitempty"`
@@ -410,6 +297,88 @@ const DefaultMaxBufferSize = 1024 * 1024
 // Options configures a Query or a Client. The zero value is usable: it starts
 // a default session with the CLI's own defaults for everything.
 type Options struct {
+	// ---- Model & reasoning ----
+
+	// Model is the model to use; empty uses the CLI default.
+	Model string
+
+	// FallbackModel is used when the primary model is unavailable.
+	FallbackModel string
+
+	// Betas enables beta features.
+	Betas []SDKBeta
+
+	// Thinking controls extended thinking. Takes precedence over
+	// MaxThinkingTokens.
+	Thinking *ThinkingConfig
+
+	// MaxThinkingTokens caps thinking tokens.
+	//
+	// Deprecated: use Thinking.
+	MaxThinkingTokens *int
+
+	// Effort guides thinking depth.
+	Effort EffortLevel
+
+	// MaxTurns caps the number of conversation turns.
+	MaxTurns *int
+
+	// MaxBudgetUSD caps the spend of the query.
+	MaxBudgetUSD *float64
+
+	// TaskBudget makes the model aware of a remaining token budget.
+	TaskBudget *TaskBudget
+
+	// ---- Prompt & output ----
+
+	// SystemPrompt configures the system prompt. nil sends an empty custom
+	// prompt, as the TypeScript SDK does; use &SystemPromptPreset{} for
+	// Claude Code's default prompt.
+	SystemPrompt SystemPrompt
+
+	// PlanModeInstructions replaces the default workflow body of the
+	// plan-mode system reminder while PermissionMode is plan.
+	PlanModeInstructions string
+
+	// OutputFormat requests structured output, e.g.
+	// {"type": "json_schema", "schema": {...}}. The schema is sent both as
+	// --json-schema and in the initialize request.
+	OutputFormat map[string]any
+
+	// VerbatimPrompts marks every user message the SDK sends as
+	// client-composed, so the CLI delivers the text exactly as written: no
+	// @path file-mention expansion and no slash-command dispatch. Use it when
+	// prompt text is assembled from content the end user did not type, so an
+	// @/absolute/path inside it cannot make Claude Code read a local file.
+	//
+	// While set there is no per-message opt-out: a client_composed value on a
+	// UserInput.Raw frame is overwritten. Current CLIs also skip the
+	// turn-start attachment pass for such turns (nested CLAUDE.md files, skill
+	// listings and other per-turn reminders are not attached).
+	VerbatimPrompts bool
+
+	// IncludePartialMessages emits StreamEvent messages while the assistant
+	// is streaming.
+	IncludePartialMessages bool
+
+	// IncludeHookEvents emits hook lifecycle events into the message
+	// stream.
+	IncludeHookEvents bool
+
+	// ForwardSubagentText forwards subagent text and thinking blocks as
+	// messages.
+	ForwardSubagentText bool
+
+	// PromptSuggestions makes the CLI emit a predicted next user prompt
+	// after each turn's result.
+	PromptSuggestions bool
+
+	// AgentProgressSummaries makes the CLI emit periodic AI-generated
+	// summaries of running subagents on task progress events.
+	AgentProgressSummaries bool
+
+	// ---- Tools, skills & agents ----
+
 	// Tools selects the base set of built-in tools. nil leaves the CLI
 	// default in place.
 	Tools ToolsConfig
@@ -420,28 +389,131 @@ type Options struct {
 	// DisallowedTools names tools removed from the model's context.
 	DisallowedTools []string
 
-	// SystemPrompt configures the system prompt. nil sends an empty custom
-	// prompt, as the TypeScript SDK does; use &SystemPromptPreset{} for
-	// Claude Code's default prompt.
-	SystemPrompt SystemPrompt
+	// ToolAliases redirects model-emitted tool names before lookup, e.g.
+	// {"Bash": "mcp__workspace__bash"}. The redirect is single-hop. It does
+	// not replace DisallowedTools.
+	ToolAliases map[string]string
+
+	// ToolConfig customizes built-in tools.
+	ToolConfig *ToolConfig
+
+	// Skills selects which skills are enabled. nil applies no SDK
+	// configuration.
+	Skills SkillsConfig
+
+	// Agents defines subagents invokable via the Agent tool.
+	Agents map[string]AgentDefinition
+
+	// Agent names the agent, from Agents or settings, that runs the main
+	// thread: its prompt, tool restrictions and model apply to the
+	// conversation.
+	Agent string
+
+	// ---- Permissions ----
+
+	// PermissionMode selects how permission prompts are handled.
+	PermissionMode PermissionMode
+
+	// AllowDangerouslySkipPermissions must be set to use
+	// PermissionModeBypassPermissions; it passes
+	// --allow-dangerously-skip-permissions.
+	AllowDangerouslySkipPermissions bool
+
+	// PermissionPromptToolName routes permission prompts through an MCP
+	// tool. Mutually exclusive with CanUseTool: when CanUseTool is set, the
+	// SDK sets it to "stdio" internally, routing prompts over the control
+	// protocol.
+	PermissionPromptToolName string
+
+	// PermissionPrompts selects who answers permission prompts:
+	// PermissionPromptsHost (the default) or PermissionPromptsNone.
+	PermissionPrompts PermissionPrompts
+
+	// ---- Callbacks ----
+
+	// CanUseTool answers permission requests the CLI would otherwise show
+	// to a user. Mutually exclusive with PermissionPromptToolName.
+	CanUseTool CanUseTool
+
+	// Hooks registers hook callbacks per event.
+	Hooks map[HookEvent][]HookMatcher
+
+	// OnElicitation answers MCP elicitation requests (a server asking for
+	// user input) that no Elicitation hook handled. When nil, every
+	// elicitation is declined.
+	OnElicitation OnElicitation
+
+	// OnUserDialog renders the blocking dialogs the CLI asks the host to
+	// show (request_user_dialog). The CLI only sends the kinds listed in
+	// SupportedDialogKinds. When nil, dialogs are left unanswered so another
+	// attached client, or the CLI's dialog deadline, settles them.
+	OnUserDialog OnUserDialog
+
+	// SupportedDialogKinds declares the dialog kinds OnUserDialog can
+	// render. The CLI treats an absent kind as "cannot display" and falls
+	// back to its no-dialog behavior. Requires OnUserDialog.
+	SupportedDialogKinds []string
+
+	// PerTaskStopAffordance declares that the host renders a per-task stop
+	// control wired to Client.StopTask, so an interrupt spares running
+	// background tasks.
+	PerTaskStopAffordance bool
+
+	// ---- MCP ----
 
 	// MCPServers configures MCP servers by name.
 	MCPServers map[string]MCPServerConfig
 
-	// MCPConfigPath points at an MCP config JSON file, used instead of
-	// MCPServers when set.
+	// MCPConfigPath points at an MCP config JSON file, passed to the CLI
+	// instead of the servers in MCPServers that the CLI runs itself.
+	// In-process SDK servers in MCPServers are still declared.
 	MCPConfigPath string
 
 	// StrictMCPConfig ignores every MCP configuration the CLI would
 	// otherwise load, using only MCPServers.
 	StrictMCPConfig bool
 
-	// PermissionMode selects how permission prompts are handled.
-	PermissionMode PermissionMode
+	// ---- Settings & plugins ----
 
-	// PermissionPromptToolName routes permission prompts through an MCP
-	// tool. Mutually exclusive with CanUseTool.
-	PermissionPromptToolName string
+	// Settings adds flag-tier settings, passed to --settings. It is a
+	// string holding a settings file path or an inline JSON object, or a
+	// value encoded as a JSON object: Settings, map[string]any,
+	// json.RawMessage or any JSON-marshalable struct. A file path cannot be
+	// combined with Sandbox.
+	Settings any
+
+	// SettingSources selects which filesystem settings layers to load. nil
+	// loads all of them; a non-nil empty slice loads none.
+	SettingSources *[]string
+
+	// ManagedSettings supplies policy-tier settings from the embedding
+	// process, passed to --managed-settings. The CLI keeps only restrictive
+	// keys, and drops them entirely when an admin-managed tier exists that
+	// does not opt in to parent settings.
+	ManagedSettings Settings
+
+	// Sandbox holds sandbox settings, merged into the --settings object as
+	// its "sandbox" key: a *SandboxSettings, a map[string]any, a
+	// json.RawMessage or any value encoded as a JSON object. When it
+	// enables the sandbox without setting failIfUnavailable, the SDK sets
+	// failIfUnavailable to true so a missing sandbox fails the run instead
+	// of silently running unsandboxed.
+	Sandbox any
+
+	// ProjectConfigRoot is the absolute path of the trusted checkout that
+	// Cwd is a worktree of. Project settings, .mcp.json, the .claude config
+	// trees and CLAUDE_PROJECT_DIR come from there instead of Cwd.
+	ProjectConfigRoot string
+
+	// Plugins loads local plugins. PluginDelivery selects how the list
+	// reaches the CLI.
+	Plugins []PluginConfig
+
+	// PluginDelivery selects how Plugins reach the CLI; empty means
+	// PluginDeliveryArgv.
+	PluginDelivery PluginDelivery
+
+	// ---- Session ----
 
 	// ContinueConversation resumes the most recent conversation in Cwd.
 	ContinueConversation bool
@@ -463,155 +535,19 @@ type Options struct {
 	// SessionID pins the session ID. Must be a valid UUID.
 	SessionID string
 
-	// MaxTurns caps the number of conversation turns.
-	MaxTurns *int
+	// Title names a new session instead of deriving a title from the first
+	// prompt. A resumed session keeps its stored title.
+	Title string
 
-	// MaxBudgetUSD caps the spend of the query.
-	MaxBudgetUSD *float64
-
-	// Model is the model to use; empty uses the CLI default.
-	Model string
-
-	// FallbackModel is used when the primary model is unavailable.
-	FallbackModel string
-
-	// Betas enables beta features.
-	Betas []SDKBeta
-
-	// Cwd is the working directory of the CLI subprocess.
-	Cwd string
-
-	// CLIPath is the path to the claude executable. Empty triggers
-	// discovery on PATH and in the usual install locations.
-	CLIPath string
-
-	// Settings adds flag-tier settings, passed to --settings. It is a
-	// string holding a settings file path or an inline JSON object, or a
-	// value encoded as a JSON object: Settings, map[string]any,
-	// json.RawMessage or any JSON-marshalable struct. A file path cannot be
-	// combined with Sandbox.
-	Settings any
-
-	// SettingSources selects which filesystem settings layers to load. nil
-	// loads all of them; a non-nil empty slice loads none.
-	SettingSources *[]string
-
-	// AddDirs are additional directories the CLI may access.
-	AddDirs []string
-
-	// Env holds extra environment variables for the subprocess.
-	//
-	// Unlike the TypeScript SDK, where env replaces the whole child
-	// environment, Env is merged over this process's environment (minus
-	// CLAUDECODE). The SDK then sets CLAUDE_AGENT_SDK_VERSION and, unless
-	// present, CLAUDE_CODE_ENTRYPOINT and CLAUDE_CODE_SDK_READS_SESSION_STATE;
-	// it removes NODE_OPTIONS, and removes DEBUG unless
-	// DEBUG_CLAUDE_AGENT_SDK is truthy (then DEBUG=1).
-	Env map[string]string
-
-	// ExtraArgs passes additional CLI flags through. Keys omit the leading
-	// dashes; a nil value makes the entry a boolean flag.
-	ExtraArgs map[string]*string
-
-	// MaxBufferSize caps a single line of CLI stdout. Zero means
-	// DefaultMaxBufferSize.
-	MaxBufferSize int
-
-	// Stderr receives the subprocess's standard error, line by line.
-	Stderr func(line string)
-
-	// CanUseTool answers permission requests the CLI would otherwise show
-	// to a user. Mutually exclusive with PermissionPromptToolName.
-	CanUseTool CanUseTool
-
-	// OnElicitation answers MCP elicitation requests (a server asking for
-	// user input) that no Elicitation hook handled. When nil, every
-	// elicitation is declined.
-	OnElicitation OnElicitation
-
-	// OnUserDialog renders the blocking dialogs the CLI asks the host to
-	// show (request_user_dialog). The CLI only sends the kinds listed in
-	// SupportedDialogKinds. When nil, dialogs are left unanswered so another
-	// attached client, or the CLI's dialog deadline, settles them.
-	OnUserDialog OnUserDialog
-
-	// SupportedDialogKinds declares the dialog kinds OnUserDialog can
-	// render. The CLI treats an absent kind as "cannot display" and falls
-	// back to its no-dialog behavior. Requires OnUserDialog.
-	SupportedDialogKinds []string
-
-	// Hooks registers hook callbacks per event.
-	Hooks map[HookEvent][]HookMatcher
-
-	// Agents defines subagents invokable via the Agent tool.
-	Agents map[string]AgentDefinition
-
-	// User is an optional user identifier for the session.
-	User string
-
-	// IncludePartialMessages emits StreamEvent messages while the assistant
-	// is streaming.
-	IncludePartialMessages bool
-
-	// IncludeHookEvents emits hook lifecycle events into the message
-	// stream.
-	IncludeHookEvents bool
-
-	// ForwardSubagentText forwards subagent text and thinking blocks as
-	// messages.
-	ForwardSubagentText bool
-
-	// VerbatimPrompts marks every user message the SDK sends as
-	// client-composed, so the CLI delivers the text exactly as written: no
-	// @path file-mention expansion and no slash-command dispatch. Use it when
-	// prompt text is assembled from content the end user did not type, so an
-	// @/absolute/path inside it cannot make Claude Code read a local file.
-	//
-	// While set there is no per-message opt-out: a client_composed value on a
-	// UserInput.Raw frame is overwritten. Current CLIs also skip the
-	// turn-start attachment pass for such turns (nested CLAUDE.md files, skill
-	// listings and other per-turn reminders are not attached).
-	VerbatimPrompts bool
-
-	// Skills selects which skills are enabled. nil applies no SDK
-	// configuration.
-	Skills SkillsConfig
-
-	// Sandbox holds sandbox settings, merged into the --settings object as
-	// its "sandbox" key: a *SandboxSettings, a map[string]any, a
-	// json.RawMessage or any value encoded as a JSON object. When it
-	// enables the sandbox without setting failIfUnavailable, the SDK sets
-	// failIfUnavailable to true so a missing sandbox fails the run instead
-	// of silently running unsandboxed.
-	Sandbox any
-
-	// Plugins loads local plugins. PluginDelivery selects how the list
-	// reaches the CLI.
-	Plugins []PluginConfig
-
-	// MaxThinkingTokens caps thinking tokens.
-	//
-	// Deprecated: use Thinking.
-	MaxThinkingTokens *int
-
-	// Thinking controls extended thinking. Takes precedence over
-	// MaxThinkingTokens.
-	Thinking *ThinkingConfig
-
-	// Effort guides thinking depth.
-	Effort EffortLevel
-
-	// OutputFormat requests structured output, e.g.
-	// {"type": "json_schema", "schema": {...}}. The schema is sent both as
-	// --json-schema and in the initialize request.
-	OutputFormat map[string]any
+	// NoSessionPersistence stops the CLI from writing the session
+	// transcript to disk, so the session cannot be resumed. It mirrors the
+	// TypeScript option persistSession: false and cannot be combined with
+	// SessionStore.
+	NoSessionPersistence bool
 
 	// EnableFileCheckpointing lets Client.RewindFiles restore files to
 	// their state at an earlier user message.
 	EnableFileCheckpointing bool
-
-	// TaskBudget makes the model aware of a remaining token budget.
-	TaskBudget *TaskBudget
 
 	// SessionStore mirrors session transcripts to external storage. Every
 	// transcript line the CLI writes locally is also passed to
@@ -632,81 +568,17 @@ type Options struct {
 	// means DefaultSessionLoadTimeout.
 	LoadTimeout time.Duration
 
-	// Transport replaces the CLI subprocess. It is meant for tests and for
-	// embedding the SDK in a host that already owns the session; when nil,
-	// a subprocess transport is built from these options.
-	Transport Transport
+	// ---- Process ----
 
-	// AllowDangerouslySkipPermissions must be set to use
-	// PermissionModeBypassPermissions; it passes
-	// --allow-dangerously-skip-permissions.
-	AllowDangerouslySkipPermissions bool
+	// Cwd is the working directory of the CLI subprocess.
+	Cwd string
 
-	// PermissionPrompts selects who answers permission prompts:
-	// PermissionPromptsHost (the default) or PermissionPromptsNone.
-	PermissionPrompts PermissionPrompts
+	// AddDirs are additional directories the CLI may access.
+	AddDirs []string
 
-	// PlanModeInstructions replaces the default workflow body of the
-	// plan-mode system reminder while PermissionMode is plan.
-	PlanModeInstructions string
-
-	// Agent names the agent, from Agents or settings, that runs the main
-	// thread: its prompt, tool restrictions and model apply to the
-	// conversation.
-	Agent string
-
-	// ToolAliases redirects model-emitted tool names before lookup, e.g.
-	// {"Bash": "mcp__workspace__bash"}. The redirect is single-hop. It does
-	// not replace DisallowedTools.
-	ToolAliases map[string]string
-
-	// ToolConfig customizes built-in tools.
-	ToolConfig *ToolConfig
-
-	// NoSessionPersistence stops the CLI from writing the session
-	// transcript to disk, so the session cannot be resumed. It mirrors the
-	// TypeScript option persistSession: false and cannot be combined with
-	// SessionStore.
-	NoSessionPersistence bool
-
-	// Title names a new session instead of deriving a title from the first
-	// prompt. A resumed session keeps its stored title.
-	Title string
-
-	// ManagedSettings supplies policy-tier settings from the embedding
-	// process, passed to --managed-settings. The CLI keeps only restrictive
-	// keys, and drops them entirely when an admin-managed tier exists that
-	// does not opt in to parent settings.
-	ManagedSettings Settings
-
-	// ProjectConfigRoot is the absolute path of the trusted checkout that
-	// Cwd is a worktree of. Project settings, .mcp.json, the .claude config
-	// trees and CLAUDE_PROJECT_DIR come from there instead of Cwd.
-	ProjectConfigRoot string
-
-	// PluginDelivery selects how Plugins reach the CLI; empty means
-	// PluginDeliveryArgv.
-	PluginDelivery PluginDelivery
-
-	// PromptSuggestions makes the CLI emit a predicted next user prompt
-	// after each turn's result.
-	PromptSuggestions bool
-
-	// AgentProgressSummaries makes the CLI emit periodic AI-generated
-	// summaries of running subagents on task progress events.
-	AgentProgressSummaries bool
-
-	// PerTaskStopAffordance declares that the host renders a per-task stop
-	// control wired to Client.StopTask, so an interrupt spares running
-	// background tasks.
-	PerTaskStopAffordance bool
-
-	// Debug enables CLI debug logging (--debug).
-	Debug bool
-
-	// DebugFile writes CLI debug logs to this file (--debug-file); it
-	// implies Debug.
-	DebugFile string
+	// CLIPath is the path to the claude executable. Empty triggers
+	// discovery on PATH and in the usual install locations.
+	CLIPath string
 
 	// Executable is the JavaScript runtime ("node", "bun" or "deno") used
 	// when CLIPath names a .js, .mjs, .ts, .tsx or .jsx file. Empty means
@@ -727,6 +599,45 @@ type Options struct {
 	// graceful shutdown (stdin EOF, grace period, SIGTERM) has run, so it is
 	// safe to tie forced teardown of a container or VM to it.
 	Spawn func(ctx context.Context, opts SpawnOptions) (SpawnedProcess, error)
+
+	// Env holds extra environment variables for the subprocess.
+	//
+	// Unlike the TypeScript SDK, where env replaces the whole child
+	// environment, Env is merged over this process's environment (minus
+	// CLAUDECODE). The SDK then sets CLAUDE_AGENT_SDK_VERSION and, unless
+	// present, CLAUDE_CODE_ENTRYPOINT and CLAUDE_CODE_SDK_READS_SESSION_STATE;
+	// it removes NODE_OPTIONS, and removes DEBUG unless
+	// DEBUG_CLAUDE_AGENT_SDK is truthy (then DEBUG=1).
+	Env map[string]string
+
+	// ExtraArgs passes additional CLI flags through. Keys omit the leading
+	// dashes; a nil value makes the entry a boolean flag.
+	ExtraArgs map[string]*string
+
+	// User is an optional user identifier for the session.
+	User string
+
+	// MaxBufferSize caps a single line of CLI stdout. Zero means
+	// DefaultMaxBufferSize.
+	MaxBufferSize int
+
+	// Stderr receives the subprocess's standard error, line by line.
+	Stderr func(line string)
+
+	// Debug enables CLI debug logging (--debug).
+	Debug bool
+
+	// DebugFile writes CLI debug logs to this file (--debug-file); it
+	// implies Debug.
+	DebugFile string
+
+	// Transport replaces the CLI subprocess. It is meant for tests and for
+	// embedding the SDK in a host that already owns the session; when nil,
+	// a subprocess transport is built from these options. A custom
+	// transport receives only the options carried by the initialize
+	// request: those rendered as CLI flags or environment variables are
+	// not applied.
+	Transport Transport
 }
 
 // bufferSize reports the effective stdout line cap.

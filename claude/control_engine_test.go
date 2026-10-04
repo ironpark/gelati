@@ -74,7 +74,7 @@ func TestEngineErrorResultSurvivesSkippedFrames(t *testing.T) {
 			code := 1
 			ft.finish(NewProcessError("Command failed", &code, ""))
 			var last error
-			for _, err := range eng.Messages() {
+			for _, err := range eng.receive(context.Background()) {
 				if err != nil {
 					last = err
 				}
@@ -172,7 +172,7 @@ func TestEngineSessionStateFrames(t *testing.T) {
 	ft.push(map[string]any{"type": "keep_alive"})
 	ft.finish(nil)
 	var states []string
-	for msg, err := range eng.Messages() {
+	for msg, err := range eng.receive(context.Background()) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -193,9 +193,7 @@ func streamOne(t *testing.T, eng *engine) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = eng.StreamInput(t.Context(), func(yield func(map[string]any) bool) {
-			yield(map[string]any{"type": "user", "message": map[string]any{"content": "hi"}})
-		})
+		_ = eng.streamInput(t.Context(), rawInputs(map[string]any{"type": "user", "message": map[string]any{"content": "hi"}}))
 	}()
 	return done
 }
@@ -452,7 +450,7 @@ func TestEngineInitializeRequestFields(t *testing.T) {
 	}
 	eng, ft := startEngine(t, opts)
 	respondBySubtype(ft, nil)
-	if _, err := eng.Initialize(t.Context()); err != nil {
+	if _, err := eng.initialize(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	req := ft.frames(t)[0]["request"].(map[string]any)
@@ -504,7 +502,7 @@ func TestEngineInitializeResultAndRedelivery(t *testing.T) {
 	}
 	ft.mu.Unlock()
 
-	if _, err := eng.Initialize(t.Context()); err != nil {
+	if _, err := eng.initialize(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if id := <-asked; id != "p1" {
@@ -513,7 +511,7 @@ func TestEngineInitializeResultAndRedelivery(t *testing.T) {
 	if resp := ft.nextResponse(t); resp["request_id"] != "p1" {
 		t.Fatalf("response = %#v", resp)
 	}
-	res := eng.InitializeResult()
+	res := eng.initializeResult()
 	if res == nil || len(res.Commands) != 1 || !res.Commands[0].Builtin || res.Agents[0].Name != "Explore" ||
 		res.Models[0].SupportedEffortLevels[0] != EffortHigh || res.Account.APIProvider != "firstParty" ||
 		res.HooksApplied == nil || !*res.HooksApplied || res.Raw["output_style"] != "default" {
@@ -540,7 +538,7 @@ func TestEngineInitializeResultAndRedelivery(t *testing.T) {
 		"commands": []any{map[string]any{"name": "new", "description": "", "argumentHint": ""}}})
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		cmds := eng.SupportedCommands()
+		cmds := eng.supportedCommands()
 		if len(cmds) == 1 && cmds[0].Name == "new" {
 			break
 		}
@@ -571,7 +569,7 @@ func TestEnginePendingIgnoredOnOtherResponses(t *testing.T) {
 		}})
 	}
 	ft.mu.Unlock()
-	if err := eng.Interrupt(t.Context()); err != nil {
+	if err := interrupt(t.Context(), eng); err != nil {
 		t.Fatal(err)
 	}
 	select {

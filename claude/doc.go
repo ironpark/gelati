@@ -46,9 +46,10 @@
 // session down; a [Client] is torn down by [Client.Disconnect], which is
 // idempotent and safe to defer.
 //
-// Message and content-block unions are sealed interfaces ([Message],
-// [ContentBlock], [PermissionResult], [MCPServerConfig], [ToolContent]): switch
-// on the concrete type rather than inspecting maps. Parsing is lenient about
+// Message and content-block unions, and the option unions, are sealed
+// interfaces ([Message], [ContentBlock], [PermissionResult], [MCPServerConfig],
+// [ToolContent], [SystemPrompt], [ToolsConfig], [SkillsConfig]): switch on the
+// concrete type rather than inspecting maps. Parsing is lenient about
 // missing fields, so an older build of this package keeps working against a
 // newer CLI: unknown top-level message types are skipped, unknown system
 // subtypes arrive as *[SystemMessage], and unknown content blocks arrive as
@@ -70,8 +71,20 @@
 // the typed per-event struct, and [TypedHook] adapts a typed function into a
 // [HookCallback]. [HookEvents] lists every event. In-process MCP servers are
 // declared to the CLI in the initialize request, can change their tools at
-// runtime, and can be swapped mid-session with [Client.SetMCPServers]; any
-// [MCPHandler] can stand in for the built-in [MCPServer].
+// runtime ([MCPSDKServerConfig.Server] returns the built-in [MCPServer] behind
+// a config), and can be swapped mid-session with [Client.SetMCPServers]; any
+// [MCPHandler] can stand in for the built-in server.
+//
+// # Options
+//
+// [Options] reach the CLI on three channels: command-line flags, environment
+// variables of the subprocess, and fields of the initialize control request
+// the SDK sends once the CLI is up. Large or structured values (agents, most
+// system prompts, skills lists, in-process MCP server declarations, hook
+// registrations) travel in the initialize request, so they do not count
+// against the OS command-line limit; a few options use two channels. A custom
+// [Options.Transport] starts no subprocess, so it receives only the
+// initialize-request fields.
 //
 // # Control
 //
@@ -124,6 +137,7 @@
 //	ClaudeSDKClient                -> Client
 //	ClaudeAgentOptions             -> Options
 //	create_sdk_mcp_server()        -> NewSDKMCPServer
+//	createSdkMcpServer() (TS)      -> NewSDKMCPServerWithOptions, SDKMCPServerOptions
 //	tool()                         -> NewTool, ToolDef
 //	client.get_mcp_status()        -> Client.MCPServerStatus
 //	client.get_context_usage()     -> Client.ContextUsage

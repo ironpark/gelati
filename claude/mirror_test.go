@@ -638,13 +638,13 @@ func startMirrorEngine(t *testing.T, opts *Options) (*engine, *fakeTransport) {
 	if err := ft.Connect(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	eng := newEngine(ft, opts)
+	eng := newEngine(ft, opts, nil)
 	eng.enableTranscriptMirror(mirrorProjectsDir)
 	if b := eng.mirror.Load(); b != nil {
 		b.sleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
 	}
-	eng.Start(t.Context())
-	t.Cleanup(func() { _ = eng.Close() })
+	eng.start(t.Context())
+	t.Cleanup(func() { _ = eng.close() })
 	return eng, ft
 }
 
@@ -661,7 +661,7 @@ func TestEngineMirrorFramesReachStoreBeforeResult(t *testing.T) {
 
 	var kinds []string
 	appendsAtResult := -1
-	for msg, err := range eng.Messages() {
+	for msg, err := range eng.receive(context.Background()) {
 		if err != nil {
 			t.Fatalf("stream error: %v", err)
 		}
@@ -698,7 +698,7 @@ func TestEngineMirrorLateFramesFlushedAtEnd(t *testing.T) {
 	ft.push(resultFrame())
 	ft.push(mirrorFrame(mirrorMainPath("late", "sess"), map[string]any{"type": "user", "uuid": "late-u1"}))
 	ft.finish(nil)
-	for _, err := range eng.Messages() {
+	for _, err := range eng.receive(context.Background()) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -721,7 +721,7 @@ func TestEngineMirrorEagerMode(t *testing.T) {
 	waitUntil(t, "second append", func() bool { return len(store.appendCalls()) == 2 })
 	ft.push(resultFrame())
 	ft.finish(nil)
-	for _, err := range eng.Messages() {
+	for _, err := range eng.receive(context.Background()) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -744,7 +744,7 @@ func TestEngineMirrorFramesDroppedWithoutStore(t *testing.T) {
 	ft.push(resultFrame())
 	ft.finish(nil)
 	n := 0
-	for _, err := range eng.Messages() {
+	for _, err := range eng.receive(context.Background()) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -767,7 +767,7 @@ func TestEngineMirrorErrorSurfaces(t *testing.T) {
 
 	var mirrorErrs []*MirrorErrorMessage
 	sawResult := false
-	for msg, err := range eng.Messages() {
+	for msg, err := range eng.receive(context.Background()) {
 		if err != nil {
 			t.Fatalf("mirror failure must not be fatal: %v", err)
 		}
@@ -798,11 +798,11 @@ func TestEngineMirrorErrorSurfaces(t *testing.T) {
 
 func TestEngineReportMirrorError(t *testing.T) {
 	t.Parallel()
-	eng := newEngine(newFakeTransport(), nil)
+	eng := newEngine(newFakeTransport(), nil, nil)
 	eng.reportMirrorError(&SessionKey{ProjectKey: "p", SessionID: "s", Subpath: "subagents/agent-1"}, "boom")
 	eng.reportMirrorError(nil, "no key")
 
-	first := (<-eng.messages).msg.(*MirrorErrorMessage)
+	first := (<-eng.messages.ch).msg.(*MirrorErrorMessage)
 	if first.Error != "boom" || first.Key == nil || first.Key.Subpath != "subagents/agent-1" {
 		t.Fatalf("message = %+v", first)
 	}
@@ -835,7 +835,7 @@ func TestEngineReportMirrorError(t *testing.T) {
 		t.Fatalf("parsed keyless = %#v", bare)
 	}
 
-	second := (<-eng.messages).msg.(*MirrorErrorMessage)
+	second := (<-eng.messages.ch).msg.(*MirrorErrorMessage)
 	if second.Key != nil || second.Data["key"] != nil || second.Data["session_id"] != "" {
 		t.Fatalf("keyless message = %+v", second)
 	}
@@ -855,7 +855,7 @@ func TestEngineCloseFlushesMirror(t *testing.T) {
 	eng, ft := startMirrorEngine(t, &Options{SessionStore: store})
 	ft.push(mirrorFrame(mirrorMainPath("p", "s"), map[string]any{"type": "user", "uuid": "u1"}))
 	ft.push(assistantFrame("hi"))
-	for msg, err := range eng.Messages() {
+	for msg, err := range eng.receive(context.Background()) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -866,7 +866,7 @@ func TestEngineCloseFlushesMirror(t *testing.T) {
 	if n := len(store.appendCalls()); n != 0 {
 		t.Fatalf("appended before close: %d", n)
 	}
-	if err := eng.Close(); err != nil {
+	if err := eng.close(); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(store.appendCalls()); n != 1 {
@@ -888,18 +888,18 @@ func TestEngineCloseBoundedWithStuckStore(t *testing.T) {
 		return nil
 	}}
 	ft := newFakeTransport()
-	eng := newEngine(ft, &Options{SessionStore: store})
+	eng := newEngine(ft, &Options{SessionStore: store}, nil)
 	eng.enableTranscriptMirror(mirrorProjectsDir)
 	b := eng.mirror.Load()
 	b.closeTimeout = 50 * time.Millisecond
-	eng.Start(t.Context())
+	eng.start(t.Context())
 
 	ft.push(mirrorFrame(mirrorMainPath("p", "s"), map[string]any{"type": "user"}))
 	ft.push(resultFrame()) // the read loop blocks flushing for this result
 	<-entered
 
 	start := time.Now()
-	if err := eng.Close(); err != nil {
+	if err := eng.close(); err != nil {
 		t.Fatal(err)
 	}
 	if d := time.Since(start); d > 2*time.Second {
@@ -910,6 +910,6 @@ func TestEngineCloseBoundedWithStuckStore(t *testing.T) {
 	default:
 		t.Fatal("read loop still running after Close")
 	}
-	for range eng.Messages() {
+	for range eng.receive(context.Background()) {
 	}
 }

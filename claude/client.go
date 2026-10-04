@@ -10,6 +10,10 @@ import (
 // caller does not name one.
 const DefaultSessionID = "default"
 
+// ServerInfo is the CLI's response to the initialize handshake: supported
+// commands, output styles and other capability metadata, passed through as-is.
+type ServerInfo map[string]any
+
 // Client runs a bidirectional, stateful conversation with the Claude Code CLI:
 // turns can be sent at any time, responses consumed as they arrive, and the run
 // steered with interrupts and setter calls. Use Query for one-shot prompts.
@@ -37,11 +41,8 @@ type Client struct {
 	mu sync.Mutex
 	// connecting is set while Connect opens a session.
 	connecting bool
-	eng        *engine
-	transport  Transport
-	// materialized is the temp config dir of a SessionStore resume, removed
-	// by Disconnect after the CLI has exited.
-	materialized *materializedResume
+	// sess is the live session, nil while disconnected.
+	sess *session
 }
 
 // NewClient builds an unconnected client. opts may be nil.
@@ -52,9 +53,13 @@ func NewClient(opts *Options) *Client {
 // Connect starts the CLI session and performs the initialize handshake. Any
 // initial turns are sent right after it. Calling Connect on an already
 // connected client is an error.
+//
+// When ctx has no deadline, DefaultInitializeTimeout bounds the handshake.
+// ctx governs the whole session: cancelling it after Connect returns
+// terminates the CLI.
 func (c *Client) Connect(ctx context.Context, initial ...UserInput) error {
 	c.mu.Lock()
-	if c.eng != nil || c.connecting {
+	if c.sess != nil || c.connecting {
 		c.mu.Unlock()
 		return NewConnectionError("already connected")
 	}
@@ -63,19 +68,11 @@ func (c *Client) Connect(ctx context.Context, initial ...UserInput) error {
 	c.connecting = true
 	c.mu.Unlock()
 
-	sess, err := openSession(ctx, c.opts, entrypointClient, c.deps)
-	if err == nil {
-		sess.eng.Start(ctx)
-		if _, err = sess.eng.Initialize(ctx); err != nil {
-			_ = sess.close()
-		}
-	}
+	sess, err := startSession(ctx, c.opts, entrypointClient, c.deps)
 
 	c.mu.Lock()
 	c.connecting = false
-	if err == nil {
-		c.eng, c.transport, c.materialized = sess.eng, sess.eng.transport, sess.materialized
-	}
+	c.sess = sess
 	c.mu.Unlock()
 	if err != nil {
 		return err
@@ -94,13 +91,14 @@ func (c *Client) Connect(ctx context.Context, initial ...UserInput) error {
 func (c *Client) engineOrErr() (*engine, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.eng == nil {
+	if c.sess == nil {
 		return nil, NewConnectionError("Not connected. Call Connect first.")
 	}
-	return c.eng, nil
+	return c.sess.eng, nil
 }
 
-// send writes one user turn.
+// send writes one user turn, attributed to sessionID unless it names its own
+// session.
 func (c *Client) send(ctx context.Context, input UserInput, sessionID string) error {
 	eng, err := c.engineOrErr()
 	if err != nil {
@@ -109,11 +107,7 @@ func (c *Client) send(ctx context.Context, input UserInput, sessionID string) er
 	if input.SessionID == "" {
 		input.SessionID = sessionID
 	}
-	payload, err := marshalFrame(stampUserMessage(input.frame(), c.opts != nil && c.opts.VerbatimPrompts))
-	if err != nil {
-		return err
-	}
-	return eng.transport.Write(ctx, payload)
+	return eng.sendUserMessage(ctx, input)
 }
 
 // Query sends one prompt as a new turn. An empty sessionID uses
@@ -142,20 +136,14 @@ func (c *Client) QueryStream(ctx context.Context, inputs iter.Seq[UserInput], se
 // ReceiveMessages yields every message the session produces until it ends. A
 // fatal error is the final item.
 func (c *Client) ReceiveMessages(ctx context.Context) iter.Seq2[Message, error] {
+	// The session is looked up when the sequence is ranged over.
 	return func(yield func(Message, error) bool) {
 		eng, err := c.engineOrErr()
 		if err != nil {
 			yield(nil, err)
 			return
 		}
-		for msg, err := range eng.messagesWithContext(ctx) {
-			if !yield(msg, err) {
-				return
-			}
-			if err != nil {
-				return
-			}
-		}
+		eng.receive(ctx)(yield)
 	}
 }
 
@@ -164,10 +152,7 @@ func (c *Client) ReceiveMessages(ctx context.Context) iter.Seq2[Message, error] 
 func (c *Client) ReceiveResponse(ctx context.Context) iter.Seq2[Message, error] {
 	return func(yield func(Message, error) bool) {
 		for msg, err := range c.ReceiveMessages(ctx) {
-			if !yield(msg, err) {
-				return
-			}
-			if err != nil {
+			if !yield(msg, err) || err != nil {
 				return
 			}
 			if _, ok := msg.(*ResultMessage); ok {
@@ -177,112 +162,14 @@ func (c *Client) ReceiveResponse(ctx context.Context) iter.Seq2[Message, error] 
 	}
 }
 
-// Interrupt aborts the current turn. InterruptWithReceipt also reports which
-// queued messages survive it.
-func (c *Client) Interrupt(ctx context.Context) error {
-	eng, err := c.engineOrErr()
-	if err != nil {
-		return err
-	}
-	return eng.Interrupt(ctx)
-}
-
-// SetPermissionMode changes the permission mode mid-conversation.
-func (c *Client) SetPermissionMode(ctx context.Context, mode PermissionMode) error {
-	eng, err := c.engineOrErr()
-	if err != nil {
-		return err
-	}
-	return eng.SetPermissionMode(ctx, mode)
-}
-
-// SetModel changes the model mid-conversation. An empty model restores the CLI
-// default.
-func (c *Client) SetModel(ctx context.Context, model string) error {
-	eng, err := c.engineOrErr()
-	if err != nil {
-		return err
-	}
-	return eng.SetModel(ctx, model)
-}
-
-// RewindFiles restores tracked files to their state at the given user message
-// and reports what changed; with opts.DryRun it only reports what would
-// change. opts may be nil. It requires Options.EnableFileCheckpointing, and
-// the message UUIDs it takes arrive on UserMessage values (enable them with
-// the CLI's replay-user-messages flag via Options.ExtraArgs).
-func (c *Client) RewindFiles(ctx context.Context, userMessageID string, opts *RewindFilesOptions) (*RewindFilesResult, error) {
-	eng, err := c.engineOrErr()
-	if err != nil {
-		return nil, err
-	}
-	return decodeControl[RewindFilesResult](eng.RewindFiles(ctx, userMessageID, opts != nil && opts.DryRun))
-}
-
-// MCPServerStatus reports the live connection status of every configured MCP
-// server.
-func (c *Client) MCPServerStatus(ctx context.Context) (*MCPStatusResponse, error) {
-	eng, err := c.engineOrErr()
-	if err != nil {
-		return nil, err
-	}
-	return decodeControl[MCPStatusResponse](eng.MCPStatus(ctx))
-}
-
-// ContextUsage reports the context window usage breakdown, the same data the
-// CLI's /context command shows. opts may be nil.
-func (c *Client) ContextUsage(ctx context.Context, opts *ContextUsageOptions) (*ContextUsageResponse, error) {
-	eng, err := c.engineOrErr()
-	if err != nil {
-		return nil, err
-	}
-	var detail string
-	if opts != nil {
-		detail = opts.Detail
-	}
-	return decodeControl[ContextUsageResponse](eng.ContextUsage(ctx, detail))
-}
-
-// ReconnectMCPServer retries a disconnected or failed MCP server.
-func (c *Client) ReconnectMCPServer(ctx context.Context, serverName string) error {
-	eng, err := c.engineOrErr()
-	if err != nil {
-		return err
-	}
-	return eng.ReconnectMCPServer(ctx, serverName)
-}
-
-// ToggleMCPServer enables or disables an MCP server, connecting or
-// disconnecting it and adding or removing its tools.
-func (c *Client) ToggleMCPServer(ctx context.Context, serverName string, enabled bool) error {
-	eng, err := c.engineOrErr()
-	if err != nil {
-		return err
-	}
-	return eng.ToggleMCPServer(ctx, serverName, enabled)
-}
-
-// StopTask stops a running background task. A task_notification with status
-// "stopped" follows in the message stream.
-func (c *Client) StopTask(ctx context.Context, taskID string) error {
-	eng, err := c.engineOrErr()
-	if err != nil {
-		return err
-	}
-	return eng.StopTask(ctx, taskID)
-}
-
 // ServerInfo reports the raw initialize response: available commands, output
 // styles and other capabilities. It is nil before Connect. InitializationResult
 // is the typed form.
 func (c *Client) ServerInfo() ServerInfo {
-	c.mu.Lock()
-	eng := c.eng
-	c.mu.Unlock()
-	if eng == nil {
-		return nil
+	if r := c.InitializationResult(); r != nil {
+		return ServerInfo(r.Raw)
 	}
-	return eng.ServerInfo()
+	return nil
 }
 
 // Disconnect ends the session and releases its resources, including the
@@ -290,13 +177,11 @@ func (c *Client) ServerInfo() ServerInfo {
 // `defer client.Disconnect()` is safe even on paths that already disconnected.
 func (c *Client) Disconnect() error {
 	c.mu.Lock()
-	eng, materialized := c.eng, c.materialized
-	c.eng, c.transport, c.materialized = nil, nil, nil
+	sess := c.sess
+	c.sess = nil
 	c.mu.Unlock()
-	if eng == nil {
+	if sess == nil {
 		return nil
 	}
-	err := eng.Close()
-	materialized.cleanup()
-	return err
+	return sess.close()
 }

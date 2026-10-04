@@ -9,30 +9,13 @@ import (
 	"fmt"
 	"io"
 	"iter"
-	"maps"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
-	"unicode"
-	"unicode/utf8"
-)
-
-// Version is the SDK version reported to the CLI in CLAUDE_AGENT_SDK_VERSION.
-const Version = "0.1.0"
-
-// entrypoint and entrypointClient are reported to the CLI in
-// CLAUDE_CODE_ENTRYPOINT, distinguishing one-shot queries from interactive
-// client sessions.
-const (
-	entrypoint       = "sdk-go"
-	entrypointClient = "sdk-go-client"
 )
 
 // stderrTailLimit caps how much stderr is retained for error reports.
@@ -50,6 +33,9 @@ const (
 // stream-json over its stdin and stdout.
 type subprocessTransport struct {
 	opts *Options
+	// launch is the resolved command line and environment. Session setup
+	// supplies it; when nil, Connect resolves it from opts.
+	launch *launchConfig
 
 	// writeMu serializes frames on stdin. It is separate from mu so that a
 	// Write blocked on a full pipe never holds mu: Close and EndInput can
@@ -86,7 +72,8 @@ type subprocessTransport struct {
 }
 
 // newSubprocessTransport builds a transport for the given options. The CLI is
-// located and the command line built at Connect time.
+// located, and the command line resolved unless withLaunch supplied it, at
+// Connect time.
 func newSubprocessTransport(opts *Options) *subprocessTransport {
 	if opts == nil {
 		opts = &Options{}
@@ -96,6 +83,13 @@ func newSubprocessTransport(opts *Options) *subprocessTransport {
 		gracefulTimeout: defaultGracefulExitTimeout,
 		killTimeout:     defaultForceKillTimeout,
 	}
+}
+
+// withLaunch makes the transport start the CLI with an already resolved
+// launch configuration.
+func (t *subprocessTransport) withLaunch(launch *launchConfig) *subprocessTransport {
+	t.launch = launch
+	return t
 }
 
 // Connect locates the CLI, builds its command line and starts it.
@@ -128,9 +122,13 @@ func (t *subprocessTransport) Connect(ctx context.Context) error {
 	}
 	t.cliPath = cliPath
 
-	args, err := buildCommandArgs(t.opts)
-	if err != nil {
-		return err
+	launch := t.launch
+	if launch == nil {
+		resolved, err := resolveLaunch(t.opts)
+		if err != nil {
+			return err
+		}
+		launch = resolved
 	}
 
 	if t.opts.Cwd != "" && spawn == nil {
@@ -148,12 +146,12 @@ func (t *subprocessTransport) Connect(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	t.cancel = cancel
 
-	command, argv := resolveCommand(cliPath, t.opts, args)
+	command, argv := resolveCommand(cliPath, t.opts, launch.args)
 	proc, err := spawn(runCtx, SpawnOptions{
 		Command: command,
 		Args:    argv,
 		Cwd:     t.opts.Cwd,
-		Env:     buildEnv(t.opts),
+		Env:     launch.env,
 	})
 	if err == nil && proc == nil {
 		err = errors.New("Options.Spawn returned no process")
@@ -431,408 +429,4 @@ func (t *subprocessTransport) ReadMessages() iter.Seq2[json.RawMessage, error] {
 			yield(nil, perr)
 		}
 	}
-}
-
-// ---------------------------------------------------------------------------
-// CLI discovery
-// ---------------------------------------------------------------------------
-
-// findCLI locates the claude executable on PATH or in the usual install
-// locations.
-func findCLI() (string, error) {
-	name := "claude"
-	if runtime.GOOS == "windows" {
-		name = "claude.exe"
-	}
-	if path, err := exec.LookPath(name); err == nil {
-		return path, nil
-	}
-	for _, c := range cliCandidatesFn() {
-		if info, err := os.Stat(c); err == nil && !info.IsDir() {
-			return c, nil
-		}
-	}
-	return "", NewCLINotFoundError(
-		"Claude Code not found. Install with:\n"+
-			"  npm install -g @anthropic-ai/claude-code\n"+
-			"\nIf already installed locally, try:\n"+
-			"  export PATH=\"$HOME/node_modules/.bin:$PATH\"\n"+
-			"\nOr provide the path via Options.CLIPath", "")
-}
-
-// cliCandidatesFn is the candidate list used by findCLI; tests replace it.
-var cliCandidatesFn = cliCandidates
-
-// cliCandidates lists the usual install locations for the CLI, in the order
-// they are probed.
-func cliCandidates() []string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = ""
-	}
-	if runtime.GOOS == "windows" {
-		if home == "" {
-			return nil
-		}
-		return []string{filepath.Join(home, ".local", "bin", "claude.exe")}
-	}
-	candidates := []string{"/usr/local/bin/claude"}
-	if home == "" {
-		return candidates
-	}
-	return append(candidates,
-		filepath.Join(home, ".npm-global", "bin", "claude"),
-		filepath.Join(home, ".local", "bin", "claude"),
-		filepath.Join(home, "node_modules", ".bin", "claude"),
-		filepath.Join(home, ".yarn", "bin", "claude"),
-		filepath.Join(home, ".claude", "local", "claude"),
-	)
-}
-
-// ---------------------------------------------------------------------------
-// Command line construction
-// ---------------------------------------------------------------------------
-
-// buildCommandArgs renders the CLI arguments for opts. The SDK always drives
-// the CLI in streaming-json mode on both directions, matching the reference
-// SDKs, so large configuration (agents, hooks) can ride on the initialize
-// control request instead of the command line.
-//
-// opts must have passed prepareOptions, which validates option combinations.
-func buildCommandArgs(opts *Options) ([]string, error) {
-	args := []string{"--output-format", "stream-json", "--verbose"}
-
-	// Every other system prompt form travels in the initialize request
-	// (see initializeExtras), as in the TypeScript SDK.
-	if sp, ok := opts.SystemPrompt.(*SystemPromptFile); ok {
-		args = append(args, "--system-prompt-file", sp.Path)
-	}
-
-	switch tools := opts.Tools.(type) {
-	case nil:
-	case ToolList:
-		args = append(args, "--tools", strings.Join(tools, ","))
-	case ToolsPreset:
-		// The claude_code preset maps to the CLI's "default" tool set.
-		args = append(args, "--tools", "default")
-	}
-
-	allowedTools, err := applySkillsDefaults(opts)
-	if err != nil {
-		return nil, err
-	}
-	if len(allowedTools) > 0 {
-		args = append(args, "--allowedTools", strings.Join(allowedTools, ","))
-	}
-	// Zero turns is dropped, as in the TypeScript SDK.
-	if opts.MaxTurns != nil && *opts.MaxTurns != 0 {
-		args = append(args, "--max-turns", strconv.Itoa(*opts.MaxTurns))
-	}
-	if opts.MaxBudgetUSD != nil {
-		args = append(args, "--max-budget-usd", strconv.FormatFloat(*opts.MaxBudgetUSD, 'g', -1, 64))
-	}
-	if len(opts.DisallowedTools) > 0 {
-		args = append(args, "--disallowedTools", strings.Join(opts.DisallowedTools, ","))
-	}
-	if opts.TaskBudget != nil {
-		args = append(args, "--task-budget", strconv.Itoa(opts.TaskBudget.Total))
-	}
-	if opts.Model != "" {
-		args = append(args, "--model", opts.Model)
-	}
-	if opts.Agent != "" {
-		args = append(args, "--agent", opts.Agent)
-	}
-	if opts.FallbackModel != "" {
-		args = append(args, "--fallback-model", opts.FallbackModel)
-	}
-	if len(opts.Betas) > 0 {
-		args = append(args, "--betas", strings.Join(opts.Betas, ","))
-	}
-	if opts.DebugFile != "" {
-		args = append(args, "--debug-file", opts.DebugFile)
-	} else if opts.Debug {
-		args = append(args, "--debug")
-	}
-	if opts.PermissionPromptToolName != "" {
-		args = append(args, "--permission-prompt-tool", opts.PermissionPromptToolName)
-	}
-	if opts.PermissionPrompts != "" {
-		args = append(args, "--permission-prompts", opts.PermissionPrompts)
-	}
-	if opts.PermissionMode != "" {
-		args = append(args, "--permission-mode", opts.PermissionMode)
-	}
-	if opts.AllowDangerouslySkipPermissions {
-		args = append(args, "--allow-dangerously-skip-permissions")
-	}
-	if opts.ContinueConversation {
-		args = append(args, "--continue")
-	}
-	// The equals form binds a dash-leading value to its flag; in the
-	// two-token form the CLI would parse it as a separate flag, which lets an
-	// untrusted session name inject arbitrary options.
-	if opts.Resume != "" {
-		args = append(args, "--resume="+opts.Resume)
-	}
-	if opts.SessionID != "" {
-		args = append(args, "--session-id="+opts.SessionID)
-	}
-	settings, err := buildSettingsValue(opts)
-	if err != nil {
-		return nil, err
-	}
-	if settings != "" {
-		args = append(args, "--settings", settings)
-	}
-	if opts.ManagedSettings != nil {
-		payload, err := json.Marshal(opts.ManagedSettings)
-		if err != nil {
-			return nil, fmt.Errorf("claude: encoding managed settings: %w", err)
-		}
-		args = append(args, "--managed-settings", string(payload))
-	}
-	if opts.ProjectConfigRoot != "" {
-		args = append(args, "--project-config-root="+opts.ProjectConfigRoot)
-	}
-	for _, dir := range opts.AddDirs {
-		args = append(args, "--add-dir", dir)
-	}
-	if opts.MCPConfigPath != "" {
-		args = append(args, "--mcp-config", opts.MCPConfigPath)
-	} else if servers := processMCPServers(opts.MCPServers); len(servers) > 0 {
-		// In-process SDK servers are declared in the initialize request
-		// (sdkMcpServers), as the TypeScript SDK does, not here.
-		payload, err := json.Marshal(map[string]any{"mcpServers": servers})
-		if err != nil {
-			return nil, fmt.Errorf("claude: encoding mcp servers: %w", err)
-		}
-		args = append(args, "--mcp-config", string(payload))
-	}
-	if opts.IncludePartialMessages {
-		args = append(args, "--include-partial-messages")
-	}
-	if opts.IncludeHookEvents {
-		args = append(args, "--include-hook-events")
-	}
-	if opts.StrictMCPConfig {
-		args = append(args, "--strict-mcp-config")
-	}
-	if opts.ForkSession {
-		args = append(args, "--fork-session")
-	}
-	if opts.ResumeSessionAt != "" {
-		args = append(args, "--resume-session-at="+opts.ResumeSessionAt)
-	}
-	if opts.ResumeDropsTurn != "" {
-		args = append(args, "--resume-drops-turn="+opts.ResumeDropsTurn)
-	}
-	if opts.NoSessionPersistence {
-		args = append(args, "--no-session-persistence")
-	}
-	if opts.SessionStore != nil {
-		// The CLI then emits transcript_mirror frames, which the engine
-		// forwards to the store.
-		args = append(args, "--session-mirror")
-	}
-	if opts.SettingSources != nil {
-		args = append(args, "--setting-sources="+strings.Join(*opts.SettingSources, ","))
-	}
-	if pluginsViaInitialize(opts) {
-		args = append(args, "--await-initialize")
-	} else {
-		for _, p := range opts.Plugins {
-			flag := "--plugin-dir"
-			if p.SkipMCPDiscovery {
-				flag = "--plugin-dir-no-mcp"
-			}
-			args = append(args, flag, p.Path)
-		}
-	}
-	for _, flag := range sortedKeys(opts.ExtraArgs) {
-		value := opts.ExtraArgs[flag]
-		switch {
-		case value == nil:
-			args = append(args, "--"+flag)
-		case len(*value) > 1 && strings.HasPrefix(*value, "-"):
-			args = append(args, "--"+flag+"="+*value)
-		default:
-			args = append(args, "--"+flag, *value)
-		}
-	}
-	args = appendThinkingArgs(args, opts)
-	if opts.Effort != "" {
-		args = append(args, "--effort", opts.Effort)
-	}
-	if schema, ok := outputSchema(opts); ok {
-		payload, err := json.Marshal(schema)
-		if err != nil {
-			return nil, fmt.Errorf("claude: encoding output schema: %w", err)
-		}
-		args = append(args, "--json-schema", string(payload))
-	}
-
-	args = append(args, "--input-format", "stream-json")
-	return args, nil
-}
-
-// appendThinkingArgs renders Options.Thinking, or the deprecated
-// MaxThinkingTokens, as the TypeScript SDK does.
-func appendThinkingArgs(args []string, opts *Options) []string {
-	thinking := opts.Thinking
-	if thinking == nil && opts.MaxThinkingTokens != nil {
-		if *opts.MaxThinkingTokens == 0 {
-			thinking = &ThinkingConfig{Type: ThinkingDisabled}
-		} else {
-			thinking = &ThinkingConfig{Type: ThinkingEnabled, BudgetTokens: opts.MaxThinkingTokens}
-		}
-	}
-	if thinking == nil {
-		return args
-	}
-	switch thinking.Type {
-	case ThinkingAdaptive:
-		args = append(args, "--thinking", "adaptive")
-	case ThinkingEnabled:
-		if thinking.BudgetTokens == nil {
-			args = append(args, "--thinking", "adaptive")
-		} else {
-			args = append(args, "--max-thinking-tokens", strconv.Itoa(*thinking.BudgetTokens))
-		}
-	case ThinkingDisabled:
-		args = append(args, "--thinking", "disabled")
-	}
-	if thinking.Type != ThinkingDisabled && thinking.Display != "" {
-		args = append(args, "--thinking-display", thinking.Display)
-	}
-	return args
-}
-
-// outputSchema returns the JSON schema of a json_schema OutputFormat.
-func outputSchema(opts *Options) (any, bool) {
-	if opts.OutputFormat == nil || opts.OutputFormat["type"] != "json_schema" {
-		return nil, false
-	}
-	schema, ok := opts.OutputFormat["schema"]
-	return schema, ok && schema != nil
-}
-
-// applySkillsDefaults computes the effective allowed tools for
-// Options.Skills: enabling skills implies the Skill tool, so callers do not
-// have to allow it by hand. Like the TypeScript SDK, it leaves the setting
-// sources alone.
-func applySkillsDefaults(opts *Options) ([]string, error) {
-	allowed := append([]string(nil), opts.AllowedTools...)
-	switch skills := opts.Skills.(type) {
-	case SkillsAll:
-		if !slices.Contains(allowed, "Skill") {
-			allowed = append(allowed, "Skill")
-		}
-	case SkillList:
-		for _, name := range skills {
-			if err := validateSkillName(name); err != nil {
-				return nil, err
-			}
-			rule := "Skill(" + name + ")"
-			if !slices.Contains(allowed, rule) {
-				allowed = append(allowed, rule)
-			}
-		}
-	}
-	return allowed, nil
-}
-
-// validateSkillName rejects names that cannot ride safely in a Skill(name)
-// permission rule, or that could never match a discovered skill.
-func validateSkillName(name string) error {
-	if strings.TrimSpace(name) == "" {
-		return errors.New("claude: skill names must be non-empty")
-	}
-	if !utf8.ValidString(name) {
-		return fmt.Errorf("claude: invalid skill name %q: not valid UTF-8, so no discovered skill can match", name)
-	}
-	if name != strings.TrimSpace(name) {
-		return fmt.Errorf("claude: invalid skill name %q: leading or trailing whitespace can never match", name)
-	}
-	if name == "*" {
-		return errors.New(`claude: invalid skill name "*": use SkillsAll{} to enable every skill`)
-	}
-	if strings.HasSuffix(name, ":*") || strings.HasSuffix(name, " *") {
-		return fmt.Errorf("claude: invalid skill name %q: wildcard suffixes are not allowed", name)
-	}
-	if strings.HasPrefix(name, "/") {
-		return fmt.Errorf("claude: invalid skill name %q: use the canonical name, not the slash-command form", name)
-	}
-	if strings.Contains(name, `\\`) || strings.HasSuffix(name, `\`) {
-		return fmt.Errorf("claude: invalid skill name %q: backslash escapes are not allowed", name)
-	}
-	for _, r := range name {
-		if r == '(' || r == ')' || r == ',' || r == '\ufeff' || unicode.IsControl(r) {
-			return fmt.Errorf("claude: invalid skill name %q: parentheses, commas and control characters are not allowed", name)
-		}
-	}
-	return nil
-}
-
-// buildEnv renders the child process environment.
-func buildEnv(opts *Options) []string {
-	env := map[string]string{}
-	for _, kv := range os.Environ() {
-		k, v, ok := strings.Cut(kv, "=")
-		if !ok || k == "CLAUDECODE" {
-			// CLAUDECODE is dropped so an SDK-spawned CLI does not think
-			// it is running inside a Claude Code parent.
-			continue
-		}
-		env[k] = v
-	}
-	env["CLAUDE_CODE_ENTRYPOINT"] = entrypoint
-	for k, v := range opts.Env {
-		env[k] = v
-	}
-	env["CLAUDE_AGENT_SDK_VERSION"] = Version
-	// The engine reads the CLI's session_state_changed frames to tell when
-	// a run has ended; a caller-chosen value (any case) is kept.
-	if !hasKeyFold(env, "CLAUDE_CODE_SDK_READS_SESSION_STATE") {
-		env["CLAUDE_CODE_SDK_READS_SESSION_STATE"] = "1"
-	}
-	if opts.EnableFileCheckpointing {
-		env["CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING"] = "true"
-	}
-	if tc := opts.ToolConfig; tc != nil && tc.AskUserQuestion != nil && tc.AskUserQuestion.PreviewFormat != "" {
-		env["CLAUDE_CODE_QUESTION_PREVIEW_FORMAT"] = tc.AskUserQuestion.PreviewFormat
-	}
-	// As in the TypeScript SDK: NODE_OPTIONS from the parent must not alter
-	// the CLI's runtime, and DEBUG (used by many Node libraries) is only
-	// passed on as DEBUG=1 when SDK debugging is requested.
-	delete(env, "NODE_OPTIONS")
-	if envTruthy(env["DEBUG_CLAUDE_AGENT_SDK"]) {
-		env["DEBUG"] = "1"
-	} else {
-		delete(env, "DEBUG")
-	}
-	if opts.Cwd != "" {
-		env["PWD"] = opts.Cwd
-	}
-	out := make([]string, 0, len(env))
-	for _, k := range sortedKeys(env) {
-		out = append(out, k+"="+env[k])
-	}
-	return out
-}
-
-// hasKeyFold reports whether env has key, ignoring case.
-func hasKeyFold(env map[string]string, key string) bool {
-	for k := range env {
-		if strings.EqualFold(k, key) {
-			return true
-		}
-	}
-	return false
-}
-
-// sortedKeys returns m's keys in order, so rendered command lines and
-// environments are deterministic.
-func sortedKeys[V any](m map[string]V) []string {
-	return slices.Sorted(maps.Keys(m))
 }

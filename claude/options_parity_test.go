@@ -61,7 +61,7 @@ func TestInitializeExtras(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := json.Marshal(initializeExtras(tc.opts))
+			got, err := json.Marshal(initializeExtras(t, tc.opts))
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -90,14 +90,18 @@ func TestOptionsValidation(t *testing.T) {
 		{"settingsPathWithSandbox", Options{Settings: "/s.json", Sandbox: map[string]any{"enabled": true}}, "settings file path"},
 		{"sandboxNotObject", Options{Sandbox: json.RawMessage(`[1]`)}, "JSON object"},
 		{"settingsNotObject", Options{Settings: []string{"x"}}, "JSON object"},
+		{"badSkillName", Options{Skills: SkillList{"bad,name"}}, "invalid skill name"},
+		{"canUseToolWithPromptTool", Options{PermissionPromptToolName: "mcp__x",
+			CanUseTool: func(context.Context, string, map[string]any, ToolPermissionContext) (PermissionResult, error) {
+				return nil, nil
+			}}, "PermissionPromptToolName"},
+		{"dialogKindsWithoutHandler", Options{SupportedDialogKinds: []string{"k"}}, "OnUserDialog"},
+		{"customTransportValidated", Options{Transport: newFakeTransport(), Skills: SkillList{"*"}}, "SkillsAll"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			prepared, err := prepareOptions(&tc.opts, entrypoint)
-			if err == nil {
-				_, err = buildCommandArgs(prepared)
-			}
+			_, err := prepareOptions(&tc.opts, entrypoint)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -433,7 +437,7 @@ func TestSystemPromptFileStaysAFlag(t *testing.T) {
 	if i := slices.Index(args, "--system-prompt-file"); i < 0 || args[i+1] != path {
 		t.Fatalf("args = %q", args)
 	}
-	if _, ok := initializeExtras(opts)["systemPrompt"]; ok {
+	if _, ok := initializeExtras(t, opts)["systemPrompt"]; ok {
 		t.Fatal("a file prompt must not also be sent in initialize")
 	}
 }
