@@ -137,7 +137,7 @@ func (r *runTracker) onTaskFrame(frame map[string]any) {
 		delete(r.tasks, taskID)
 	case "task_updated":
 		patch, _ := frame["patch"].(map[string]any)
-		if TerminalTaskStatuses[str(patch["status"])] {
+		if isTerminalTaskStatus(str(patch["status"])) {
 			delete(r.tasks, taskID)
 		}
 	}

@@ -67,6 +67,17 @@ func toInt64(v any) (int64, bool) {
 	return 0, false
 }
 
+// stringItems keeps the string elements of a JSON array.
+func stringItems(list []any) []string {
+	out := make([]string, 0, len(list))
+	for _, v := range list {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // objectItems returns the object items of a JSON array.
 func objectItems(items []any) []map[string]any {
 	out := make([]map[string]any, 0, len(items))

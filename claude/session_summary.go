@@ -1,9 +1,7 @@
 package claude
 
 import (
-	"encoding/json"
 	"maps"
-	"math"
 )
 
 // Incremental session summaries for SessionStore adapters. Ported from
@@ -200,7 +198,7 @@ func summaryEntryToSessionInfo(entry SessionSummaryEntry, projectPath string) *S
 	if summary == "" {
 		return nil
 	}
-	createdAt, _ := summaryInt64(summaryValue(data, "createdAt"))
+	createdAt, _ := toInt64(summaryValue(data, "createdAt"))
 	return &SessionInfo{
 		SessionID:    entry.SessionID,
 		Summary:      summary,
@@ -212,29 +210,4 @@ func summaryEntryToSessionInfo(entry SessionSummaryEntry, projectPath string) *S
 		Tag:          get("tag"),
 		CreatedAt:    createdAt,
 	}
-}
-
-// summaryInt64 reads an integer from summary data, which holds an int64
-// when produced by FoldSessionSummary and a float64 or json.Number after a
-// JSON round trip through the adapter.
-func summaryInt64(v any) (int64, bool) {
-	switch n := v.(type) {
-	case int64:
-		return n, true
-	case int:
-		return int64(n), true
-	case float64:
-		if math.IsNaN(n) || math.IsInf(n, 0) {
-			return 0, false
-		}
-		return int64(n), true
-	case json.Number:
-		if i, err := n.Int64(); err == nil {
-			return i, true
-		}
-		if f, err := n.Float64(); err == nil {
-			return int64(f), true
-		}
-	}
-	return 0, false
 }

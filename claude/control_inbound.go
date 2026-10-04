@@ -150,35 +150,12 @@ func (e *engine) handleCanUseTool(ctx context.Context, requestID string, request
 		if err != nil {
 			return nil, err
 		}
-		return permissionReply(result, input, request)
+		out, ok := permissionDecisionWire(result, request)
+		if !ok {
+			return nil, fmt.Errorf("permission callback returned %T, want *PermissionResultAllow or *PermissionResultDeny", result)
+		}
+		return out, nil
 	})
-}
-
-// permissionReply renders a CanUseTool decision. An allow without
-// UpdatedInput keeps the tool's original input.
-func permissionReply(result PermissionResult, input, request map[string]any) (map[string]any, error) {
-	switch r := result.(type) {
-	case *PermissionResultAllow:
-		updated := r.UpdatedInput
-		if updated == nil {
-			updated = input
-		}
-		out := map[string]any{"behavior": "allow", "updatedInput": updated}
-		if r.UpdatedPermissions != nil {
-			out["updatedPermissions"] = r.UpdatedPermissions
-		}
-		stampPermissionReply(out, request, r.DecisionClassification)
-		return out, nil
-	case *PermissionResultDeny:
-		out := map[string]any{"behavior": "deny", "message": r.Message}
-		if r.Interrupt {
-			out["interrupt"] = true
-		}
-		stampPermissionReply(out, request, r.DecisionClassification)
-		return out, nil
-	default:
-		return nil, fmt.Errorf("permission callback returned %T, want *PermissionResultAllow or *PermissionResultDeny", result)
-	}
 }
 
 func (e *engine) handleHookCallback(ctx context.Context, request map[string]any) (map[string]any, error) {

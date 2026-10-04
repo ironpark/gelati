@@ -61,17 +61,6 @@ func (c *Client) InterruptWithReceipt(ctx context.Context, opts *InterruptOption
 	return receipt, nil
 }
 
-// stringItems keeps the string elements of a JSON array.
-func stringItems(list []any) []string {
-	out := make([]string, 0, len(list))
-	for _, v := range list {
-		if s, ok := v.(string); ok {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
 // SetPermissionMode changes the permission mode mid-conversation.
 func (c *Client) SetPermissionMode(ctx context.Context, mode PermissionMode) error {
 	_, err := c.call(ctx, "set_permission_mode", map[string]any{"mode": mode})
