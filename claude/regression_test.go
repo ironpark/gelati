@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -214,5 +215,88 @@ func TestQueryEndsOnContextCancel(t *testing.T) {
 	})
 	if !errors.Is(lastErr, context.Canceled) {
 		t.Fatalf("Query ended with %v, want context.Canceled", lastErr)
+	}
+}
+
+// blockingConnector is an MCP server whose disconnect func blocks until
+// released.
+type blockingConnector struct {
+	onDisconnect func()
+}
+
+func (blockingConnector) HandleMCPMessage(context.Context, json.RawMessage) (json.RawMessage, error) {
+	return nil, nil
+}
+
+func (c blockingConnector) ConnectMCP(MCPSendFunc) func() { return c.onDisconnect }
+
+// A connector's disconnect func runs outside the session's Close, so a slow
+// one does not hold up Disconnect.
+func TestClientDisconnectWithBlockingConnector(t *testing.T) {
+	t.Parallel()
+	ft := newFakeTransport()
+	initResponder(ft, map[string]any{})
+	release := make(chan struct{})
+	disconnected := make(chan struct{})
+	conn := blockingConnector{onDisconnect: func() {
+		<-release
+		close(disconnected)
+	}}
+	client := NewClient(&Options{
+		Transport:  ft,
+		MCPServers: map[string]MCPServerConfig{"slow": &MCPSDKServerConfig{Name: "slow", Instance: conn}},
+	})
+	if err := client.Connect(t.Context()); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	finishesWithin(t, 3*time.Second, "Disconnect", func() { _ = client.Disconnect() })
+	close(release)
+	select {
+	case <-disconnected:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the connector's disconnect func never ran")
+	}
+}
+
+// Wrong-typed optional members of a can_use_tool request stay unset rather
+// than turning into zero-value pointers, and malformed suggestions are
+// dropped instead of being offered back to the caller.
+func TestToolPermissionContextWrongTypes(t *testing.T) {
+	t.Parallel()
+	ctx := toolPermissionContext("r1", map[string]any{
+		"tool_use_id":               "tu1",
+		"mcp_server":                "not an object",
+		"matched_ask_rule":          []any{},
+		"requires_user_interaction": "yes",
+		"permission_suggestions": []any{
+			"x", nil, 5,
+			map[string]any{"type": "addRules", "rules": "bad"},
+			map[string]any{"type": "setMode", "mode": "acceptEdits", "destination": "session"},
+		},
+	})
+	if ctx.MCPServer != nil || ctx.MatchedAskRule != nil || ctx.RequiresUserInteraction != nil {
+		t.Errorf("wrong-typed members were set: %+v", ctx)
+	}
+	if len(ctx.Suggestions) != 1 || ctx.Suggestions[0].Mode != PermissionModeAcceptEdits {
+		t.Errorf("suggestions = %+v, want only the well-formed setMode", ctx.Suggestions)
+	}
+	rule := toolPermissionContext("r2", map[string]any{
+		"matched_ask_rule": map[string]any{"source": "userSettings", "tool_name": "Bash", "rule_content": 7},
+	}).MatchedAskRule
+	if rule == nil || rule.ToolName != "Bash" || rule.RuleContent != nil {
+		t.Errorf("matched rule = %+v, want Bash with no rule content", rule)
+	}
+}
+
+// A rate-limit reset time that is not a number is left nil, not 0.
+func TestRateLimitResetsAtWrongType(t *testing.T) {
+	t.Parallel()
+	msg, err := ParseMessage([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":"soon","overageResetsAt":true}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := msg.(*RateLimitEvent).RateLimitInfo
+	if info.ResetsAt != nil || info.OverageResetsAt != nil {
+		t.Errorf("ResetsAt = %v, OverageResetsAt = %v, want nil", info.ResetsAt, info.OverageResetsAt)
 	}
 }

@@ -347,17 +347,21 @@ func parseStreamEvent(data map[string]any, src []byte) Message {
 	return &w.StreamEvent
 }
 
+// int64Ptr returns v as an integer, or nil when it is not a JSON number.
+func int64Ptr(v any) *int64 {
+	if n, ok := toInt64(v); ok {
+		return &n
+	}
+	return nil
+}
+
 func parseRateLimitEvent(data map[string]any, src []byte) Message {
 	m := decodeTyped[RateLimitEvent](data, src).(*RateLimitEvent)
 	info, _ := data["rate_limit_info"].(map[string]any)
 	rli := &m.RateLimitInfo
 	rli.Raw = info
-	// Timestamps are read from the map so fractional seconds still parse.
-	if n, ok := toInt64(info["resetsAt"]); ok {
-		rli.ResetsAt = &n
-	}
-	if n, ok := toInt64(info["overageResetsAt"]); ok {
-		rli.OverageResetsAt = &n
-	}
+	// Timestamps are read from the map so fractional seconds still parse,
+	// and a value that is not a number leaves them nil.
+	rli.ResetsAt, rli.OverageResetsAt = int64Ptr(info["resetsAt"]), int64Ptr(info["overageResetsAt"])
 	return m
 }

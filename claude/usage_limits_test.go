@@ -59,8 +59,8 @@ func TestExportedListsAreCopies(t *testing.T) {
 	if !IsUsageLimitError("You've hit your limit") || IsUsageLimitError("zzz") {
 		t.Fatal("modifying UsageLimitErrorPrefixes changed IsUsageLimitError")
 	}
-	// TerminalTaskStatuses is still read by the engine, so it is compared
-	// rather than modified.
+	// TerminalTaskStatuses is a map that parallel tests may read, so it is
+	// compared rather than modified.
 	for _, s := range []string{"completed", "failed", "stopped", "killed", "running", ""} {
 		if isTerminalTaskStatus(s) != TerminalTaskStatuses[s] {
 			t.Errorf("isTerminalTaskStatus(%q) disagrees with TerminalTaskStatuses", s)

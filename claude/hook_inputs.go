@@ -442,8 +442,9 @@ var hookInputFactories = map[HookEvent]func() HookInput{
 
 // DecodeHookInput converts a raw hook input into its typed per-event struct,
 // switching on hook_event_name. An event this SDK does not model decodes to
-// *UnknownHookInput rather than failing; an error means a field had an
-// unexpected JSON type.
+// *UnknownHookInput rather than failing; an error means a top-level field
+// had an unexpected JSON type. Nested values with their own decoders, such as
+// permission suggestions, are read leniently and keep their zero values.
 func DecodeHookInput(raw map[string]any) (HookInput, error) {
 	payload, err := json.Marshal(raw)
 	if err != nil {

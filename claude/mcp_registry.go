@@ -131,15 +131,28 @@ func (r *sdkMCPRegistry) remove(name string) {
 	}
 }
 
-// closeAll unregisters every server; called when the session ends.
+// closeAll unregisters every server; called when the session ends. In-flight
+// requests are cancelled before it returns, but the connectors' disconnect
+// funcs run in the background so a slow one cannot hold up the session's
+// Close.
 func (r *sdkMCPRegistry) closeAll() {
 	r.mu.Lock()
 	entries := slices.Collect(maps.Values(r.servers))
 	r.servers = map[string]*sdkMCPEntry{}
 	r.closed = true
 	r.mu.Unlock()
+	var disconnects []func()
 	for _, entry := range entries {
-		entry.close()
+		if disconnect := entry.detach(); disconnect != nil {
+			disconnects = append(disconnects, disconnect)
+		}
+	}
+	if len(disconnects) > 0 {
+		go func() {
+			for _, disconnect := range disconnects {
+				disconnect()
+			}
+		}()
 	}
 }
 
@@ -175,11 +188,21 @@ func (r *sdkMCPRegistry) names() []string {
 	return slices.Sorted(maps.Keys(r.servers))
 }
 
+// close detaches the entry and runs its connector's disconnect func.
 func (e *sdkMCPEntry) close() {
+	if disconnect := e.detach(); disconnect != nil {
+		disconnect()
+	}
+}
+
+// detach marks the entry removed and cancels its in-flight requests,
+// returning the connector's disconnect func for the caller to run. It
+// returns nil when the entry was already removed or has no connector.
+func (e *sdkMCPEntry) detach() func() {
 	e.mu.Lock()
 	if e.removed {
 		e.mu.Unlock()
-		return
+		return nil
 	}
 	e.removed = true
 	disconnect := e.disconnect
@@ -189,9 +212,7 @@ func (e *sdkMCPEntry) close() {
 	for _, call := range inflight {
 		call.cancel()
 	}
-	if disconnect != nil {
-		disconnect()
-	}
+	return disconnect
 }
 
 // route answers one mcp_message for serverName.
