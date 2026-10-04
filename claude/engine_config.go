@@ -20,6 +20,8 @@ type engineConfig struct {
 	// hasHooks reports configured hooks, which keep the input open until
 	// the run ends.
 	hasHooks bool
+	// hookCallbacks answers hook_callback requests by callback ID.
+	hookCallbacks map[string]HookCallback
 	// hooksWire is the hooks field of the initialize request. It is built
 	// once, so a re-initialize registers the same callback IDs.
 	hooksWire map[string]any
@@ -32,23 +34,20 @@ type engineConfig struct {
 }
 
 // newEngineConfig resolves opts for the engine. launch supplies the
-// option-derived initialize fields; nil sends none. The hook callbacks are
-// returned separately: the engine looks them up per hook_callback request.
-func newEngineConfig(opts *Options, launch *launchConfig) (engineConfig, map[string]HookCallback) {
+// option-derived initialize fields.
+func newEngineConfig(opts *Options, launch *launchConfig) engineConfig {
 	callbacks, hooksWire := buildHookRegistry(opts.Hooks)
-	cfg := engineConfig{
+	return engineConfig{
 		canUseTool:      opts.CanUseTool,
 		onElicitation:   opts.OnElicitation,
 		onUserDialog:    opts.OnUserDialog,
 		dialogKinds:     opts.SupportedDialogKinds,
 		hasHooks:        len(opts.Hooks) > 0,
+		hookCallbacks:   callbacks,
 		hooksWire:       hooksWire,
+		initFields:      launch.initFields,
 		verbatimPrompts: opts.VerbatimPrompts,
 	}
-	if launch != nil {
-		cfg.initFields = launch.initFields
-	}
-	return cfg, callbacks
 }
 
 // buildHookRegistry assigns callback IDs to the configured hooks, in event

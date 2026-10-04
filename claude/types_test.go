@@ -449,7 +449,10 @@ func TestPermissionDecisionWire(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			out, ok := permissionDecisionWire(tc.result, tc.request)
+			out, ok := permissionDecisionWire(tc.result)
+			if tc.request != nil {
+				out, ok = permissionReply(tc.result, tc.request)
+			}
 			if !ok {
 				t.Fatal("not ok")
 			}
@@ -463,7 +466,7 @@ func TestPermissionDecisionWire(t *testing.T) {
 		})
 	}
 	for _, bad := range []PermissionResult{nil, (*PermissionResultAllow)(nil), (*PermissionResultDeny)(nil)} {
-		if _, ok := permissionDecisionWire(bad, request); ok {
+		if _, ok := permissionReply(bad, request); ok {
 			t.Fatalf("%#v: want not ok", bad)
 		}
 	}

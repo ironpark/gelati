@@ -73,7 +73,7 @@ func (p *stuckProcess) stop() {
 func TestSubprocessCloseUnblocksStuckWrite(t *testing.T) {
 	t.Parallel()
 	proc := newStuckProcess()
-	tr := newSubprocessTransport(&Options{
+	tr := newTestTransport(t, &Options{
 		Spawn: func(context.Context, SpawnOptions) (SpawnedProcess, error) { return proc, nil },
 	})
 	tr.gracefulTimeout = 50 * time.Millisecond

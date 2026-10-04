@@ -101,7 +101,7 @@ func TestOptionsValidation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := prepareOptions(&tc.opts, entrypoint)
+			_, _, err := prepareOptions(&tc.opts, entrypoint)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -281,7 +281,7 @@ func TestSubprocessTransportSpawnHook(t *testing.T) {
 	t.Parallel()
 	stub := writeStub(t, `echo '{"type":"system","subtype":"init"}'`)
 	var got SpawnOptions
-	tr := newSubprocessTransport(&Options{
+	tr := newTestTransport(t, &Options{
 		CLIPath: stub,
 		// A custom spawner's cwd lives in its own environment, so it is
 		// not checked locally.
@@ -339,7 +339,7 @@ func TestSubprocessTransportSpawnErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var cmd string
-			tr := newSubprocessTransport(&Options{
+			tr := newTestTransport(t, &Options{
 				CLIPath: tc.cliPath,
 				Spawn: func(_ context.Context, opts SpawnOptions) (SpawnedProcess, error) {
 					cmd = opts.Command
@@ -356,7 +356,7 @@ func TestSubprocessTransportSpawnErrors(t *testing.T) {
 // signal traps are installed before the test closes it.
 func startForClose(t *testing.T, body string, grace, kill time.Duration, stderr func(string)) *subprocessTransport {
 	t.Helper()
-	tr := newSubprocessTransport(&Options{CLIPath: writeStub(t, body), Stderr: stderr})
+	tr := newTestTransport(t, &Options{CLIPath: writeStub(t, body), Stderr: stderr})
 	tr.gracefulTimeout = grace
 	tr.killTimeout = kill
 	if err := tr.Connect(t.Context()); err != nil {

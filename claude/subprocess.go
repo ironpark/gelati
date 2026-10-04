@@ -33,8 +33,8 @@ const (
 // stream-json over its stdin and stdout.
 type subprocessTransport struct {
 	opts *Options
-	// launch is the resolved command line and environment. Session setup
-	// supplies it; when nil, Connect resolves it from opts.
+	// launch is opts resolved by resolveLaunch; Connect renders the command
+	// line from it.
 	launch *launchConfig
 
 	// writeMu serializes frames on stdin. It is separate from mu so that a
@@ -71,25 +71,16 @@ type subprocessTransport struct {
 	cancel context.CancelFunc
 }
 
-// newSubprocessTransport builds a transport for the given options. The CLI is
-// located, and the command line resolved unless withLaunch supplied it, at
+// newSubprocessTransport builds a transport for opts, which launch resolves.
+// The CLI is located, and its command line and environment rendered, at
 // Connect time.
-func newSubprocessTransport(opts *Options) *subprocessTransport {
-	if opts == nil {
-		opts = &Options{}
-	}
+func newSubprocessTransport(opts *Options, launch *launchConfig) *subprocessTransport {
 	return &subprocessTransport{
 		opts:            opts,
+		launch:          launch,
 		gracefulTimeout: defaultGracefulExitTimeout,
 		killTimeout:     defaultForceKillTimeout,
 	}
-}
-
-// withLaunch makes the transport start the CLI with an already resolved
-// launch configuration.
-func (t *subprocessTransport) withLaunch(launch *launchConfig) *subprocessTransport {
-	t.launch = launch
-	return t
 }
 
 // Connect locates the CLI, builds its command line and starts it.
@@ -122,15 +113,6 @@ func (t *subprocessTransport) Connect(ctx context.Context) error {
 	}
 	t.cliPath = cliPath
 
-	launch := t.launch
-	if launch == nil {
-		resolved, err := resolveLaunch(t.opts)
-		if err != nil {
-			return err
-		}
-		launch = resolved
-	}
-
 	if t.opts.Cwd != "" && spawn == nil {
 		if info, err := os.Stat(t.opts.Cwd); err != nil || !info.IsDir() {
 			return NewConnectionError("Working directory does not exist: " + t.opts.Cwd)
@@ -146,12 +128,12 @@ func (t *subprocessTransport) Connect(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	t.cancel = cancel
 
-	command, argv := resolveCommand(cliPath, t.opts, launch.args)
+	command, argv := resolveCommand(cliPath, t.opts, t.launch.commandArgs(t.opts))
 	proc, err := spawn(runCtx, SpawnOptions{
 		Command: command,
 		Args:    argv,
 		Cwd:     t.opts.Cwd,
-		Env:     launch.env,
+		Env:     buildEnv(t.opts),
 	})
 	if err == nil && proc == nil {
 		err = errors.New("Options.Spawn returned no process")

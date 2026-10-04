@@ -67,10 +67,7 @@ func runQuery(ctx context.Context, sess *session, inputs iter.Seq[UserInput], yi
 		if stopped {
 			_ = eng.close()
 		}
-		select {
-		case <-writerDone:
-		case <-time.After(5 * time.Second):
-		}
+		waitClosed(writerDone, 5*time.Second)
 	}()
 
 	for msg, err := range eng.receive(ctx) {

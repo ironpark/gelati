@@ -16,14 +16,24 @@ func startEngine(t *testing.T, opts *Options) (*engine, *fakeTransport) {
 	if err := ft.Connect(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	eng := newTestEngine(t, ft, opts)
+	eng.start(t.Context())
+	t.Cleanup(func() { _ = eng.close() })
+	return eng, ft
+}
+
+// newTestEngine builds an engine over transport for opts, nil meaning none,
+// with its launch resolved.
+func newTestEngine(t *testing.T, transport Transport, opts *Options) *engine {
+	t.Helper()
+	if opts == nil {
+		opts = &Options{}
+	}
 	launch, err := resolveLaunch(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng := newEngine(ft, opts, launch)
-	eng.start(t.Context())
-	t.Cleanup(func() { _ = eng.close() })
-	return eng, ft
+	return newEngine(transport, opts, launch)
 }
 
 // interrupt sends an interrupt control request on eng.

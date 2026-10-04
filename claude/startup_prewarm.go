@@ -225,12 +225,12 @@ func spareParkRoot(env map[string]string) (string, error) {
 	} else {
 		home := strings.TrimSpace(env["HOME"])
 		if home == "" {
-			home, _ = os.UserHomeDir()
+			home, _ = userHomeDir()
 		}
 		dir = filepath.Join(home, ".claude")
 	}
 	if !filepath.IsAbs(dir) {
-		home, _ := os.UserHomeDir()
+		home, _ := userHomeDir()
 		dir = filepath.Join(home, ".claude")
 	}
 	if !filepath.IsAbs(dir) {
@@ -320,8 +320,14 @@ func (s *SpareProcess) ClaimStream(ctx context.Context, inputs iter.Seq[UserInpu
 		s.settle(nil, newClaimError(claimFailed, err.Error(), nil, err))
 		return nil, err
 	}
-	options := s.sendClaimOptions(ctx, opts)
-	go s.awaitClaim(ctx, claimWait, options, cwd)
+	var modelWait, settingsWait replyWait
+	if opts.Model != "" {
+		modelWait = s.beginOption(ctx, map[string]any{"subtype": "set_model", "model": opts.Model})
+	}
+	if opts.Settings != nil {
+		settingsWait = s.beginOption(ctx, map[string]any{"subtype": "apply_flag_settings", "settings": opts.Settings})
+	}
+	go s.awaitClaim(ctx, claimWait, modelWait, settingsWait, cwd)
 
 	holdForSettings := opts.Settings != nil
 	return singleUse(func(yield func(Message, error) bool) {
@@ -401,37 +407,24 @@ func claimRequest(cwd string, sdkServers []string, opts ClaimOptions) map[string
 	return req
 }
 
-// claimOption is a per-session option request written right after the claim.
-type claimOption struct {
-	name string
-	// settings marks the flag-settings overlay, whose refusal fails the
-	// claim rather than letting the session run without it.
-	settings bool
-	wait     func(context.Context) (map[string]any, error)
-	err      error
+// replyWait waits for the response to a control request already written.
+type replyWait func(context.Context) (map[string]any, error)
+
+// beginOption writes a per-session option request of a claim, right after the
+// claim itself. A request that could not be written reports its error when
+// waited for.
+func (s *SpareProcess) beginOption(ctx context.Context, request map[string]any) replyWait {
+	wait, err := s.sess.eng.beginControlRequest(ctx, request)
+	if err != nil {
+		return func(context.Context) (map[string]any, error) { return nil, err }
+	}
+	return wait
 }
 
-// sendClaimOptions writes the option requests of a claim: the model, then the
-// settings overlay.
-func (s *SpareProcess) sendClaimOptions(ctx context.Context, opts ClaimOptions) []*claimOption {
-	var options []*claimOption
-	send := func(name string, settings bool, request map[string]any) {
-		o := &claimOption{name: name, settings: settings}
-		o.wait, o.err = s.sess.eng.beginControlRequest(ctx, request)
-		options = append(options, o)
-	}
-	if opts.Model != "" {
-		send("model", false, map[string]any{"subtype": "set_model", "model": opts.Model})
-	}
-	if opts.Settings != nil {
-		send("settings", true, map[string]any{"subtype": "apply_flag_settings", "settings": opts.Settings})
-	}
-	return options
-}
-
-// awaitClaim waits for the claim and its options to be answered and settles
-// the outcome.
-func (s *SpareProcess) awaitClaim(ctx context.Context, claimWait func(context.Context) (map[string]any, error), options []*claimOption, cwd string) {
+// awaitClaim waits for the claim and its option requests (nil when not sent)
+// to be answered and settles the outcome. A refused model leaves the session
+// running without it; a refused settings overlay fails the claim.
+func (s *SpareProcess) awaitClaim(ctx context.Context, claimWait, modelWait, settingsWait replyWait, cwd string) {
 	resp, err := claimWait(ctx)
 	if err != nil {
 		// The CLI answers a prompt sent to a refused claim with a
@@ -442,29 +435,21 @@ func (s *SpareProcess) awaitClaim(ctx context.Context, claimWait func(context.Co
 	}
 	s.removePark()
 	result := s.applyClaimResponse(resp, cwd)
-	var failed []string
-	var settingsErr error
-	for _, o := range options {
-		oerr := o.err
-		if oerr == nil {
-			_, oerr = o.wait(ctx)
-		}
-		switch {
-		case oerr == nil:
-		case o.settings:
-			settingsErr = oerr
-		default:
-			failed = append(failed, o.name+": "+oerr.Error())
-		}
+	var modelErr, settingsErr error
+	if modelWait != nil {
+		_, modelErr = modelWait(ctx)
+	}
+	if settingsWait != nil {
+		_, settingsErr = settingsWait(ctx)
 	}
 	switch {
 	case settingsErr != nil:
 		_ = s.sess.close()
 		s.settle(nil, newClaimError(claimSettingsNotApplied, settingsErr.Error()+
 			"; the prompt was not sent and the process was closed; start the session with Query", result, settingsErr))
-	case len(failed) > 0:
+	case modelErr != nil:
 		s.settle(nil, newClaimError(claimOptionNotApplied,
-			strings.Join(failed, "; ")+"; the session runs without these options", result, nil))
+			"model: "+modelErr.Error()+"; the session runs without these options", result, nil))
 	default:
 		s.settle(result, nil)
 	}

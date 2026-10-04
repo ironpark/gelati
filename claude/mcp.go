@@ -607,13 +607,7 @@ func schemaRequired(schema map[string]any) []string {
 	case []string:
 		return required
 	case []any:
-		out := make([]string, 0, len(required))
-		for _, item := range required {
-			if name, ok := item.(string); ok {
-				out = append(out, name)
-			}
-		}
-		return out
+		return stringItems(required)
 	}
 	return nil
 }

@@ -638,8 +638,8 @@ func startMirrorEngine(t *testing.T, opts *Options) (*engine, *fakeTransport) {
 	if err := ft.Connect(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	eng := newEngine(ft, opts, nil)
-	eng.enableTranscriptMirror(mirrorProjectsDir)
+	eng := newTestEngine(t, ft, opts)
+	eng.enableTranscriptMirror(opts, mirrorProjectsDir)
 	if b := eng.mirror.Load(); b != nil {
 		b.sleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
 	}
@@ -798,7 +798,7 @@ func TestEngineMirrorErrorSurfaces(t *testing.T) {
 
 func TestEngineReportMirrorError(t *testing.T) {
 	t.Parallel()
-	eng := newEngine(newFakeTransport(), nil, nil)
+	eng := newTestEngine(t, newFakeTransport(), nil)
 	eng.reportMirrorError(&SessionKey{ProjectKey: "p", SessionID: "s", Subpath: "subagents/agent-1"}, "boom")
 	eng.reportMirrorError(nil, "no key")
 
@@ -888,8 +888,9 @@ func TestEngineCloseBoundedWithStuckStore(t *testing.T) {
 		return nil
 	}}
 	ft := newFakeTransport()
-	eng := newEngine(ft, &Options{SessionStore: store}, nil)
-	eng.enableTranscriptMirror(mirrorProjectsDir)
+	opts := &Options{SessionStore: store}
+	eng := newTestEngine(t, ft, opts)
+	eng.enableTranscriptMirror(opts, mirrorProjectsDir)
 	b := eng.mirror.Load()
 	b.closeTimeout = 50 * time.Millisecond
 	eng.start(t.Context())

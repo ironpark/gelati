@@ -3,6 +3,8 @@ package claude
 import (
 	"encoding/json"
 	"maps"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // ContentBlock is one block inside a message's content array. The set of
@@ -113,7 +115,14 @@ func (*ToolResultBlock) BlockType() string { return "tool_result" }
 // ContentText and ContentList is set.
 func (b ToolResultBlock) MarshalJSON() ([]byte, error) {
 	type alias ToolResultBlock
-	return marshalWithExtra(alias(b), contentMember(textOrList(b.ContentText, b.ContentList)))
+	return marshalWithContent(alias(b), textOrList(b.ContentText, b.ContentList))
+}
+
+// marshalWithContent encodes block followed by content, when it is not nil,
+// as its "content" member. The content fields of the result blocks are tagged
+// "-", so their own encoding never has that key and nothing is checked.
+func marshalWithContent(block, content any) ([]byte, error) {
+	return jsonx.MarshalWithExtra(block, contentMember(content), func(string) bool { return false })
 }
 
 // UnmarshalJSON reads the wire shape produced by MarshalJSON. A member of an
@@ -124,7 +133,7 @@ func (b *ToolResultBlock) UnmarshalJSON(data []byte) error {
 		alias
 		Content any `json:"content"`
 	}
-	if err := json.Unmarshal(data, &w); fatalDecodeErr(err) {
+	if err := unmarshalLenient(data, &w); err != nil {
 		return err
 	}
 	*b = ToolResultBlock(w.alias)
@@ -209,7 +218,7 @@ func (b ServerToolResultBlock) MarshalJSON() ([]byte, error) {
 	case b.ContentList != nil:
 		content = b.ContentList
 	}
-	return marshalWithExtra(alias(b), contentMember(content))
+	return marshalWithContent(alias(b), content)
 }
 
 // UnmarshalJSON reads the wire shape produced by MarshalJSON. A member of an
@@ -220,7 +229,7 @@ func (b *ServerToolResultBlock) UnmarshalJSON(data []byte) error {
 		alias
 		Content any `json:"content"`
 	}
-	if err := json.Unmarshal(data, &w); fatalDecodeErr(err) {
+	if err := unmarshalLenient(data, &w); err != nil {
 		return err
 	}
 	*b = ServerToolResultBlock(w.alias)
@@ -257,7 +266,7 @@ func (*MCPToolResultBlock) BlockType() string { return "mcp_tool_result" }
 // ContentText and ContentList is set.
 func (b MCPToolResultBlock) MarshalJSON() ([]byte, error) {
 	type alias MCPToolResultBlock
-	return marshalWithExtra(alias(b), contentMember(textOrList(b.ContentText, b.ContentList)))
+	return marshalWithContent(alias(b), textOrList(b.ContentText, b.ContentList))
 }
 
 // UnmarshalJSON reads the wire shape produced by MarshalJSON. A member of an
@@ -268,7 +277,7 @@ func (b *MCPToolResultBlock) UnmarshalJSON(data []byte) error {
 		alias
 		Content any `json:"content"`
 	}
-	if err := json.Unmarshal(data, &w); fatalDecodeErr(err) {
+	if err := unmarshalLenient(data, &w); err != nil {
 		return err
 	}
 	*b = MCPToolResultBlock(w.alias)
