@@ -22,11 +22,11 @@ import (
 // numTurns user/assistant pairs linked by parentUuid.
 func makeTranscriptSession(t *testing.T, projectDir string, numTurns int) (sid, path string, uuids []string) {
 	t.Helper()
-	sid = newUUID(t)
+	sid = randomUUID()
 	var lines []string
 	parent := ""
 	for i := range numTurns {
-		u, a := newUUID(t), newUUID(t)
+		u, a := randomUUID(), randomUUID()
 		lines = append(lines,
 			transcriptEntry("user", u, parent, sid, fmt.Sprintf("Turn %d question", i+1), "timestamp", "2026-03-01T00:00:00Z"),
 			transcriptEntry("assistant", a, u, sid, []any{map[string]any{"type": "text", "text": fmt.Sprintf("Turn %d answer", i+1)}}, "timestamp", "2026-03-01T00:00:00Z"),
@@ -177,18 +177,18 @@ func TestSessionRename(t *testing.T) {
 	t.Run("not found", func(t *testing.T) {
 		t.Parallel()
 		root, project, _ := mutationProject(t)
-		err := newLocalSessions(root).renameSession(newUUID(t), "title", project)
+		err := newLocalSessions(root).renameSession(randomUUID(), "title", project)
 		if !errors.Is(err, ErrSessionNotFound) || !strings.Contains(err.Error(), "in project directory for") {
 			t.Errorf("err = %v", err)
 		}
-		if err := newLocalSessions(root).renameSession(newUUID(t), "title", ""); !errors.Is(err, ErrSessionNotFound) {
+		if err := newLocalSessions(root).renameSession(randomUUID(), "title", ""); !errors.Is(err, ErrSessionNotFound) {
 			t.Errorf("all projects: err = %v", err)
 		}
 	})
 
 	t.Run("no projects directory", func(t *testing.T) {
 		t.Parallel()
-		err := newLocalSessions(filepath.Join(t.TempDir(), "nonexistent")).renameSession(newUUID(t), "title", "")
+		err := newLocalSessions(filepath.Join(t.TempDir(), "nonexistent")).renameSession(randomUUID(), "title", "")
 		if !errors.Is(err, ErrSessionNotFound) || !errors.Is(err, os.ErrNotExist) || !strings.Contains(err.Error(), "no projects directory") {
 			t.Errorf("err = %v", err)
 		}
@@ -260,7 +260,7 @@ func TestSessionRename(t *testing.T) {
 		root := newProjectsRoot(t)
 		projA := makeProjectDir(t, root, "/aaa/project")
 		projZ := makeProjectDir(t, root, "/zzz/project")
-		sid := newUUID(t)
+		sid := randomUUID()
 		writeFile(t, filepath.Join(projA, sid+".jsonl"), "")
 		makeSessionFile(t, projZ, sessionFile{id: sid, firstPrompt: "real"})
 		if err := newLocalSessions(root).renameSession(sid, "New Title", ""); err != nil {
@@ -360,7 +360,7 @@ func TestSessionTag(t *testing.T) {
 	t.Run("not found", func(t *testing.T) {
 		t.Parallel()
 		root, project, _ := mutationProject(t)
-		if err := newLocalSessions(root).tagSession(newUUID(t), "tag", project); !errors.Is(err, ErrSessionNotFound) {
+		if err := newLocalSessions(root).tagSession(randomUUID(), "tag", project); !errors.Is(err, ErrSessionNotFound) {
 			t.Errorf("err = %v", err)
 		}
 	})
@@ -444,11 +444,11 @@ func TestSessionDelete(t *testing.T) {
 		if err := newLocalSessions(root).deleteSession("not-a-uuid", ""); !errors.Is(err, ErrInvalidSessionID) {
 			t.Errorf("invalid: %v", err)
 		}
-		if err := newLocalSessions(root).deleteSession(newUUID(t), ""); !errors.Is(err, ErrSessionNotFound) {
+		if err := newLocalSessions(root).deleteSession(randomUUID(), ""); !errors.Is(err, ErrSessionNotFound) {
 			t.Errorf("missing: %v", err)
 		}
 		dir := makeProjectDir(t, root, "/stub/project")
-		stub := newUUID(t)
+		stub := randomUUID()
 		writeFile(t, filepath.Join(dir, stub+".jsonl"), "")
 		if err := newLocalSessions(root).deleteSession(stub, ""); !errors.Is(err, ErrSessionNotFound) {
 			t.Errorf("0-byte stub: %v", err)
@@ -537,10 +537,10 @@ func TestSessionFork(t *testing.T) {
 		if _, err := newLocalSessions(root).forkSession("not-a-uuid", nil); !errors.Is(err, ErrInvalidSessionID) {
 			t.Errorf("invalid id: %v", err)
 		}
-		if _, err := newLocalSessions(root).forkSession(newUUID(t), nil); !errors.Is(err, ErrSessionNotFound) {
+		if _, err := newLocalSessions(root).forkSession(randomUUID(), nil); !errors.Is(err, ErrSessionNotFound) {
 			t.Errorf("missing: %v", err)
 		}
-		_, err := newLocalSessions(root).forkSession(newUUID(t), &ForkSessionOptions{UpToMessageID: "not-valid"})
+		_, err := newLocalSessions(root).forkSession(randomUUID(), &ForkSessionOptions{UpToMessageID: "not-valid"})
 		if err == nil || errors.Is(err, ErrInvalidSessionID) || errors.Is(err, ErrSessionNotFound) || !strings.Contains(err.Error(), "not-valid") {
 			t.Errorf("invalid up-to: %v", err)
 		}
@@ -625,7 +625,7 @@ func TestSessionFork(t *testing.T) {
 		if msgs := newLocalSessions(root).getSessionMessages(res.SessionID, &SessionMessagesOptions{Directory: project}); len(msgs) != 2 {
 			t.Errorf("messages = %d", len(msgs))
 		}
-		_, err = newLocalSessions(root).forkSession(sid, &ForkSessionOptions{Directory: project, UpToMessageID: newUUID(t)})
+		_, err = newLocalSessions(root).forkSession(sid, &ForkSessionOptions{Directory: project, UpToMessageID: randomUUID()})
 		if err == nil || !strings.Contains(err.Error(), "not found in session") {
 			t.Errorf("unknown up-to: %v", err)
 		}
@@ -673,8 +673,8 @@ func TestSessionFork(t *testing.T) {
 		}
 
 		// No title source at all.
-		sid2 := newUUID(t)
-		writeJSONL(t, filepath.Join(dir, sid2+".jsonl"), transcriptEntry("assistant", newUUID(t), "", sid2, "only an answer"))
+		sid2 := randomUUID()
+		writeJSONL(t, filepath.Join(dir, sid2+".jsonl"), transcriptEntry("assistant", randomUUID(), "", sid2, "only an answer"))
 		res, err := newLocalSessions(root).forkSession(sid2, &ForkSessionOptions{Directory: project})
 		if err != nil {
 			t.Fatal(err)
@@ -702,9 +702,9 @@ func TestSessionFork(t *testing.T) {
 		t.Parallel()
 		root := newProjectsRoot(t)
 		dir := makeProjectDir(t, root, "/any/project")
-		sid := newUUID(t)
-		other := newUUID(t)
-		u1, p1, p2, a1, side, b1, u2 := newUUID(t), newUUID(t), newUUID(t), newUUID(t), newUUID(t), newUUID(t), newUUID(t)
+		sid := randomUUID()
+		other := randomUUID()
+		u1, p1, p2, a1, side, b1, u2 := randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"),
 			jsonObj("type", "permission-mode", "permissionMode", "default", "sessionId", sid),
 			transcriptEntry("user", u1, "", sid, "hello", "timestamp", "t-u1", "teamName", "x", "agentName", "y", "slug", "z", "sourceToolAssistantUUID", "w"),
@@ -719,7 +719,7 @@ func TestSessionFork(t *testing.T) {
 			jsonObj("type", "content-replacement", "sessionId", sid, "replacements", []any{map[string]any{"toolUseId": "t1", "z": 1, "a": 2}}),
 			jsonObj("type", "content-replacement", "sessionId", other, "replacements", []any{"foreign"}),
 			jsonObj("type", "content-replacement", "sessionId", sid, "replacements", "not a list"),
-			transcriptEntry("user", u2, b1, sid, "after compact", "timestamp", "t-u2", "logicalParentUuid", newUUID(t)),
+			transcriptEntry("user", u2, b1, sid, "after compact", "timestamp", "t-u2", "logicalParentUuid", randomUUID()),
 		)
 		res, err := newLocalSessions(root).forkSession(sid, nil)
 		if err != nil {
@@ -767,24 +767,24 @@ func TestSessionFork(t *testing.T) {
 		root := newProjectsRoot(t)
 		dir := makeProjectDir(t, root, "/any/project")
 
-		sid := newUUID(t)
-		p1 := newUUID(t)
+		sid := randomUUID()
+		p1 := randomUUID()
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"),
 			transcriptEntry("progress", p1, "", sid, nil),
-			transcriptEntry("user", newUUID(t), p1, sid, "hi"),
+			transcriptEntry("user", randomUUID(), p1, sid, "hi"),
 		)
 		if _, err := newLocalSessions(root).forkSession(sid, &ForkSessionOptions{UpToMessageID: p1}); err == nil || !strings.Contains(err.Error(), "no messages to fork") {
 			t.Errorf("only progress kept: %v", err)
 		}
 
-		meta := newUUID(t)
+		meta := randomUUID()
 		writeJSONL(t, filepath.Join(dir, meta+".jsonl"), jsonObj("type", "custom-title", "customTitle", "x", "sessionId", meta))
 		if _, err := newLocalSessions(root).forkSession(meta, nil); err == nil || !strings.Contains(err.Error(), "no messages to fork") {
 			t.Errorf("metadata only: %v", err)
 		}
 
-		sidechain := newUUID(t)
-		writeJSONL(t, filepath.Join(dir, sidechain+".jsonl"), transcriptEntry("user", newUUID(t), "", sidechain, "x", "isSidechain", true))
+		sidechain := randomUUID()
+		writeJSONL(t, filepath.Join(dir, sidechain+".jsonl"), transcriptEntry("user", randomUUID(), "", sidechain, "x", "isSidechain", true))
 		if _, err := newLocalSessions(root).forkSession(sidechain, nil); err == nil || !strings.Contains(err.Error(), "no messages to fork") {
 			t.Errorf("sidechain only: %v", err)
 		}
@@ -794,11 +794,11 @@ func TestSessionFork(t *testing.T) {
 		t.Parallel()
 		root := newProjectsRoot(t)
 		dir := makeProjectDir(t, root, "/any/project")
-		sid, u := newUUID(t), newUUID(t)
+		sid, u := randomUUID(), randomUUID()
 		// Key order and number literals are copied verbatim; only the
 		// rewritten fields change, and new keys are appended.
 		line := `{"parentUuid":null,"isSidechain":false,"type":"user","message":{"z":1.50,"a":12345678901234567890,"content":"caf` + "\u00e9" + `"},"uuid":"` + u + `","sessionId":"` + sid + `","timestamp":"t0"}`
-		writeJSONL(t, filepath.Join(dir, sid+".jsonl"), line, transcriptEntry("assistant", newUUID(t), u, sid, "ok", "timestamp", "t1"))
+		writeJSONL(t, filepath.Join(dir, sid+".jsonl"), line, transcriptEntry("assistant", randomUUID(), u, sid, "ok", "timestamp", "t1"))
 		res, err := newLocalSessions(root).forkSession(sid, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -814,11 +814,11 @@ func TestSessionFork(t *testing.T) {
 		t.Parallel()
 		root := newProjectsRoot(t)
 		dir := makeProjectDir(t, root, "/any/project")
-		sid, p1, p2 := newUUID(t), newUUID(t), newUUID(t)
+		sid, p1, p2 := randomUUID(), randomUUID(), randomUUID()
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"),
 			transcriptEntry("progress", p1, p2, sid, nil),
 			transcriptEntry("progress", p2, p1, sid, nil),
-			transcriptEntry("user", newUUID(t), p2, sid, "hi"),
+			transcriptEntry("user", randomUUID(), p2, sid, "hi"),
 		)
 		res, err := newLocalSessions(root).forkSession(sid, nil)
 		if err != nil {
@@ -852,7 +852,7 @@ func TestSessionMutationsViaStore(t *testing.T) {
 	t.Run("rename", func(t *testing.T) {
 		t.Parallel()
 		store := NewInMemorySessionStore()
-		sid := newUUID(t)
+		sid := randomUUID()
 		seedChain(t, store, sid, 2)
 		if err := RenameSessionViaStore(ctx, store, sid, "  New Title  ", storeTestDir); err != nil {
 			t.Fatal(err)
@@ -877,7 +877,7 @@ func TestSessionMutationsViaStore(t *testing.T) {
 	t.Run("tag", func(t *testing.T) {
 		t.Parallel()
 		store := NewInMemorySessionStore()
-		sid := newUUID(t)
+		sid := randomUUID()
 		seedChain(t, store, sid, 1)
 		if err := TagSessionViaStore(ctx, store, sid, "exp\u200b", storeTestDir); err != nil {
 			t.Fatal(err)
@@ -927,9 +927,9 @@ func TestSessionMutationsViaStore(t *testing.T) {
 	t.Run("delete", func(t *testing.T) {
 		t.Parallel()
 		store := NewInMemorySessionStore()
-		sid := newUUID(t)
+		sid := randomUUID()
 		seedChain(t, store, sid, 1)
-		appendEntries(t, store, SessionKey{ProjectKey: storeTestKey, SessionID: sid, Subpath: "subagents/agent-a"}, storeUser("x", newUUID(t), "", sid))
+		appendEntries(t, store, SessionKey{ProjectKey: storeTestKey, SessionID: sid, Subpath: "subagents/agent-a"}, storeUser("x", randomUUID(), "", sid))
 		if store.Len() != 1 {
 			t.Fatalf("Len = %d", store.Len())
 		}
@@ -946,7 +946,7 @@ func TestSessionMutationsViaStore(t *testing.T) {
 			t.Errorf("subkeys = %v", subs)
 		}
 		// Without SessionDeleter, deletion is a no-op.
-		if err := DeleteSessionViaStore(ctx, storeMinimal{store}, newUUID(t), storeTestDir); err != nil {
+		if err := DeleteSessionViaStore(ctx, storeMinimal{store}, randomUUID(), storeTestDir); err != nil {
 			t.Errorf("minimal store: %v", err)
 		}
 	})
@@ -954,7 +954,7 @@ func TestSessionMutationsViaStore(t *testing.T) {
 	t.Run("fork round trip", func(t *testing.T) {
 		t.Parallel()
 		store := NewInMemorySessionStore()
-		sid := newUUID(t)
+		sid := randomUUID()
 		src := seedChain(t, store, sid, 2)
 		res, err := ForkSessionViaStore(ctx, store, sid, &ForkSessionOptions{Directory: storeTestDir})
 		if err != nil {
@@ -1007,7 +1007,7 @@ func TestSessionMutationsViaStore(t *testing.T) {
 			{[]SessionStoreEntry{{"type": "custom-title", "customTitle": "A"}, {"type": "custom-title", "customTitle": ""}}, "A (fork)"},
 		} {
 			store := NewInMemorySessionStore()
-			sid := newUUID(t)
+			sid := randomUUID()
 			seedChain(t, store, sid, 1)
 			appendEntries(t, store, mainKey(sid), tt.extra...)
 			res, err := ForkSessionViaStore(ctx, store, sid, &ForkSessionOptions{Directory: storeTestDir})
@@ -1024,10 +1024,10 @@ func TestSessionMutationsViaStore(t *testing.T) {
 	t.Run("fork preserves chain and stamps synthetic entries", func(t *testing.T) {
 		t.Parallel()
 		store := NewInMemorySessionStore()
-		sid := newUUID(t)
-		u1 := storeUser("one", newUUID(t), "", sid)
-		a1 := storeAssistant("two", newUUID(t), str(u1["uuid"]), sid)
-		u2 := storeUser("three", newUUID(t), str(a1["uuid"]), sid)
+		sid := randomUUID()
+		u1 := storeUser("one", randomUUID(), "", sid)
+		a1 := storeAssistant("two", randomUUID(), str(u1["uuid"]), sid)
+		u2 := storeUser("three", randomUUID(), str(a1["uuid"]), sid)
 		cr := SessionStoreEntry{"type": "content-replacement", "sessionId": sid,
 			"replacements": []map[string]any{{"toolUseId": "tu_1", "newContent": "x"}}}
 		appendEntries(t, store, mainKey(sid), u1, a1, u2, cr)
@@ -1059,13 +1059,13 @@ func TestSessionMutationsViaStore(t *testing.T) {
 	t.Run("fork errors", func(t *testing.T) {
 		t.Parallel()
 		store := NewInMemorySessionStore()
-		if _, err := ForkSessionViaStore(ctx, store, newUUID(t), &ForkSessionOptions{Directory: storeTestDir}); !errors.Is(err, ErrSessionNotFound) {
+		if _, err := ForkSessionViaStore(ctx, store, randomUUID(), &ForkSessionOptions{Directory: storeTestDir}); !errors.Is(err, ErrSessionNotFound) {
 			t.Errorf("missing: %v", err)
 		}
 		if _, err := ForkSessionViaStore(ctx, store, "not-a-uuid", nil); !errors.Is(err, ErrInvalidSessionID) {
 			t.Errorf("invalid id: %v", err)
 		}
-		sid := newUUID(t)
+		sid := randomUUID()
 		uuids := seedChain(t, store, sid, 3)
 		if _, err := ForkSessionViaStore(ctx, store, sid, &ForkSessionOptions{Directory: storeTestDir, UpToMessageID: "not-a-uuid"}); err == nil || !strings.Contains(err.Error(), "up-to message id") {
 			t.Errorf("invalid up-to: %v", err)

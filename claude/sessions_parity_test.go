@@ -227,7 +227,7 @@ type transcriptBuilder struct {
 }
 
 func newTranscript(t *testing.T, cwd string) *transcriptBuilder {
-	return &transcriptBuilder{t: t, sid: newUUID(t), cwd: cwd, clock: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)}
+	return &transcriptBuilder{t: t, sid: randomUUID(), cwd: cwd, clock: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)}
 }
 
 func (b *transcriptBuilder) ts() string {
@@ -239,7 +239,7 @@ func (b *transcriptBuilder) raw(line string) { b.lines = append(b.lines, line) }
 
 // entry appends a chain entry and returns its uuid. parent "" is null.
 func (b *transcriptBuilder) entry(typ, parent string, extra ...any) string {
-	uid := newUUID(b.t)
+	uid := randomUUID()
 	var p any
 	if parent != "" {
 		p = parent
@@ -257,7 +257,7 @@ func (b *transcriptBuilder) user(parent string, content any, extra ...any) strin
 }
 
 func (b *transcriptBuilder) assistant(parent string, content any, extra ...any) string {
-	return b.assistantID(parent, "msg_"+newUUID(b.t)[:8], content, extra...)
+	return b.assistantID(parent, "msg_"+randomUUID()[:8], content, extra...)
 }
 
 func (b *transcriptBuilder) assistantID(parent, msgID string, content any, extra ...any) string {
@@ -334,8 +334,8 @@ func TestSessionParityWithTypeScript(t *testing.T) {
 	a1 := seg.assistant(u1, "first answer")
 	u2 := seg.user(a1, "second question")
 	a2 := seg.assistant(u2, "second answer")
-	b := newUUID(t)
-	s := newUUID(t)
+	b := randomUUID()
+	s := randomUUID()
 	seg.raw(cliLine("parentUuid", nil, "logicalParentUuid", a2, "isSidechain", false, "sessionId", seg.sid, "type", "system",
 		"subtype", "compact_boundary", "content", "Conversation compacted", "isMeta", false, "level", "info",
 		"compactMetadata", map[string]any{"trigger": "manual", "preTokens": 1000,
@@ -355,7 +355,7 @@ func TestSessionParityWithTypeScript(t *testing.T) {
 	p2 := pm.assistant(p1, "no")
 	p3 := pm.user(p2, "keep this")
 	p4 := pm.assistant(p3, "kept")
-	b2, s2 := newUUID(t), newUUID(t)
+	b2, s2 := randomUUID(), randomUUID()
 	pm.raw(cliLine("parentUuid", nil, "logicalParentUuid", p4, "sessionId", pm.sid, "type", "system", "subtype", "compact_boundary",
 		"content", "Conversation compacted", "compactMetadata", map[string]any{"trigger": "auto",
 			"preservedMessages": map[string]any{"anchorUuid": s2, "uuids": []any{p3, p4}}},
@@ -385,7 +385,7 @@ func TestSessionParityWithTypeScript(t *testing.T) {
 	// Mid-turn absorbed commands, by source uuid and by delivery id.
 	ab := newTranscript(t, project)
 	au := ab.user("", "start")
-	src := newUUID(t)
+	src := randomUUID()
 	aq1 := ab.attachment(au, queued("absorbed", "source_uuid", src))
 	aa := ab.assistant(aq1, "working")
 	aq2 := ab.attachment(aa, queued("absorbed", "source_uuid", src))
@@ -457,7 +457,7 @@ func TestSessionParityWithTypeScript(t *testing.T) {
 	dangling := newTranscript(t, project)
 	du := dangling.user("", "dangling continuation")
 	dangling.assistant(du, "ok")
-	ghost := newUUID(t)
+	ghost := randomUUID()
 	writeJSONL(t, filepath.Join(projectDir, ghost+".jsonl"), cliLine("type", "summary", "summary", "no chain"))
 	dangling.raw(cliLine("type", "continued-in", "continuedInSessionId", ghost, "sessionId", dangling.sid))
 	add(dangling, projectDir)
@@ -646,16 +646,16 @@ func TestSessionParityLargeTranscript(t *testing.T) {
 	a1 := b.assistant(u1, "ok")
 	b.raw(cliLine("type", "attribution-snapshot", "messageId", "m1", "sessionId", b.sid))
 	// A boundary that preserved a segment does not cut the transcript.
-	pb := newUUID(t)
+	pb := randomUUID()
 	b.raw(cliLine("parentUuid", nil, "logicalParentUuid", a1, "sessionId", b.sid, "type", "system", "subtype", "compact_boundary",
 		"compactMetadata", map[string]any{"preservedSegment": map[string]any{"headUuid": u1, "anchorUuid": "none", "tailUuid": a1}},
 		"uuid", pb, "timestamp", b.ts()))
 	u2 := b.user(a1, "before the real boundary")
 	a2 := b.assistant(u2, "answer")
-	bd := newUUID(t)
+	bd := randomUUID()
 	b.raw(cliLine("parentUuid", nil, "logicalParentUuid", a2, "sessionId", b.sid, "type", "system", "subtype", "compact_boundary",
 		"content", "Conversation compacted", "compactMetadata", map[string]any{"trigger": "auto"}, "uuid", bd, "timestamp", b.ts()))
-	sm := newUUID(t)
+	sm := randomUUID()
 	b.raw(cliLine("parentUuid", bd, "sessionId", b.sid, "type", "user", "message", map[string]any{"role": "user", "content": "summary"},
 		"isCompactSummary", true, "uuid", sm, "timestamp", b.ts()))
 	b.raw(cliLine("type", "attribution-snapshot", "messageId", "m2", "sessionId", b.sid))

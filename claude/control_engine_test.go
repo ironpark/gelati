@@ -186,7 +186,7 @@ func TestEngineSessionStateFrames(t *testing.T) {
 	}
 }
 
-// streamOne runs StreamInput with one prompt in the background and returns a
+// streamOne runs streamInput with one prompt in the background and returns a
 // channel closed when it returns.
 func streamOne(t *testing.T, eng *engine) <-chan struct{} {
 	t.Helper()

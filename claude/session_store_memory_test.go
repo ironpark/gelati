@@ -236,12 +236,12 @@ func TestInMemorySessionStoreWithReaders(t *testing.T) {
 		s := NewInMemorySessionStore()
 		var sids []string
 		for range 3 {
-			sid := newUUID(t)
+			sid := randomUUID()
 			seedChain(t, s, sid, 1)
 			sids = append(sids, sid)
 		}
-		side := newUUID(t)
-		appendEntries(t, s, mainKey(side), SessionStoreEntry{"type": "user", "isSidechain": true, "uuid": newUUID(t),
+		side := randomUUID()
+		appendEntries(t, s, mainKey(side), SessionStoreEntry{"type": "user", "isSidechain": true, "uuid": randomUUID(),
 			"message": map[string]any{"role": "user", "content": "side"}})
 		newestFirst := []string{sids[2], sids[1], sids[0]}
 
@@ -272,14 +272,14 @@ func TestInMemorySessionStoreWithReaders(t *testing.T) {
 	t.Run("GetSessionInfoFromStore and messages", func(t *testing.T) {
 		t.Parallel()
 		s := NewInMemorySessionStore()
-		sid := newUUID(t)
+		sid := randomUUID()
 		uuids := seedChain(t, s, sid, 2)
 		appendEntries(t, s, mainKey(sid), SessionStoreEntry{"type": "custom-title", "customTitle": "Titled", "sessionId": sid})
 		info, err := GetSessionInfoFromStore(ctx, s, sid, storeTestDir)
 		if err != nil || info == nil || info.CustomTitle != "Titled" || info.FirstPrompt != "prompt 0" {
 			t.Errorf("info = %+v, %v", info, err)
 		}
-		if info, _ := GetSessionInfoFromStore(ctx, s, newUUID(t), storeTestDir); info != nil {
+		if info, _ := GetSessionInfoFromStore(ctx, s, randomUUID(), storeTestDir); info != nil {
 			t.Errorf("unknown = %+v", info)
 		}
 		msgs, err := GetSessionMessagesFromStore(ctx, s, sid, &SessionMessagesOptions{Directory: storeTestDir})
@@ -295,9 +295,9 @@ func TestInMemorySessionStoreWithReaders(t *testing.T) {
 	t.Run("subagents", func(t *testing.T) {
 		t.Parallel()
 		s := NewInMemorySessionStore()
-		sid := newUUID(t)
+		sid := randomUUID()
 		seedChain(t, s, sid, 1)
-		u, a := newUUID(t), newUUID(t)
+		u, a := randomUUID(), randomUUID()
 		sub := SessionKey{ProjectKey: storeTestKey, SessionID: sid, Subpath: "subagents/workflows/r1/agent-abc"}
 		appendEntries(t, s, sub, storeUser("sub prompt", u, "", sid), storeAssistant("sub reply", a, u, sid),
 			SessionStoreEntry{"type": "agent_metadata", "toolUseId": "toolu_1", "parentAgentId": "p"})

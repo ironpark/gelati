@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"cmp"
 	"maps"
 )
 
@@ -193,8 +194,8 @@ func summaryEntryToSessionInfo(entry SessionSummaryEntry, projectPath string) *S
 	} else {
 		firstPrompt = get("commandFallback")
 	}
-	customTitle := firstNonEmpty(get("customTitle"), get("aiTitle"))
-	summary := firstNonEmpty(customTitle, get("lastPrompt"), get("summaryHint"), firstPrompt)
+	customTitle := cmp.Or(get("customTitle"), get("aiTitle"))
+	summary := cmp.Or(customTitle, get("lastPrompt"), get("summaryHint"), firstPrompt)
 	if summary == "" {
 		return nil
 	}
@@ -206,7 +207,7 @@ func summaryEntryToSessionInfo(entry SessionSummaryEntry, projectPath string) *S
 		CustomTitle:  customTitle,
 		FirstPrompt:  firstPrompt,
 		GitBranch:    get("gitBranch"),
-		Cwd:          firstNonEmpty(get("cwd"), projectPath),
+		Cwd:          cmp.Or(get("cwd"), projectPath),
 		Tag:          get("tag"),
 		CreatedAt:    createdAt,
 	}

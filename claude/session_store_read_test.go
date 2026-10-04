@@ -206,7 +206,7 @@ func seedChain(t *testing.T, store SessionStore, sid string, n int) []string {
 	var entries []SessionStoreEntry
 	parent := ""
 	for i := range n {
-		u, a := newUUID(t), newUUID(t)
+		u, a := randomUUID(), randomUUID()
 		entries = append(entries, storeUser(fmt.Sprintf("prompt %d", i), u, parent, sid), storeAssistant(fmt.Sprintf("reply %d", i), a, u, sid))
 		uuids = append(uuids, u, a)
 		parent = a
@@ -301,7 +301,7 @@ func TestSessionListFromStore(t *testing.T) {
 			"list": func(m *memStoreFake) SessionStore { return storeListOnly{m, m} },
 		} {
 			m := newMemStoreFake()
-			a, b := newUUID(t), newUUID(t)
+			a, b := randomUUID(), randomUUID()
 			seedChain(t, m, a, 2)
 			seedChain(t, m, b, 2)
 			got, err := ListSessionsFromStore(ctx, store(m), &ListSessionsOptions{Directory: storeTestDir})
@@ -327,7 +327,7 @@ func TestSessionListFromStore(t *testing.T) {
 		m := newMemStoreFake()
 		var sids []string
 		for range 3 {
-			sid := newUUID(t)
+			sid := randomUUID()
 			seedChain(t, m, sid, 1)
 			sids = append(sids, sid)
 		}
@@ -356,13 +356,13 @@ func TestSessionListFromStore(t *testing.T) {
 		m := newMemStoreFake()
 		var valid []string
 		for range 5 {
-			sid := newUUID(t)
+			sid := randomUUID()
 			seedChain(t, m, sid, 1)
 			valid = append(valid, sid)
 		}
 		for range 3 {
-			sc := newUUID(t)
-			e := storeUser("sidechain", newUUID(t), "", sc)
+			sc := randomUUID()
+			e := storeUser("sidechain", randomUUID(), "", sc)
 			e["isSidechain"] = true
 			appendEntries(t, m, mainKey(sc), e)
 		}
@@ -404,7 +404,7 @@ func TestSessionListFromStore(t *testing.T) {
 	t.Run("load error degrades row", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		good, bad := newUUID(t), newUUID(t)
+		good, bad := randomUUID(), randomUUID()
 		seedChain(t, m, good, 1)
 		seedChain(t, m, bad, 1)
 		m.onLoad = func(_ context.Context, key SessionKey) error {
@@ -446,7 +446,7 @@ func TestSessionListFromStore(t *testing.T) {
 	t.Run("cwd falls back to directory", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		sid := newUUID(t)
+		sid := randomUUID()
 		seedChain(t, m, sid, 1)
 		canonical := canonicalizePath(storeTestDir)
 		info, err := GetSessionInfoFromStore(ctx, m, sid, storeTestDir)
@@ -473,7 +473,7 @@ func TestSessionListFromStoreLoadConcurrency(t *testing.T) {
 		m := newMemStoreFake()
 		n := storeListLoadConcurrency * 3
 		for i := range n {
-			appendEntries(t, m, mainKey(newUUID(t)), summaryUser(fmt.Sprintf("p%d", i), "2024-01-01T00:00:00Z", "uuid", fmt.Sprintf("u%d", i)))
+			appendEntries(t, m, mainKey(randomUUID()), summaryUser(fmt.Sprintf("p%d", i), "2024-01-01T00:00:00Z", "uuid", fmt.Sprintf("u%d", i)))
 		}
 		var inFlight, peak atomic.Int64
 		gate := make(chan struct{})
@@ -520,7 +520,7 @@ func TestSessionListFromStoreCancellation(t *testing.T) {
 	t.Parallel()
 	m := newMemStoreFake()
 	for range storeListLoadConcurrency * 2 {
-		seedChain(t, m, newUUID(t), 1)
+		seedChain(t, m, randomUUID(), 1)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.onLoad = func(ctx context.Context, _ SessionKey) error {
@@ -546,7 +546,7 @@ func TestSessionListFromStoreFastPath(t *testing.T) {
 	t.Run("skips load", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		a, b := newUUID(t), newUUID(t)
+		a, b := randomUUID(), randomUUID()
 		appendEntries(t, m, mainKey(a), summaryUser("first a", "2024-01-01T00:00:00Z", "cwd", storeTestDir))
 		appendEntries(t, m, mainKey(b), summaryUser("first b", "2024-01-02T00:00:00Z", "cwd", storeTestDir))
 		got, err := ListSessionsFromStore(ctx, m, opts)
@@ -564,7 +564,7 @@ func TestSessionListFromStoreFastPath(t *testing.T) {
 	t.Run("filters sidechain and empty", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		main, side, empty := newUUID(t), newUUID(t), newUUID(t)
+		main, side, empty := randomUUID(), randomUUID(), randomUUID()
 		appendEntries(t, m, mainKey(main), summaryUser("hello", "2024-01-01T00:00:00Z"))
 		appendEntries(t, m, mainKey(side), summaryUser("x", "2024-01-01T00:00:00Z", "isSidechain", true))
 		appendEntries(t, m, mainKey(empty), SessionStoreEntry{"type": "x", "timestamp": "2024-01-01T00:00:00Z"})
@@ -579,7 +579,7 @@ func TestSessionListFromStoreFastPath(t *testing.T) {
 		m := newMemStoreFake()
 		var sids []string
 		for i := range 5 {
-			sid := newUUID(t)
+			sid := randomUUID()
 			sids = append(sids, sid)
 			appendEntries(t, m, mainKey(sid), summaryUser(fmt.Sprintf("p%d", i), fmt.Sprintf("2024-01-0%dT00:00:00Z", i+1)))
 		}
@@ -592,7 +592,7 @@ func TestSessionListFromStoreFastPath(t *testing.T) {
 	t.Run("gap fill for missing summaries", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		with, without := newUUID(t), newUUID(t)
+		with, without := randomUUID(), randomUUID()
 		store := storeSummaries{memStoreFake: m, summaries: func(ctx context.Context, pk string) ([]SessionSummaryEntry, error) {
 			all, _ := m.ListSessionSummaries(ctx, pk)
 			return slices.DeleteFunc(all, func(s SessionSummaryEntry) bool { return s.SessionID != with }), nil
@@ -614,13 +614,13 @@ func TestSessionListFromStoreFastPath(t *testing.T) {
 	t.Run("gap fill bounded by limit", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		with := newUUID(t)
+		with := randomUUID()
 		store := storeSummaries{memStoreFake: m, summaries: func(ctx context.Context, pk string) ([]SessionSummaryEntry, error) {
 			all, _ := m.ListSessionSummaries(ctx, pk)
 			return slices.DeleteFunc(all, func(s SessionSummaryEntry) bool { return s.SessionID != with }), nil
 		}}
 		for i := range 5 {
-			appendEntries(t, m, mainKey(newUUID(t)), summaryUser(fmt.Sprintf("without %d", i), fmt.Sprintf("2024-01-0%dT00:00:00Z", i+1)))
+			appendEntries(t, m, mainKey(randomUUID()), summaryUser(fmt.Sprintf("without %d", i), fmt.Sprintf("2024-01-0%dT00:00:00Z", i+1)))
 		}
 		appendEntries(t, m, mainKey(with), summaryUser("with", "2024-01-10T00:00:00Z"))
 		page, _ := ListSessionsFromStore(ctx, store, &ListSessionsOptions{Directory: storeTestDir, Limit: 2})
@@ -635,7 +635,7 @@ func TestSessionListFromStoreFastPath(t *testing.T) {
 	t.Run("sidechain summary does not consume page slot", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		sids := []string{newUUID(t), newUUID(t), newUUID(t)}
+		sids := []string{randomUUID(), randomUUID(), randomUUID()}
 		appendEntries(t, m, mainKey(sids[2]), summaryUser("real 2", "2024-01-01T00:00:00Z"))
 		appendEntries(t, m, mainKey(sids[1]), summaryUser("real 1", "2024-01-02T00:00:00Z"))
 		appendEntries(t, m, mainKey(sids[0]), summaryUser("x", "2024-01-03T00:00:00Z", "isSidechain", true))
@@ -648,7 +648,7 @@ func TestSessionListFromStoreFastPath(t *testing.T) {
 	t.Run("stale summary triggers gap fill", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		sid := newUUID(t)
+		sid := randomUUID()
 		const stale = 1_000
 		store := storeSummaries{memStoreFake: m, summaries: func(context.Context, string) ([]SessionSummaryEntry, error) {
 			return []SessionSummaryEntry{{SessionID: sid, MTime: stale, Data: map[string]any{
@@ -674,7 +674,7 @@ func TestSessionListFromStoreFastPath(t *testing.T) {
 	t.Run("fresh summary with equal storage mtime is not gap filled", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		sid := newUUID(t)
+		sid := randomUUID()
 		const t2 = 1_704_067_200_250
 		store := storeSummaries{
 			memStoreFake: m,
@@ -709,7 +709,7 @@ func TestSessionListFromStoreFastPath(t *testing.T) {
 	t.Run("summary without listing is dropped", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		real, ghost := newUUID(t), newUUID(t)
+		real, ghost := randomUUID(), randomUUID()
 		store := storeSummaries{memStoreFake: m, listing: func(ctx context.Context, pk string) ([]SessionStoreListEntry, error) {
 			all, _ := m.ListSessions(ctx, pk)
 			return slices.DeleteFunc(all, func(e SessionStoreListEntry) bool { return e.SessionID == ghost }), nil
@@ -725,7 +725,7 @@ func TestSessionListFromStoreFastPath(t *testing.T) {
 	t.Run("summaries without ListSessions", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		a := newUUID(t)
+		a := randomUUID()
 		appendEntries(t, m, mainKey(a), summaryUser("only summary", "2024-01-02T00:00:00Z"))
 		got, err := ListSessionsFromStore(ctx, storeSummariesOnly{m, m}, opts)
 		if err != nil || !slices.Equal(sessionIDs(got), []string{a}) || got[0].Summary != "only summary" {
@@ -736,7 +736,7 @@ func TestSessionListFromStoreFastPath(t *testing.T) {
 	t.Run("gap-filled sidechain shorts the page", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		real, side := newUUID(t), newUUID(t)
+		real, side := randomUUID(), randomUUID()
 		store := storeSummaries{memStoreFake: m, summaries: func(context.Context, string) ([]SessionSummaryEntry, error) {
 			return nil, nil
 		}}
@@ -757,7 +757,7 @@ func TestSessionGetSessionInfoFromStore(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	m := newMemStoreFake()
-	sid := newUUID(t)
+	sid := randomUUID()
 	seedChain(t, m, sid, 1)
 
 	info, err := GetSessionInfoFromStore(ctx, m, sid, storeTestDir)
@@ -766,7 +766,7 @@ func TestSessionGetSessionInfoFromStore(t *testing.T) {
 		info.CreatedAt != 1704067200000 || info.LastModified != 1704067201000 || info.FileSize != jsonlByteSize(loaded) {
 		t.Fatalf("info = %+v, %v", info, err)
 	}
-	for _, id := range []string{newUUID(t), "not-a-uuid"} {
+	for _, id := range []string{randomUUID(), "not-a-uuid"} {
 		if info, err := GetSessionInfoFromStore(ctx, m, id, storeTestDir); info != nil || err != nil {
 			t.Errorf("%q: %+v, %v", id, info, err)
 		}
@@ -792,7 +792,7 @@ func TestSessionGetSessionMessagesFromStore(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	m := newMemStoreFake()
-	sid := newUUID(t)
+	sid := randomUUID()
 	uuids := seedChain(t, m, sid, 3)
 	opts := &SessionMessagesOptions{Directory: storeTestDir}
 
@@ -811,13 +811,13 @@ func TestSessionGetSessionMessagesFromStore(t *testing.T) {
 	}
 
 	appendEntries(t, m, mainKey(sid),
-		SessionStoreEntry{"type": "custom-title", "customTitle": "Title", "uuid": newUUID(t)},
-		SessionStoreEntry{"type": "tag", "tag": "exp", "uuid": newUUID(t)},
+		SessionStoreEntry{"type": "custom-title", "customTitle": "Title", "uuid": randomUUID()},
+		SessionStoreEntry{"type": "tag", "tag": "exp", "uuid": randomUUID()},
 	)
 	if msgs, _ := GetSessionMessagesFromStore(ctx, m, sid, opts); len(msgs) != len(uuids) {
 		t.Errorf("metadata entries leaked: %d", len(msgs))
 	}
-	for _, id := range []string{newUUID(t), "not-a-uuid"} {
+	for _, id := range []string{randomUUID(), "not-a-uuid"} {
 		if msgs, err := GetSessionMessagesFromStore(ctx, m, id, nil); msgs != nil || err != nil {
 			t.Errorf("%q: %v, %v", id, msgs, err)
 		}
@@ -843,9 +843,9 @@ func TestSessionSubagentsFromStore(t *testing.T) {
 	t.Run("list and get", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		sid := newUUID(t)
+		sid := randomUUID()
 		seedChain(t, m, sid, 1)
-		u, a := newUUID(t), newUUID(t)
+		u, a := randomUUID(), randomUUID()
 		appendEntries(t, m, sub(sid, "subagents/agent-abc123"), storeUser("sub prompt", u, "", sid), storeAssistant("sub reply", a, u, sid))
 		ids, err := ListSubagentsFromStore(ctx, m, sid, storeTestDir)
 		if err != nil || !slices.Equal(ids, []string{"abc123"}) {
@@ -863,8 +863,8 @@ func TestSessionSubagentsFromStore(t *testing.T) {
 	t.Run("nested workflow and dedupe", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		sid := newUUID(t)
-		u := newUUID(t)
+		sid := randomUUID()
+		u := randomUUID()
 		appendEntries(t, m, sub(sid, "subagents/workflows/run-1/agent-nested"), storeUser("hi", u, "", sid))
 		appendEntries(t, m, sub(sid, "subagents/agent-abc"), storeUser("x", u, "", sid))
 		appendEntries(t, m, sub(sid, "subagents/workflows/run-1/agent-abc"), storeUser("x", u, "", sid))
@@ -883,8 +883,8 @@ func TestSessionSubagentsFromStore(t *testing.T) {
 	t.Run("agent metadata", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		sid := newUUID(t)
-		u, a := newUUID(t), newUUID(t)
+		sid := randomUUID()
+		u, a := randomUUID(), randomUUID()
 		appendEntries(t, m, sub(sid, "subagents/agent-x"),
 			SessionStoreEntry{"type": "agent_metadata", "agentType": "gp", "toolUseId": "toolu_old"},
 			storeUser("hi", u, "", sid),
@@ -901,17 +901,17 @@ func TestSessionSubagentsFromStore(t *testing.T) {
 			}
 		}
 
-		sid2 := newUUID(t)
+		sid2 := randomUUID()
 		appendEntries(t, m, sub(sid2, "subagents/agent-x"),
 			SessionStoreEntry{"type": "agent_metadata", "toolUseId": 7.0, "parentAgentId": nil},
-			storeUser("hi", newUUID(t), "", sid2),
+			storeUser("hi", randomUUID(), "", sid2),
 		)
 		msgs, _ = GetSubagentMessagesFromStore(ctx, m, sid2, "x", &SessionMessagesOptions{Directory: storeTestDir})
 		if len(msgs) != 1 || msgs[0].ParentToolUseID != "" || msgs[0].ParentAgentID != "" {
 			t.Errorf("non-string metadata = %+v", msgs)
 		}
 
-		sid3 := newUUID(t)
+		sid3 := randomUUID()
 		appendEntries(t, m, sub(sid3, "subagents/agent-x"), SessionStoreEntry{"type": "agent_metadata", "toolUseId": "t"})
 		if msgs, err := GetSubagentMessagesFromStore(ctx, m, sid3, "x", &SessionMessagesOptions{Directory: storeTestDir}); msgs != nil || err != nil {
 			t.Errorf("metadata only = %v, %v", msgs, err)
@@ -921,11 +921,11 @@ func TestSessionSubagentsFromStore(t *testing.T) {
 	t.Run("limit and offset", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		sid := newUUID(t)
+		sid := randomUUID()
 		var uuids []string
 		var entries []SessionStoreEntry
 		for i := range 4 {
-			uid := newUUID(t)
+			uid := randomUUID()
 			parent := ""
 			if i > 0 {
 				parent = uuids[i-1]
@@ -946,7 +946,7 @@ func TestSessionSubagentsFromStore(t *testing.T) {
 		if ids, err := ListSubagentsFromStore(ctx, m, "not-a-uuid", storeTestDir); ids != nil || err != nil {
 			t.Errorf("list = %v, %v", ids, err)
 		}
-		for _, tt := range []struct{ sid, agent string }{{"not-a-uuid", "x"}, {newUUID(t), ""}} {
+		for _, tt := range []struct{ sid, agent string }{{"not-a-uuid", "x"}, {randomUUID(), ""}} {
 			if msgs, err := GetSubagentMessagesFromStore(ctx, m, tt.sid, tt.agent, nil); msgs != nil || err != nil {
 				t.Errorf("%q/%q = %v, %v", tt.sid, tt.agent, msgs, err)
 			}
@@ -956,13 +956,13 @@ func TestSessionSubagentsFromStore(t *testing.T) {
 	t.Run("without ListSubkeys", func(t *testing.T) {
 		t.Parallel()
 		m := newMemStoreFake()
-		sid := newUUID(t)
+		sid := randomUUID()
 		_, err := ListSubagentsFromStore(ctx, storeMinimal{m}, sid, storeTestDir)
 		if !errors.Is(err, errors.ErrUnsupported) || !strings.Contains(err.Error(), "ListSubkeys") {
 			t.Errorf("err = %v", err)
 		}
-		appendEntries(t, m, sub(sid, "subagents/agent-direct"), storeUser("hi", newUUID(t), "", sid))
-		appendEntries(t, m, sub(sid, "subagents/workflows/r/agent-nested"), storeUser("hi", newUUID(t), "", sid))
+		appendEntries(t, m, sub(sid, "subagents/agent-direct"), storeUser("hi", randomUUID(), "", sid))
+		appendEntries(t, m, sub(sid, "subagents/workflows/r/agent-nested"), storeUser("hi", randomUUID(), "", sid))
 		msgs, err := GetSubagentMessagesFromStore(ctx, storeMinimal{m}, sid, "direct", &SessionMessagesOptions{Directory: storeTestDir})
 		if err != nil || len(msgs) != 1 {
 			t.Errorf("direct path = %v, %v", msgs, err)

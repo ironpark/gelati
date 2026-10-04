@@ -1,7 +1,6 @@
 package claude
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,17 +16,6 @@ import (
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
-
-func newUUID(t testing.TB) string {
-	t.Helper()
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		t.Fatal(err)
-	}
-	b[6] = b[6]&0x0f | 0x40
-	b[8] = b[8]&0x3f | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
 
 // jsonObj renders a compact JSON object with keys in the given order
 // (key, value, key, value, ...), matching the CLI's on-disk format.
@@ -127,7 +115,7 @@ type sessionFile struct {
 func makeSessionFile(t testing.TB, projectDir string, f sessionFile) string {
 	t.Helper()
 	if f.id == "" {
-		f.id = newUUID(t)
+		f.id = randomUUID()
 	}
 	if f.firstPrompt == "" {
 		f.firstPrompt = "Hello Claude"
@@ -565,9 +553,9 @@ func TestSessionFindProjectDir(t *testing.T) {
 	if got := newLocalSessions(root).findProjectDir(long); got != "" {
 		t.Errorf("unconfirmed prefix fallback: %q", got)
 	}
-	writeJSONL(t, filepath.Join(bunDir, newUUID(t)+".jsonl"), jsonObj("type", "user", "cwd", long))
+	writeJSONL(t, filepath.Join(bunDir, randomUUID()+".jsonl"), jsonObj("type", "user", "cwd", long))
 	otherDir := filepath.Join(root, prefix+"-other")
-	writeJSONL(t, filepath.Join(otherDir, newUUID(t)+".jsonl"), jsonObj("type", "user", "cwd", long+"x"))
+	writeJSONL(t, filepath.Join(otherDir, randomUUID()+".jsonl"), jsonObj("type", "user", "cwd", long+"x"))
 	if got := newLocalSessions(root).findProjectDirs(long); !slices.Equal(got, []string{bunDir}) {
 		t.Errorf("prefix fallback: %q, want %q", got, bunDir)
 	}
@@ -651,7 +639,7 @@ func TestSessionJSMTimeMillis(t *testing.T) {
 
 func TestSessionParseSessionInfoFromLite(t *testing.T) {
 	t.Parallel()
-	sid := newUUID(t)
+	sid := randomUUID()
 	path := filepath.Join(t.TempDir(), sid+".jsonl")
 	writeJSONL(t, path,
 		jsonObj("type", "user", "message", map[string]any{"content": "test prompt"}, "cwd", "/workspace"),
@@ -771,7 +759,7 @@ func TestSessionListSessions(t *testing.T) {
 		makeSessionFile(t, dir, sessionFile{firstPrompt: "ignored meta", metaOnly: true})
 		writeJSONL(t, filepath.Join(dir, "not-a-uuid.jsonl"), jsonObj("type", "user", "message", map[string]any{"content": "x"}))
 		writeFile(t, filepath.Join(dir, "README.md"), "not a session")
-		writeFile(t, filepath.Join(dir, newUUID(t)+".jsonl"), "")
+		writeFile(t, filepath.Join(dir, randomUUID()+".jsonl"), "")
 		got := list(root, path, 0, 0)
 		if len(got) != 1 || got[0].FirstPrompt != "normal" {
 			t.Errorf("got %+v", got)
@@ -786,7 +774,7 @@ func TestSessionListSessions(t *testing.T) {
 		p3 := makeProjectDir(t, root, "/some/path/three")
 		makeSessionFile(t, p1, sessionFile{firstPrompt: "from proj1", mtime: 1000})
 		makeSessionFile(t, p2, sessionFile{firstPrompt: "from proj2", mtime: 2000})
-		shared := newUUID(t)
+		shared := randomUUID()
 		makeSessionFile(t, p1, sessionFile{id: shared, firstPrompt: "older", mtime: 500})
 		makeSessionFile(t, p3, sessionFile{id: shared, firstPrompt: "newer", mtime: 3000})
 		writeFile(t, filepath.Join(root, "stray-file"), "x")
@@ -828,7 +816,7 @@ func TestSessionListSessions(t *testing.T) {
 
 		root = newProjectsRoot(t)
 		dir = makeProjectDir(t, root, canonical)
-		writeJSONL(t, filepath.Join(dir, newUUID(t)+".jsonl"),
+		writeJSONL(t, filepath.Join(dir, randomUUID()+".jsonl"),
 			jsonObj("type", "user", "message", map[string]any{"content": "hello"}, "gitBranch", "old-branch"),
 			jsonObj("type", "summary", "gitBranch", "new-branch"),
 		)
@@ -843,11 +831,11 @@ func TestSessionListSessions(t *testing.T) {
 		root := newProjectsRoot(t)
 		path, canonical := newProject(t, "proj")
 		dir := makeProjectDir(t, root, canonical)
-		writeJSONL(t, filepath.Join(dir, newUUID(t)+".jsonl"),
+		writeJSONL(t, filepath.Join(dir, randomUUID()+".jsonl"),
 			jsonObj("type", "user", "message", map[string]any{"content": "first"}),
 			jsonObj("type", "last-prompt", "lastPrompt", "latest thing"),
 		)
-		writeJSONL(t, filepath.Join(dir, newUUID(t)+".jsonl"),
+		writeJSONL(t, filepath.Join(dir, randomUUID()+".jsonl"),
 			jsonObj("type", "user", "message", map[string]any{"content": "first"}),
 			jsonObj("type", "ai-title", "aiTitle", "Generated"),
 			jsonObj("type", "last-prompt", "lastPrompt", "latest thing"),
@@ -884,7 +872,7 @@ func TestSessionTagExtraction(t *testing.T) {
 		root := newProjectsRoot(t)
 		path, canonical := newProject(t, "proj")
 		dir := makeProjectDir(t, root, canonical)
-		sid := newUUID(t)
+		sid := randomUUID()
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"), tt.lines...)
 		got := newLocalSessions(root).listSessions(&ListSessionsOptions{Directory: path, ExcludeWorktrees: true})
 		if len(got) != 1 || got[0].Tag != tt.want {
@@ -902,18 +890,18 @@ func TestSessionCreatedAt(t *testing.T) {
 	path, canonical := newProject(t, "proj")
 	dir := makeProjectDir(t, root, canonical)
 
-	a := newUUID(t)
+	a := randomUUID()
 	writeJSONL(t, filepath.Join(dir, a+".jsonl"),
 		jsonObj("type", "user", "message", map[string]any{"content": "hello"}, "timestamp", "2026-01-15T10:30:00.000Z"),
 		jsonObj("type", "assistant", "message", map[string]any{"content": "hi"}, "timestamp", "2026-01-15T10:35:00.000Z"),
 	)
-	b := newUUID(t)
+	b := randomUUID()
 	writeJSONL(t, filepath.Join(dir, b+".jsonl"),
 		jsonObj("type", "permission-mode", "permissionMode", "acceptEdits"),
 		jsonObj("type", "user", "message", map[string]any{"content": "hello"}, "timestamp", "2026-01-15T10:30:00.000Z"),
 	)
 	c := makeSessionFile(t, dir, sessionFile{firstPrompt: "no timestamp"})
-	d := newUUID(t)
+	d := randomUUID()
 	writeJSONL(t, filepath.Join(dir, d+".jsonl"),
 		jsonObj("type", "user", "message", map[string]any{"content": "hello"}, "timestamp", "2026-01-01T00:00:00.000Z"))
 	setMTime(t, filepath.Join(dir, d+".jsonl"), 1769904000)
@@ -937,12 +925,12 @@ func TestSessionCreatedAt(t *testing.T) {
 func TestSessionGetSessionInfo(t *testing.T) {
 	t.Parallel()
 	root := newProjectsRoot(t)
-	for _, id := range []string{"not-a-uuid", "", newUUID(t)} {
+	for _, id := range []string{"not-a-uuid", "", randomUUID()} {
 		if got := newLocalSessions(root).getSessionInfo(id, ""); got != nil {
 			t.Errorf("getSessionInfo(%q) = %+v", id, got)
 		}
 	}
-	if got := newLocalSessions(filepath.Join(t.TempDir(), "nonexistent")).getSessionInfo(newUUID(t), ""); got != nil {
+	if got := newLocalSessions(filepath.Join(t.TempDir(), "nonexistent")).getSessionInfo(randomUUID(), ""); got != nil {
 		t.Errorf("missing root: %+v", got)
 	}
 
@@ -979,7 +967,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 		t.Helper()
 		root = newProjectsRoot(t)
 		path, canonical := newProject(t, "proj")
-		sid = newUUID(t)
+		sid = randomUUID()
 		dir := makeProjectDir(t, root, canonical)
 		if lines != nil {
 			writeJSONL(t, filepath.Join(dir, sid+".jsonl"), lines...)
@@ -993,19 +981,19 @@ func TestSessionGetSessionMessages(t *testing.T) {
 	t.Run("invalid and missing", func(t *testing.T) {
 		t.Parallel()
 		root := newProjectsRoot(t)
-		for _, id := range []string{"not-a-uuid", "", newUUID(t)} {
+		for _, id := range []string{"not-a-uuid", "", randomUUID()} {
 			if got := newLocalSessions(root).getSessionMessages(id, nil); got != nil {
 				t.Errorf("%q: %v", id, got)
 			}
 		}
-		if got := newLocalSessions(filepath.Join(t.TempDir(), "none")).getSessionMessages(newUUID(t), nil); got != nil {
+		if got := newLocalSessions(filepath.Join(t.TempDir(), "none")).getSessionMessages(randomUUID(), nil); got != nil {
 			t.Errorf("missing root: %v", got)
 		}
 	})
 
 	t.Run("simple chain", func(t *testing.T) {
 		t.Parallel()
-		u1, a1, u2, a2 := newUUID(t), newUUID(t), newUUID(t), newUUID(t)
+		u1, a1, u2, a2 := randomUUID(), randomUUID(), randomUUID(), randomUUID()
 		root, path, sid := setup(t)
 		dir := newLocalSessions(root).findProjectDir(canonicalizePath(path))
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"),
@@ -1030,7 +1018,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 
 	t.Run("filters meta and non-message entries", func(t *testing.T) {
 		t.Parallel()
-		u1, meta, prog, a1 := newUUID(t), newUUID(t), newUUID(t), newUUID(t)
+		u1, meta, prog, a1 := randomUUID(), randomUUID(), randomUUID(), randomUUID()
 		root, path, sid := setup(t, "")
 		dir := newLocalSessions(root).findProjectDir(canonicalizePath(path))
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"),
@@ -1047,7 +1035,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 
 	t.Run("keeps compact summary", func(t *testing.T) {
 		t.Parallel()
-		u1, a1 := newUUID(t), newUUID(t)
+		u1, a1 := randomUUID(), randomUUID()
 		root, path, sid := setup(t, "")
 		dir := newLocalSessions(root).findProjectDir(canonicalizePath(path))
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"),
@@ -1065,7 +1053,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 		dir := newLocalSessions(root).findProjectDir(canonicalizePath(path))
 		var uuids, lines []string
 		for i := range 6 {
-			uid := newUUID(t)
+			uid := randomUUID()
 			parent := ""
 			if i > 0 {
 				parent = uuids[i-1]
@@ -1102,7 +1090,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 		t.Parallel()
 		root, path, sid := setup(t, "")
 		dir := newLocalSessions(root).findProjectDir(canonicalizePath(path))
-		r, mainLeaf, sideLeaf := newUUID(t), newUUID(t), newUUID(t)
+		r, mainLeaf, sideLeaf := randomUUID(), randomUUID(), randomUUID()
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"),
 			transcriptEntry("user", r, "", sid, "root"),
 			transcriptEntry("assistant", mainLeaf, r, sid, "main"),
@@ -1112,7 +1100,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 			t.Errorf("main over sidechain: %v", ids)
 		}
 
-		oldLeaf, newLeaf := newUUID(t), newUUID(t)
+		oldLeaf, newLeaf := randomUUID(), randomUUID()
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"),
 			transcriptEntry("user", r, "", sid, "root"),
 			transcriptEntry("assistant", oldLeaf, r, sid, "old"),
@@ -1122,7 +1110,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 			t.Errorf("latest leaf: %v", ids)
 		}
 
-		u1, a1, prog := newUUID(t), newUUID(t), newUUID(t)
+		u1, a1, prog := randomUUID(), randomUUID(), randomUUID()
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"),
 			transcriptEntry("user", u1, "", sid, "hi"),
 			transcriptEntry("assistant", a1, u1, sid, "hello"),
@@ -1133,7 +1121,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 		}
 
 		// Only sidechain/team leaves: fall back to all leaves.
-		t1, t2 := newUUID(t), newUUID(t)
+		t1, t2 := randomUUID(), randomUUID()
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"),
 			transcriptEntry("user", t1, "", sid, "team", "teamName", "x"),
 			transcriptEntry("assistant", t2, t1, sid, "team reply", "teamName", "x"),
@@ -1147,7 +1135,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 		t.Parallel()
 		root, path, sid := setup(t, "")
 		dir := newLocalSessions(root).findProjectDir(canonicalizePath(path))
-		u1, a1 := newUUID(t), newUUID(t)
+		u1, a1 := randomUUID(), randomUUID()
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"),
 			transcriptEntry("user", u1, "", sid, "hi"),
 			"not valid json {{{",
@@ -1187,7 +1175,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 		root := newProjectsRoot(t)
 		makeProjectDir(t, root, "/path/one")
 		p2 := makeProjectDir(t, root, "/path/two")
-		sid, u1, a1 := newUUID(t), newUUID(t), newUUID(t)
+		sid, u1, a1 := randomUUID(), randomUUID(), randomUUID()
 		// An empty copy in the first project is skipped.
 		writeFile(t, filepath.Join(root, sanitizePath("/path/one"), sid+".jsonl"), "")
 		writeJSONL(t, filepath.Join(p2, sid+".jsonl"),
@@ -1252,7 +1240,7 @@ func makeSessionWithSubagents(t *testing.T, root, canonical string, agentIDs ...
 func TestSessionListSubagents(t *testing.T) {
 	t.Parallel()
 	root := newProjectsRoot(t)
-	for _, id := range []string{"not-a-uuid", "", newUUID(t)} {
+	for _, id := range []string{"not-a-uuid", "", randomUUID()} {
 		if got := newLocalSessions(root).listSubagents(id, ""); got != nil {
 			t.Errorf("%q: %v", id, got)
 		}
@@ -1299,7 +1287,7 @@ func TestSessionGetSubagentMessages(t *testing.T) {
 	path, canonical := newProject(t, "proj")
 	opts := &SessionMessagesOptions{Directory: path}
 
-	for _, tt := range []struct{ sid, agent string }{{"not-a-uuid", "abc"}, {"", "abc"}, {newUUID(t), ""}, {newUUID(t), "abc"}} {
+	for _, tt := range []struct{ sid, agent string }{{"not-a-uuid", "abc"}, {"", "abc"}, {randomUUID(), ""}, {randomUUID(), "abc"}} {
 		if got := newLocalSessions(root).getSubagentMessages(tt.sid, tt.agent, nil); got != nil {
 			t.Errorf("%q/%q: %v", tt.sid, tt.agent, got)
 		}
@@ -1310,7 +1298,7 @@ func TestSessionGetSubagentMessages(t *testing.T) {
 	}
 
 	writeAgent := func(dir, agentID, sid string, meta any) (string, string) {
-		u1, a1 := newUUID(t), newUUID(t)
+		u1, a1 := randomUUID(), randomUUID()
 		writeJSONL(t, filepath.Join(dir, "agent-"+agentID+".jsonl"),
 			transcriptEntry("user", u1, "", sid, "hi"),
 			transcriptEntry("assistant", a1, u1, sid, "hello"),
@@ -1330,7 +1318,7 @@ func TestSessionGetSubagentMessages(t *testing.T) {
 		sid, sub := makeSessionWithSubagents(t, root, canonical)
 		var uuids, lines []string
 		for i, typ := range []string{"user", "assistant", "user", "assistant"} {
-			uid := newUUID(t)
+			uid := randomUUID()
 			parent := ""
 			if i > 0 {
 				parent = uuids[i-1]
@@ -1407,7 +1395,7 @@ func TestSessionGetSubagentMessages(t *testing.T) {
 
 	t.Run("corrupt and empty transcripts", func(t *testing.T) {
 		sid, sub := makeSessionWithSubagents(t, root, canonical)
-		u1, a1 := newUUID(t), newUUID(t)
+		u1, a1 := randomUUID(), randomUUID()
 		writeJSONL(t, filepath.Join(sub, "agent-x.jsonl"),
 			transcriptEntry("user", u1, "", sid, "hi"), "not valid json {", "",
 			transcriptEntry("assistant", a1, u1, sid, "ok"))
@@ -1522,7 +1510,7 @@ func TestSessionWorktrees(t *testing.T) {
 	if p := newLocalSessions(root).resolveSessionFilePath(wtSID, repo); p == "" {
 		t.Error("resolveSessionFilePath via worktree")
 	}
-	chainSID, u1 := newUUID(t), newUUID(t)
+	chainSID, u1 := randomUUID(), randomUUID()
 	writeJSONL(t, filepath.Join(root, sanitizePath(wtCanon), chainSID+".jsonl"), transcriptEntry("user", u1, "", chainSID, "in worktree"))
 	if msgs := newLocalSessions(root).getSessionMessages(chainSID, &SessionMessagesOptions{Directory: repo}); len(msgs) != 1 || msgs[0].UUID != u1 {
 		t.Errorf("GetSessionMessages via worktree: %+v", msgs)
@@ -1539,10 +1527,10 @@ func TestSessionPublicLocalAPI(t *testing.T) {
 	root := filepath.Join(config, "projects")
 	path, canonical := newProject(t, "proj")
 	sid, sub := makeSessionWithSubagents(t, root, canonical, "a1")
-	u1 := newUUID(t)
+	u1 := randomUUID()
 	writeJSONL(t, filepath.Join(sub, "agent-a1.jsonl"), transcriptEntry("user", u1, "", sid, "sub hi"))
 	main := filepath.Join(root, sanitizePath(canonical), sid+".jsonl")
-	m1 := newUUID(t)
+	m1 := randomUUID()
 	writeJSONL(t, main, transcriptEntry("user", m1, "", sid, "Hello Claude"))
 
 	infos, err := ListSessions(nil)
@@ -1555,7 +1543,7 @@ func TestSessionPublicLocalAPI(t *testing.T) {
 	if info, err := GetSessionInfo(sid, path); err != nil || info == nil || info.Summary != "Hello Claude" {
 		t.Errorf("GetSessionInfo = %+v, %v", info, err)
 	}
-	if info, err := GetSessionInfo(newUUID(t), ""); err != nil || info != nil {
+	if info, err := GetSessionInfo(randomUUID(), ""); err != nil || info != nil {
 		t.Errorf("GetSessionInfo(missing) = %+v, %v", info, err)
 	}
 	if msgs, err := GetSessionMessages(sid, nil); err != nil || len(msgs) != 1 || msgs[0].UUID != m1 {

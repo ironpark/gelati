@@ -27,60 +27,86 @@ type jsonField struct {
 // typeFirstKeys returns the keys of e with "type" (when present) first and
 // the others sorted.
 func typeFirstKeys(e map[string]any) []string {
-	keys := make([]string, 0, len(e))
+	keys := make([]string, 1, len(e)+1)
 	for k := range e {
 		if k != "type" {
 			keys = append(keys, k)
 		}
 	}
-	slices.Sort(keys)
+	slices.Sort(keys[1:])
 	if _, ok := e["type"]; ok {
-		keys = append([]string{"type"}, keys...)
+		keys[0] = "type"
+		return keys
 	}
-	return keys
+	return keys[1:]
 }
 
-// appendJSONValue appends v to dst as compact JSON without HTML escaping or
-// a trailing newline. On error dst is returned unchanged.
-func appendJSONValue(dst []byte, v any) ([]byte, error) {
-	buf := bytes.NewBuffer(dst)
-	enc := json.NewEncoder(buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
+// jsonAppender appends values to byte slices as compact JSON without HTML
+// escaping or a trailing newline. It reuses one encoder and scratch buffer
+// across calls, so a batch of writes shares them.
+type jsonAppender struct {
+	buf bytes.Buffer
+	enc *json.Encoder
+}
+
+func newJSONAppender() *jsonAppender {
+	a := new(jsonAppender)
+	a.enc = json.NewEncoder(&a.buf)
+	a.enc.SetEscapeHTML(false)
+	return a
+}
+
+// append appends v to dst. On error dst is returned unchanged.
+func (a *jsonAppender) append(dst []byte, v any) ([]byte, error) {
+	a.buf.Reset()
+	if err := a.enc.Encode(v); err != nil {
 		return dst, err
 	}
-	b := buf.Bytes()
-	return b[:len(b)-1], nil // drop Encode's trailing newline
+	b := a.buf.Bytes()
+	return append(dst, b[:len(b)-1]...), nil // drop Encode's trailing newline
 }
 
-// appendEntryJSON appends entry e to dst as a JSON object with its keys in
-// typeFirstKeys order, without a trailing newline; a nil entry is written as
-// null. When strict is set, a value that cannot be encoded is an error;
-// otherwise it is written as null.
-func appendEntryJSON(dst []byte, e map[string]any, strict bool) ([]byte, error) {
-	if e == nil {
-		return append(dst, "null"...), nil
-	}
+// appendObject appends the n fields returned by field, in order, to dst as
+// a JSON object. When strict is set, a value that cannot be encoded is an
+// error naming its key after label; otherwise it is written as null.
+func (a *jsonAppender) appendObject(dst []byte, n int, field func(i int) (string, any),
+	strict bool, label string,
+) ([]byte, error) {
 	dst = append(dst, '{')
-	for i, k := range typeFirstKeys(e) {
+	for i := range n {
+		k, v := field(i)
 		if i > 0 {
 			dst = append(dst, ',')
 		}
 		var err error
-		if dst, err = appendJSONValue(dst, k); err != nil {
+		if dst, err = a.append(dst, k); err != nil {
 			return dst, err
 		}
 		dst = append(dst, ':')
-		next, err := appendJSONValue(dst, e[k])
+		next, err := a.append(dst, v)
 		if err != nil {
 			if strict {
-				return dst, fmt.Errorf("entry field %q: %w", k, err)
+				return dst, fmt.Errorf("%s %q: %w", label, k, err)
 			}
 			next = append(dst, "null"...)
 		}
 		dst = next
 	}
 	return append(dst, '}'), nil
+}
+
+// appendEntry appends entry e to dst as a JSON object with its keys in
+// typeFirstKeys order, without a trailing newline; a nil entry is written as
+// null. When strict is set, a value that cannot be encoded is an error;
+// otherwise it is written as null.
+func (a *jsonAppender) appendEntry(dst []byte, e map[string]any, strict bool) ([]byte, error) {
+	if e == nil {
+		return append(dst, "null"...), nil
+	}
+	keys := typeFirstKeys(e)
+	return a.appendObject(dst, len(keys), func(i int) (string, any) {
+		return keys[i], e[keys[i]]
+	}, strict, "entry field")
 }
 
 // entriesToJSONL serializes store entries to JSONL the way the Python SDK
@@ -96,9 +122,10 @@ func entriesToJSONL(entries []SessionStoreEntry) string {
 // lines with "type" first, as JSON.stringify writes them except that U+2028
 // and U+2029 are escaped.
 func compactJSONL(entries []SessionStoreEntry) []byte {
+	a := newJSONAppender()
 	var buf []byte
 	for _, e := range entries {
-		buf, _ = appendEntryJSON(buf, e, false)
+		buf, _ = a.appendEntry(buf, e, false)
 		buf = append(buf, '\n')
 	}
 	if len(entries) == 0 {
@@ -144,21 +171,12 @@ func asciiEscapeJSON(b []byte) string {
 // every non-ASCII character escaped (ensure_ascii). json.RawMessage values
 // are copied compacted.
 func pyJSONObject(fields []jsonField) (string, error) {
-	buf := []byte{'{'}
-	for i, f := range fields {
-		if i > 0 {
-			buf = append(buf, ',')
-		}
-		var err error
-		if buf, err = appendJSONValue(buf, f.key); err != nil {
-			return "", err
-		}
-		buf = append(buf, ':')
-		if buf, err = appendJSONValue(buf, f.value); err != nil {
-			return "", fmt.Errorf("field %q: %w", f.key, err)
-		}
+	buf, err := newJSONAppender().appendObject(nil, len(fields), func(i int) (string, any) {
+		return fields[i].key, fields[i].value
+	}, true, "field")
+	if err != nil {
+		return "", err
 	}
-	buf = append(buf, '}')
 	return asciiEscapeJSON(buf), nil
 }
 
@@ -175,9 +193,10 @@ func writeEntriesJSONL(path string, entries []SessionStoreEntry) error {
 		return fmt.Errorf("claude: writing %s: %w", path, err)
 	}
 	w := bufio.NewWriter(f)
+	a := newJSONAppender()
 	var line []byte
 	for _, e := range entries {
-		if line, err = appendEntryJSON(line[:0], e, true); err != nil {
+		if line, err = a.appendEntry(line[:0], e, true); err != nil {
 			break
 		}
 		if _, err = w.Write(append(line, '\n')); err != nil {

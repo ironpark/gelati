@@ -2,6 +2,7 @@ package claude
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"io"
@@ -476,7 +477,7 @@ func recordedSessionCwd(lite *liteSessionFile) (string, bool) {
 // the custom-title.json title or "", ranks below a tail customTitle and
 // above a head-only one.
 func liteTitle(lite *liteSessionFile, sidecarTitle string) string {
-	return firstNonEmpty(
+	return cmp.Or(
 		extractLastJSONStringField(lite.tail, "customTitle"),
 		sidecarTitle,
 		extractLastJSONStringField(lite.head, "customTitle"),
@@ -510,7 +511,7 @@ func parseSessionInfoFromLite(sessionID string, lite *liteSessionFile, projectPa
 	customTitle := liteTitle(lite, sidecarTitle)
 	firstPrompt := extractFirstPromptFromHead(head)
 	// lastPrompt shows what the user was most recently doing.
-	summary := firstNonEmpty(
+	summary := cmp.Or(
 		customTitle,
 		extractLastJSONStringField(tail, "lastPrompt"),
 		extractLastJSONStringField(tail, "summary"),
@@ -529,11 +530,11 @@ func parseSessionInfoFromLite(sessionID string, lite *liteSessionFile, projectPa
 		FileSize:     lite.size,
 		CustomTitle:  customTitle,
 		FirstPrompt:  firstPrompt,
-		GitBranch: firstNonEmpty(
+		GitBranch: cmp.Or(
 			extractLastJSONStringField(tail, "gitBranch"),
 			extractJSONStringField(head, "gitBranch"),
 		),
-		Cwd: firstNonEmpty(relocated, extractJSONStringField(head, "cwd"), projectPath),
+		Cwd: cmp.Or(relocated, extractJSONStringField(head, "cwd"), projectPath),
 	}
 
 	// Tags are read only from tag lines: a bare scan for "tag" would match

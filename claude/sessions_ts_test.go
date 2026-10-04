@@ -384,7 +384,7 @@ func TestSessionListExcludeProgrammatic(t *testing.T) {
 	dir := makeProjectDir(t, root, canonical)
 	var ids []string
 	for _, ep := range []string{"cli", "sdk-go", "sdk-go-client", "sdk-ts"} {
-		sid := newUUID(t)
+		sid := randomUUID()
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"), jsonObj("type", "user", "entrypoint", ep, "message", map[string]any{"content": ep}))
 		ids = append(ids, sid)
 	}

@@ -3,31 +3,32 @@ package claude
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
-// storeCallStatus is how a call made through runStoreCall ended.
-type storeCallStatus int
+// errStoreTimeout matches (errors.Is) a runStoreCall error caused by its
+// timeout expiring.
+var errStoreTimeout = errors.New("SessionStore call timed out")
 
-const (
-	// storeCallReturned: the call returned; its error, if any, is reported.
-	storeCallReturned storeCallStatus = iota
-	// storeCallTimedOut: the timeout expired, either before the call returned
-	// (no error is reported) or while it failed (its error is reported).
-	storeCallTimedOut
-	// storeCallCanceled: the parent context ended before the call returned;
-	// the parent's error is reported.
-	storeCallCanceled
-)
+// storeTimeoutError is a call error that arrived after the timeout expired.
+// It reads as the call's error and also matches errStoreTimeout.
+type storeTimeoutError struct{ err error }
+
+func (e storeTimeoutError) Error() string        { return e.err.Error() }
+func (e storeTimeoutError) Unwrap() error        { return e.err }
+func (e storeTimeoutError) Is(target error) bool { return target == errStoreTimeout }
 
 // runStoreCall runs one SessionStore call with a context derived from parent
 // and bounded by timeout. The call runs on its own goroutine so a store that
 // ignores its context cannot hang the caller: when the context ends first,
-// the call is abandoned and ends whenever the store returns. A panic in call
-// is reported as the error panicErr builds from the recovered value.
-func runStoreCall[T any](parent context.Context, timeout time.Duration, panicErr func(r any) error,
-	call func(context.Context) (T, error),
-) (T, storeCallStatus, error) {
+// the call is abandoned and ends whenever the store returns.
+//
+// The error is the call's own error, or, when the timeout expired, one
+// matching errStoreTimeout (wrapping the call's error when it failed), or,
+// when parent ended first, parent's error. A panic in call is reported as an
+// error.
+func runStoreCall[T any](parent context.Context, timeout time.Duration, call func(context.Context) (T, error)) (T, error) {
 	var zero T
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
@@ -39,7 +40,7 @@ func runStoreCall[T any](parent context.Context, timeout time.Duration, panicErr
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				done <- result{err: panicErr(r)}
+				done <- result{err: fmt.Errorf("SessionStore panic: %v", r)}
 			}
 		}()
 		v, err := call(ctx)
@@ -48,16 +49,16 @@ func runStoreCall[T any](parent context.Context, timeout time.Duration, panicErr
 	select {
 	case r := <-done:
 		if r.err == nil {
-			return r.v, storeCallReturned, nil
+			return r.v, nil
 		}
 		if parent.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return zero, storeCallTimedOut, r.err
+			return zero, storeTimeoutError{r.err}
 		}
-		return zero, storeCallReturned, r.err
+		return zero, r.err
 	case <-ctx.Done():
 		if err := parent.Err(); err != nil {
-			return zero, storeCallCanceled, err
+			return zero, err
 		}
-		return zero, storeCallTimedOut, nil
+		return zero, errStoreTimeout
 	}
 }

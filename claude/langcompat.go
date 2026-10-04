@@ -190,17 +190,6 @@ func utf8MaximalSubpart(b []byte) int {
 	return n
 }
 
-// firstNonEmpty returns the first non-empty string, mirroring a Python
-// `a or b or c` chain over optional strings.
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
 // nilIfEmpty returns nil for an empty slice, so "no results" is always nil.
 func nilIfEmpty[T any](s []T) []T {
 	if len(s) == 0 {

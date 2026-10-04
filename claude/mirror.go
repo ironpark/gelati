@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -330,17 +331,18 @@ func (b *transcriptMirrorBatcher) appendWithRetry(key SessionKey, entries []Sess
 // appendOnce runs one Append bounded by sendTimeout (see runStoreCall), so a
 // store that ignores its context cannot wedge the batcher.
 func (b *transcriptMirrorBatcher) appendOnce(key SessionKey, entries []SessionStoreEntry) (timedOut bool, err error) {
-	_, status, err := runStoreCall(b.ctx, b.sendTimeout,
-		func(r any) error { return fmt.Errorf("SessionStore.Append panicked: %v", r) },
-		func(ctx context.Context) (struct{}, error) { return struct{}{}, b.store.Append(ctx, key, entries) })
-	switch status {
-	case storeCallCanceled:
-		return false, fmt.Errorf("transcript mirror closed during append: %w", err)
-	case storeCallTimedOut:
-		if err == nil {
-			err = fmt.Errorf("SessionStore.Append timed out after %s", b.sendTimeout)
-		}
+	_, err = runStoreCall(b.ctx, b.sendTimeout, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, b.store.Append(ctx, key, entries)
+	})
+	switch {
+	case err == nil:
+		return false, nil
+	case err == errStoreTimeout:
+		return true, fmt.Errorf("SessionStore.Append timed out after %s", b.sendTimeout)
+	case errors.Is(err, errStoreTimeout):
 		return true, err
+	case err == b.ctx.Err():
+		return false, fmt.Errorf("transcript mirror closed during append: %w", err)
 	}
 	return false, err
 }
@@ -417,13 +419,7 @@ func filePathToSessionKey(filePath, projectsDir string) (SessionKey, bool) {
 // not a JSON object.
 func mirrorEntries(v any) []SessionStoreEntry {
 	list, _ := v.([]any)
-	out := make([]SessionStoreEntry, 0, len(list))
-	for _, item := range list {
-		if entry, ok := item.(map[string]any); ok {
-			out = append(out, entry)
-		}
-	}
-	return out
+	return objectItems(list)
 }
 
 // ---------------------------------------------------------------------------
@@ -431,14 +427,14 @@ func mirrorEntries(v any) []SessionStoreEntry {
 // ---------------------------------------------------------------------------
 
 // setMirrorBatcher attaches the batcher that receives transcript_mirror
-// frames. Call it before Start. Without one the frames are dropped.
+// frames. Call it before start. Without one the frames are dropped.
 func (e *engine) setMirrorBatcher(b *transcriptMirrorBatcher) {
 	e.mirror.Store(b)
 }
 
 // enableTranscriptMirror attaches a batcher for e.opts.SessionStore, reporting
 // failures as MirrorErrorMessage. It does nothing without a store. Call it
-// before Start; projectsDir is as for newMirrorBatcherForOptions.
+// before start; projectsDir is as for newMirrorBatcherForOptions.
 func (e *engine) enableTranscriptMirror(projectsDir string) {
 	if b := newMirrorBatcherForOptions(e.opts, projectsDir, e.reportMirrorError); b != nil {
 		e.setMirrorBatcher(b)

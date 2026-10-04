@@ -314,12 +314,13 @@ func callWithLoadTimeout[T any](ctx context.Context, timeout time.Duration, what
 	if err := ctx.Err(); err != nil {
 		return zero, fmt.Errorf("claude: %s during resume materialization: %w", what, err)
 	}
-	v, status, err := runStoreCall(ctx, timeout, func(r any) error { return fmt.Errorf("panic: %v", r) }, call)
+	v, err := runStoreCall(ctx, timeout, call)
 	switch {
-	case status == storeCallTimedOut:
+	case err == nil:
+	case errors.Is(err, errStoreTimeout):
 		return zero, fmt.Errorf("claude: %s timed out after %dms during resume materialization: %w",
 			what, timeout.Milliseconds(), context.DeadlineExceeded)
-	case status == storeCallCanceled:
+	case err == ctx.Err():
 		return zero, fmt.Errorf("claude: %s during resume materialization: %w", what, err)
 	case err != nil:
 		return zero, fmt.Errorf("claude: %s failed during resume materialization: %w", what, err)
@@ -437,13 +438,11 @@ func stripSettingsForResume(content []byte) []byte {
 		// rejects in Python; keep the original bytes as the Python SDK does.
 		return content
 	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(parsed); err != nil {
+	out, err := newJSONAppender().append(nil, parsed)
+	if err != nil {
 		return content
 	}
-	return bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+	return out
 }
 
 // decodeJSONObject parses b as exactly one JSON object, keeping numbers as

@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -99,33 +100,30 @@ type metadataSink interface {
 // renameSessionTo validates and normalizes a rename and appends the
 // custom-title entry to sink.
 func renameSessionTo(sink metadataSink, sessionID, title string) error {
-	if !validateUUID(sessionID) {
-		return invalidSessionIDError(sessionID)
-	}
-	stripped, err := normalizeSessionTitle(title)
-	if err != nil {
-		return err
-	}
-	return sink.appendMetadata(sessionID, []jsonField{
-		{"type", "custom-title"},
-		{"customTitle", stripped},
-		{"sessionId", sessionID},
-	})
+	return appendMetadataEntry(sink, sessionID, "custom-title", "customTitle", title, normalizeSessionTitle)
 }
 
 // tagSessionTo validates and normalizes a tag and appends the tag entry to
 // sink.
 func tagSessionTo(sink metadataSink, sessionID, tag string) error {
+	return appendMetadataEntry(sink, sessionID, "tag", "tag", tag, normalizeSessionTag)
+}
+
+// appendMetadataEntry validates sessionID, normalizes value and appends a
+// {"type":typ,key:value,"sessionId":sessionID} entry to sink.
+func appendMetadataEntry(sink metadataSink, sessionID, typ, key, value string,
+	normalize func(string) (string, error),
+) error {
 	if !validateUUID(sessionID) {
 		return invalidSessionIDError(sessionID)
 	}
-	tag, err := normalizeSessionTag(tag)
+	value, err := normalize(value)
 	if err != nil {
 		return err
 	}
 	return sink.appendMetadata(sessionID, []jsonField{
-		{"type", "tag"},
-		{"tag", tag},
+		{"type", typ},
+		{key, value},
 		{"sessionId", sessionID},
 	})
 }
@@ -307,7 +305,7 @@ func (s localSessions) forkSession(sessionID string, opts *ForkSessionOptions) (
 	transcript, replacements := parseForkTranscript(decodeUTF8Replace(content), sessionID)
 	deriveTitle := func() string {
 		lite := jsonlToLite(content, 0)
-		return firstNonEmpty(liteTitle(lite, ""), extractFirstPromptFromHead(lite.head))
+		return cmp.Or(liteTitle(lite, ""), extractFirstPromptFromHead(lite.head))
 	}
 	forkedID, lines, err := buildForkLines(transcript, replacements, sessionID, opts.UpToMessageID, opts.Title, deriveTitle)
 	if err != nil {
@@ -692,7 +690,7 @@ func forkTrailerLines(sessionID, forkedID, now string, replacements []any, title
 
 	forkTitle := pyStrip(title)
 	if forkTitle == "" {
-		forkTitle = firstNonEmpty(deriveTitle(), "Forked session") + " (fork)"
+		forkTitle = cmp.Or(deriveTitle(), "Forked session") + " (fork)"
 	}
 	line, err := pyJSONObject([]jsonField{
 		{"type", "custom-title"},
