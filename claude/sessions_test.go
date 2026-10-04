@@ -542,11 +542,11 @@ func TestSessionFindProjectDir(t *testing.T) {
 	t.Parallel()
 	root := newProjectsRoot(t)
 	short := "/some/project"
-	if got := findProjectDir(root, short); got != "" {
+	if got := newLocalSessions(root).findProjectDir(short); got != "" {
 		t.Errorf("missing short project: %q", got)
 	}
 	dir := makeProjectDir(t, root, short)
-	if got := findProjectDir(root, short); got != dir {
+	if got := newLocalSessions(root).findProjectDir(short); got != dir {
 		t.Errorf("exact: %q, want %q", got, dir)
 	}
 
@@ -554,7 +554,7 @@ func TestSessionFindProjectDir(t *testing.T) {
 	// in the CLI): matched by prefix.
 	long := "/" + strings.Repeat("segment/", 40)
 	prefix := sanitizePath(long)[:maxSanitizedLength]
-	if got := findProjectDir(root, long); got != "" {
+	if got := newLocalSessions(root).findProjectDir(long); got != "" {
 		t.Errorf("missing long project: %q", got)
 	}
 	bunDir := filepath.Join(root, prefix+"-bunhash")
@@ -562,23 +562,23 @@ func TestSessionFindProjectDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The prefix match is confirmed by a session recorded in the path.
-	if got := findProjectDir(root, long); got != "" {
+	if got := newLocalSessions(root).findProjectDir(long); got != "" {
 		t.Errorf("unconfirmed prefix fallback: %q", got)
 	}
 	writeJSONL(t, filepath.Join(bunDir, newUUID(t)+".jsonl"), jsonObj("type", "user", "cwd", long))
 	otherDir := filepath.Join(root, prefix+"-other")
 	writeJSONL(t, filepath.Join(otherDir, newUUID(t)+".jsonl"), jsonObj("type", "user", "cwd", long+"x"))
-	if got := findProjectDirs(root, long); !slices.Equal(got, []string{bunDir}) {
+	if got := newLocalSessions(root).findProjectDirs(long); !slices.Equal(got, []string{bunDir}) {
 		t.Errorf("prefix fallback: %q, want %q", got, bunDir)
 	}
 	// Prefix matching never applies to short paths.
 	if err := os.MkdirAll(filepath.Join(root, sanitizePath("/other")+"-x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := findProjectDir(root, "/other"); got != "" {
+	if got := newLocalSessions(root).findProjectDir("/other"); got != "" {
 		t.Errorf("short prefix matched: %q", got)
 	}
-	if got := findProjectDir(filepath.Join(root, "nope"), long); got != "" {
+	if got := newLocalSessions(filepath.Join(root, "nope")).findProjectDir(long); got != "" {
 		t.Errorf("missing root: %q", got)
 	}
 }
@@ -658,7 +658,7 @@ func TestSessionParseSessionInfoFromLite(t *testing.T) {
 		jsonObj("type", "tag", "tag", "experiment", "sessionId", sid),
 	)
 	lite := readSessionLite(path)
-	info := parseSessionInfoFromLite(sid, lite, "/fallback")
+	info := parseSessionInfoFromLite(sid, lite, "/fallback", "")
 	if info == nil || info.SessionID != sid || info.Summary != "test prompt" || info.Tag != "experiment" || info.Cwd != "/workspace" {
 		t.Fatalf("info = %+v", info)
 	}
@@ -666,7 +666,7 @@ func TestSessionParseSessionInfoFromLite(t *testing.T) {
 	// Invalid timestamps leave CreatedAt unset; offsets are honoured.
 	for ts, want := range map[string]int64{"not-a-valid-iso-date": 0, "2026-01-15T10:30:00+00:00": 1768473000000} {
 		writeJSONL(t, path, jsonObj("type", "user", "message", map[string]any{"content": "hello"}, "timestamp", ts))
-		info := parseSessionInfoFromLite(sid, readSessionLite(path), "")
+		info := parseSessionInfoFromLite(sid, readSessionLite(path), "", "")
 		if info == nil || info.CreatedAt != want {
 			t.Errorf("timestamp %q: %+v", ts, info)
 		}
@@ -680,15 +680,15 @@ func TestSessionParseSessionInfoFromLite(t *testing.T) {
 func TestSessionListSessions(t *testing.T) {
 	t.Parallel()
 	list := func(root, dir string, limit, offset int) []SessionInfo {
-		return listSessionsIn(root, &ListSessionsOptions{Directory: dir, Limit: limit, Offset: offset, ExcludeWorktrees: true})
+		return newLocalSessions(root).listSessions(&ListSessionsOptions{Directory: dir, Limit: limit, Offset: offset, ExcludeWorktrees: true})
 	}
 
 	t.Run("empty and missing roots", func(t *testing.T) {
 		t.Parallel()
-		if got := listSessionsIn(newProjectsRoot(t), nil); got != nil {
+		if got := newLocalSessions(newProjectsRoot(t)).listSessions(nil); got != nil {
 			t.Errorf("empty root: %v", got)
 		}
-		if got := listSessionsIn(filepath.Join(t.TempDir(), "nonexistent"), nil); got != nil {
+		if got := newLocalSessions(filepath.Join(t.TempDir(), "nonexistent")).listSessions(nil); got != nil {
 			t.Errorf("missing root: %v", got)
 		}
 	})
@@ -790,7 +790,7 @@ func TestSessionListSessions(t *testing.T) {
 		makeSessionFile(t, p1, sessionFile{id: shared, firstPrompt: "older", mtime: 500})
 		makeSessionFile(t, p3, sessionFile{id: shared, firstPrompt: "newer", mtime: 3000})
 		writeFile(t, filepath.Join(root, "stray-file"), "x")
-		got := listSessionsIn(root, nil)
+		got := newLocalSessions(root).listSessions(nil)
 		if len(got) != 3 {
 			t.Fatalf("got %d: %+v", len(got), got)
 		}
@@ -886,11 +886,11 @@ func TestSessionTagExtraction(t *testing.T) {
 		dir := makeProjectDir(t, root, canonical)
 		sid := newUUID(t)
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"), tt.lines...)
-		got := listSessionsIn(root, &ListSessionsOptions{Directory: path, ExcludeWorktrees: true})
+		got := newLocalSessions(root).listSessions(&ListSessionsOptions{Directory: path, ExcludeWorktrees: true})
 		if len(got) != 1 || got[0].Tag != tt.want {
 			t.Errorf("%s: %+v", tt.name, got)
 		}
-		if info := getSessionInfoIn(root, sid, path); info == nil || info.Tag != tt.want {
+		if info := newLocalSessions(root).getSessionInfo(sid, path); info == nil || info.Tag != tt.want {
 			t.Errorf("%s: GetSessionInfo %+v", tt.name, info)
 		}
 	}
@@ -919,7 +919,7 @@ func TestSessionCreatedAt(t *testing.T) {
 	setMTime(t, filepath.Join(dir, d+".jsonl"), 1769904000)
 
 	byID := map[string]SessionInfo{}
-	for _, s := range listSessionsIn(root, &ListSessionsOptions{Directory: path, ExcludeWorktrees: true}) {
+	for _, s := range newLocalSessions(root).listSessions(&ListSessionsOptions{Directory: path, ExcludeWorktrees: true}) {
 		byID[s.SessionID] = s
 	}
 	if byID[a].CreatedAt != 1768473000000 || byID[b].CreatedAt != 1768473000000 || byID[c].CreatedAt != 0 {
@@ -938,11 +938,11 @@ func TestSessionGetSessionInfo(t *testing.T) {
 	t.Parallel()
 	root := newProjectsRoot(t)
 	for _, id := range []string{"not-a-uuid", "", newUUID(t)} {
-		if got := getSessionInfoIn(root, id, ""); got != nil {
+		if got := newLocalSessions(root).getSessionInfo(id, ""); got != nil {
 			t.Errorf("getSessionInfo(%q) = %+v", id, got)
 		}
 	}
-	if got := getSessionInfoIn(filepath.Join(t.TempDir(), "nonexistent"), newUUID(t), ""); got != nil {
+	if got := newLocalSessions(filepath.Join(t.TempDir(), "nonexistent")).getSessionInfo(newUUID(t), ""); got != nil {
 		t.Errorf("missing root: %+v", got)
 	}
 
@@ -953,17 +953,17 @@ func TestSessionGetSessionInfo(t *testing.T) {
 	sid := makeSessionFile(t, dirA, sessionFile{firstPrompt: "hello", gitBranch: "main"})
 	side := makeSessionFile(t, dirA, sessionFile{firstPrompt: "sidechain", sidechain: true})
 
-	info := getSessionInfoIn(root, sid, pathA)
+	info := newLocalSessions(root).getSessionInfo(sid, pathA)
 	if info == nil || info.SessionID != sid || info.Summary != "hello" || info.GitBranch != "main" || info.Cwd != canonA {
 		t.Errorf("with directory: %+v", info)
 	}
-	if info := getSessionInfoIn(root, sid, ""); info == nil || info.Summary != "hello" || info.Cwd != "" {
+	if info := newLocalSessions(root).getSessionInfo(sid, ""); info == nil || info.Summary != "hello" || info.Cwd != "" {
 		t.Errorf("without directory: %+v", info)
 	}
-	if info := getSessionInfoIn(root, sid, pathB); info != nil {
+	if info := newLocalSessions(root).getSessionInfo(sid, pathB); info != nil {
 		t.Errorf("wrong directory: %+v", info)
 	}
-	if info := getSessionInfoIn(root, side, pathA); info != nil {
+	if info := newLocalSessions(root).getSessionInfo(side, pathA); info != nil {
 		t.Errorf("sidechain: %+v", info)
 	}
 }
@@ -987,18 +987,18 @@ func TestSessionGetSessionMessages(t *testing.T) {
 		return root, path, sid
 	}
 	get := func(root, path, sid string, limit, offset int) []SessionMessage {
-		return getSessionMessagesIn(root, sid, &SessionMessagesOptions{Directory: path, Limit: limit, Offset: offset})
+		return newLocalSessions(root).getSessionMessages(sid, &SessionMessagesOptions{Directory: path, Limit: limit, Offset: offset})
 	}
 
 	t.Run("invalid and missing", func(t *testing.T) {
 		t.Parallel()
 		root := newProjectsRoot(t)
 		for _, id := range []string{"not-a-uuid", "", newUUID(t)} {
-			if got := getSessionMessagesIn(root, id, nil); got != nil {
+			if got := newLocalSessions(root).getSessionMessages(id, nil); got != nil {
 				t.Errorf("%q: %v", id, got)
 			}
 		}
-		if got := getSessionMessagesIn(filepath.Join(t.TempDir(), "none"), newUUID(t), nil); got != nil {
+		if got := newLocalSessions(filepath.Join(t.TempDir(), "none")).getSessionMessages(newUUID(t), nil); got != nil {
 			t.Errorf("missing root: %v", got)
 		}
 	})
@@ -1007,7 +1007,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 		t.Parallel()
 		u1, a1, u2, a2 := newUUID(t), newUUID(t), newUUID(t), newUUID(t)
 		root, path, sid := setup(t)
-		dir := findProjectDir(root, canonicalizePath(path))
+		dir := newLocalSessions(root).findProjectDir(canonicalizePath(path))
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"),
 			transcriptEntry("user", u1, "", sid, "hello"),
 			transcriptEntry("assistant", a1, u1, sid, "hi!"),
@@ -1032,7 +1032,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 		t.Parallel()
 		u1, meta, prog, a1 := newUUID(t), newUUID(t), newUUID(t), newUUID(t)
 		root, path, sid := setup(t, "")
-		dir := findProjectDir(root, canonicalizePath(path))
+		dir := newLocalSessions(root).findProjectDir(canonicalizePath(path))
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"),
 			transcriptEntry("user", u1, "", sid, "hello"),
 			transcriptEntry("user", meta, u1, sid, "meta", "isMeta", true),
@@ -1049,7 +1049,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 		t.Parallel()
 		u1, a1 := newUUID(t), newUUID(t)
 		root, path, sid := setup(t, "")
-		dir := findProjectDir(root, canonicalizePath(path))
+		dir := newLocalSessions(root).findProjectDir(canonicalizePath(path))
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"),
 			transcriptEntry("user", u1, "", sid, "compact summary", "isCompactSummary", true),
 			transcriptEntry("assistant", a1, u1, sid, "hi"),
@@ -1062,7 +1062,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 	t.Run("limit and offset", func(t *testing.T) {
 		t.Parallel()
 		root, path, sid := setup(t, "")
-		dir := findProjectDir(root, canonicalizePath(path))
+		dir := newLocalSessions(root).findProjectDir(canonicalizePath(path))
 		var uuids, lines []string
 		for i := range 6 {
 			uid := newUUID(t)
@@ -1101,7 +1101,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 	t.Run("leaf selection", func(t *testing.T) {
 		t.Parallel()
 		root, path, sid := setup(t, "")
-		dir := findProjectDir(root, canonicalizePath(path))
+		dir := newLocalSessions(root).findProjectDir(canonicalizePath(path))
 		r, mainLeaf, sideLeaf := newUUID(t), newUUID(t), newUUID(t)
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"),
 			transcriptEntry("user", r, "", sid, "root"),
@@ -1146,7 +1146,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 	t.Run("corrupt lines, cycles and empty files", func(t *testing.T) {
 		t.Parallel()
 		root, path, sid := setup(t, "")
-		dir := findProjectDir(root, canonicalizePath(path))
+		dir := newLocalSessions(root).findProjectDir(canonicalizePath(path))
 		u1, a1 := newUUID(t), newUUID(t)
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"),
 			transcriptEntry("user", u1, "", sid, "hi"),
@@ -1194,7 +1194,7 @@ func TestSessionGetSessionMessages(t *testing.T) {
 			transcriptEntry("user", u1, "", sid, "hi"),
 			transcriptEntry("assistant", a1, u1, sid, "hello"),
 		)
-		if ids := messageUUIDs(getSessionMessagesIn(root, sid, nil)); !slices.Equal(ids, []string{u1, a1}) {
+		if ids := messageUUIDs(newLocalSessions(root).getSessionMessages(sid, nil)); !slices.Equal(ids, []string{u1, a1}) {
 			t.Errorf("uuids = %v", ids)
 		}
 	})
@@ -1253,23 +1253,23 @@ func TestSessionListSubagents(t *testing.T) {
 	t.Parallel()
 	root := newProjectsRoot(t)
 	for _, id := range []string{"not-a-uuid", "", newUUID(t)} {
-		if got := listSubagentsIn(root, id, ""); got != nil {
+		if got := newLocalSessions(root).listSubagents(id, ""); got != nil {
 			t.Errorf("%q: %v", id, got)
 		}
 	}
 
 	path, canonical := newProject(t, "proj")
 	plain := makeSessionFile(t, makeProjectDir(t, root, canonical), sessionFile{})
-	if got := listSubagentsIn(root, plain, path); got != nil {
+	if got := newLocalSessions(root).listSubagents(plain, path); got != nil {
 		t.Errorf("no subagents dir: %v", got)
 	}
 	empty, _ := makeSessionWithSubagents(t, root, canonical)
-	if got := listSubagentsIn(root, empty, path); got != nil {
+	if got := newLocalSessions(root).listSubagents(empty, path); got != nil {
 		t.Errorf("empty subagents dir: %v", got)
 	}
 
 	sid, sub := makeSessionWithSubagents(t, root, canonical, "def456", "abc123")
-	if got := listSubagentsIn(root, sid, path); !slices.Equal(got, []string{"abc123", "def456"}) {
+	if got := newLocalSessions(root).listSubagents(sid, path); !slices.Equal(got, []string{"abc123", "def456"}) {
 		t.Errorf("happy path: %v", got)
 	}
 	writeFile(t, filepath.Join(sub, "agent-abc123.meta.json"), "{}")
@@ -1279,7 +1279,7 @@ func TestSessionListSubagents(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(sub, "workflows", "run-1", "agent-nested.jsonl"), "{}\n")
-	if got := listSubagentsIn(root, sid, path); !slices.Equal(sortedCopy(got), []string{"abc123", "def456", "nested"}) {
+	if got := newLocalSessions(root).listSubagents(sid, path); !slices.Equal(sortedCopy(got), []string{"abc123", "def456", "nested"}) {
 		t.Errorf("filters and recursion: %v", got)
 	}
 
@@ -1288,7 +1288,7 @@ func TestSessionListSubagents(t *testing.T) {
 	dir := makeProjectDir(t, root2, "/some/project")
 	sid2 := makeSessionFile(t, dir, sessionFile{})
 	writeFile(t, filepath.Join(dir, sid2, "subagents", "agent-x.jsonl"), "{}\n")
-	if got := listSubagentsIn(root2, sid2, ""); !slices.Equal(got, []string{"x"}) {
+	if got := newLocalSessions(root2).listSubagents(sid2, ""); !slices.Equal(got, []string{"x"}) {
 		t.Errorf("all projects: %v", got)
 	}
 }
@@ -1300,12 +1300,12 @@ func TestSessionGetSubagentMessages(t *testing.T) {
 	opts := &SessionMessagesOptions{Directory: path}
 
 	for _, tt := range []struct{ sid, agent string }{{"not-a-uuid", "abc"}, {"", "abc"}, {newUUID(t), ""}, {newUUID(t), "abc"}} {
-		if got := getSubagentMessagesIn(root, tt.sid, tt.agent, nil); got != nil {
+		if got := newLocalSessions(root).getSubagentMessages(tt.sid, tt.agent, nil); got != nil {
 			t.Errorf("%q/%q: %v", tt.sid, tt.agent, got)
 		}
 	}
 	other, _ := makeSessionWithSubagents(t, root, canonical, "other")
-	if got := getSubagentMessagesIn(root, other, "missing", opts); got != nil {
+	if got := newLocalSessions(root).getSubagentMessages(other, "missing", opts); got != nil {
 		t.Errorf("missing agent: %v", got)
 	}
 
@@ -1339,7 +1339,7 @@ func TestSessionGetSubagentMessages(t *testing.T) {
 			lines = append(lines, transcriptEntry(typ, uid, parent, sid, fmt.Sprintf("m%d", i)))
 		}
 		writeJSONL(t, filepath.Join(sub, "agent-abc.jsonl"), lines...)
-		msgs := getSubagentMessagesIn(root, sid, "abc", opts)
+		msgs := newLocalSessions(root).getSubagentMessages(sid, "abc", opts)
 		if ids := messageUUIDs(msgs); !slices.Equal(ids, uuids) {
 			t.Fatalf("uuids = %v", ids)
 		}
@@ -1351,7 +1351,7 @@ func TestSessionGetSubagentMessages(t *testing.T) {
 			limit, offset int
 			want          []string
 		}{{2, 0, uuids[:2]}, {2, 2, uuids[2:]}, {0, 3, uuids[3:]}, {0, 0, uuids}} {
-			got := getSubagentMessagesIn(root, sid, "abc", &SessionMessagesOptions{Directory: path, Limit: tt.limit, Offset: tt.offset})
+			got := newLocalSessions(root).getSubagentMessages(sid, "abc", &SessionMessagesOptions{Directory: path, Limit: tt.limit, Offset: tt.offset})
 			if ids := messageUUIDs(got); !slices.Equal(ids, tt.want) {
 				t.Errorf("limit=%d offset=%d: %v", tt.limit, tt.offset, ids)
 			}
@@ -1362,7 +1362,7 @@ func TestSessionGetSubagentMessages(t *testing.T) {
 		sid, sub := makeSessionWithSubagents(t, root, canonical)
 		nested := filepath.Join(sub, "workflows", "run-1")
 		u1, a1 := writeAgent(nested, "deep", sid, map[string]any{"toolUseId": "toolu_nested"})
-		msgs := getSubagentMessagesIn(root, sid, "deep", opts)
+		msgs := newLocalSessions(root).getSubagentMessages(sid, "deep", opts)
 		if ids := messageUUIDs(msgs); !slices.Equal(ids, []string{u1, a1}) {
 			t.Fatalf("uuids = %v", ids)
 		}
@@ -1374,7 +1374,7 @@ func TestSessionGetSubagentMessages(t *testing.T) {
 		writeAgent(sub, "abc", sid, map[string]any{
 			"agentType": "general-purpose", "toolUseId": "toolu_01ABC", "parentAgentId": "a-parent", "spawnDepth": 2,
 		})
-		for _, m := range getSubagentMessagesIn(root, sid, "abc", opts) {
+		for _, m := range newLocalSessions(root).getSubagentMessages(sid, "abc", opts) {
 			if m.ParentToolUseID != "toolu_01ABC" || m.ParentAgentID != "a-parent" {
 				t.Errorf("parent ids: %+v", m)
 			}
@@ -1385,7 +1385,7 @@ func TestSessionGetSubagentMessages(t *testing.T) {
 		for i, meta := range []any{nil, "not json {", map[string]any{"agentType": "gp"}, map[string]any{"toolUseId": 42, "parentAgentId": []any{"x"}}, "[1]", "\xff\xfe"} {
 			sid, sub := makeSessionWithSubagents(t, root, canonical)
 			writeAgent(sub, "x", sid, meta)
-			msgs := getSubagentMessagesIn(root, sid, "x", opts)
+			msgs := newLocalSessions(root).getSubagentMessages(sid, "x", opts)
 			if len(msgs) != 2 || msgs[0].ParentToolUseID != "" || msgs[0].ParentAgentID != "" {
 				t.Errorf("case %d: %+v", i, msgs)
 			}
@@ -1397,7 +1397,7 @@ func TestSessionGetSubagentMessages(t *testing.T) {
 		if err := os.Mkdir(filepath.Join(sub, "agent-x.meta.json"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if msgs := getSubagentMessagesIn(root, sid, "x", opts); len(msgs) != 2 || msgs[0].ParentToolUseID != "" {
+		if msgs := newLocalSessions(root).getSubagentMessages(sid, "x", opts); len(msgs) != 2 || msgs[0].ParentToolUseID != "" {
 			t.Errorf("directory sidecar: %+v", msgs)
 		}
 		if _, err := readAgentMetadataSidecar(filepath.Join(sub, "agent-x.jsonl")); err == nil {
@@ -1411,11 +1411,11 @@ func TestSessionGetSubagentMessages(t *testing.T) {
 		writeJSONL(t, filepath.Join(sub, "agent-x.jsonl"),
 			transcriptEntry("user", u1, "", sid, "hi"), "not valid json {", "",
 			transcriptEntry("assistant", a1, u1, sid, "ok"))
-		if ids := messageUUIDs(getSubagentMessagesIn(root, sid, "x", opts)); !slices.Equal(ids, []string{u1, a1}) {
+		if ids := messageUUIDs(newLocalSessions(root).getSubagentMessages(sid, "x", opts)); !slices.Equal(ids, []string{u1, a1}) {
 			t.Errorf("corrupt: %v", ids)
 		}
 		writeFile(t, filepath.Join(sub, "agent-empty.jsonl"), "")
-		if got := getSubagentMessagesIn(root, sid, "empty", opts); got != nil {
+		if got := newLocalSessions(root).getSubagentMessages(sid, "empty", opts); got != nil {
 			t.Errorf("empty: %v", got)
 		}
 	})
@@ -1500,31 +1500,31 @@ func TestSessionWorktrees(t *testing.T) {
 	}
 	subSID := makeSessionFile(t, makeProjectDir(t, root, canonicalizePath(sub)), sessionFile{firstPrompt: "sub", mtime: 3000})
 
-	got := listSessionsIn(root, &ListSessionsOptions{Directory: repo})
+	got := newLocalSessions(root).listSessions(&ListSessionsOptions{Directory: repo})
 	if ids := sessionIDs(got); !slices.Equal(ids, []string{wtSID, mainSID}) {
 		t.Errorf("with worktrees = %v (want %v)", ids, []string{wtSID, mainSID})
 	}
 	if got[0].Cwd != wtCanon || got[1].Cwd != repoCanon {
 		t.Errorf("cwd fallbacks = %q, %q", got[0].Cwd, got[1].Cwd)
 	}
-	got = listSessionsIn(root, &ListSessionsOptions{Directory: sub})
+	got = newLocalSessions(root).listSessions(&ListSessionsOptions{Directory: sub})
 	if ids := sessionIDs(got); !slices.Equal(ids, []string{subSID, wtSID, mainSID}) {
 		t.Errorf("from subdirectory = %v", ids)
 	}
-	if ids := sessionIDs(listSessionsIn(root, &ListSessionsOptions{Directory: repo, ExcludeWorktrees: true})); !slices.Equal(ids, []string{mainSID}) {
+	if ids := sessionIDs(newLocalSessions(root).listSessions(&ListSessionsOptions{Directory: repo, ExcludeWorktrees: true})); !slices.Equal(ids, []string{mainSID}) {
 		t.Errorf("excluding worktrees = %v", ids)
 	}
 
 	// Single-session readers fall back to the other worktrees.
-	if info := getSessionInfoIn(root, wtSID, repo); info == nil || info.Cwd != wtCanon {
+	if info := newLocalSessions(root).getSessionInfo(wtSID, repo); info == nil || info.Cwd != wtCanon {
 		t.Errorf("GetSessionInfo via worktree: %+v", info)
 	}
-	if p := resolveSessionFilePath(root, wtSID, repo); p == "" {
+	if p := newLocalSessions(root).resolveSessionFilePath(wtSID, repo); p == "" {
 		t.Error("resolveSessionFilePath via worktree")
 	}
 	chainSID, u1 := newUUID(t), newUUID(t)
 	writeJSONL(t, filepath.Join(root, sanitizePath(wtCanon), chainSID+".jsonl"), transcriptEntry("user", u1, "", chainSID, "in worktree"))
-	if msgs := getSessionMessagesIn(root, chainSID, &SessionMessagesOptions{Directory: repo}); len(msgs) != 1 || msgs[0].UUID != u1 {
+	if msgs := newLocalSessions(root).getSessionMessages(chainSID, &SessionMessagesOptions{Directory: repo}); len(msgs) != 1 || msgs[0].UUID != u1 {
 		t.Errorf("GetSessionMessages via worktree: %+v", msgs)
 	}
 }

@@ -5,18 +5,21 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 )
 
-// Unicode NFC normalization, the Go counterpart of Python's
-// unicodedata.normalize("NFC", s).
+// Unicode NFC and NFKC normalization, the Go counterparts of Python's
+// unicodedata.normalize("NFC", s) and unicodedata.normalize("NFKC", s), and
+// the NFKC-based sanitization of session tags.
 //
 // Session paths are NFC-normalized before they are sanitized into project
 // directory names, matching the CLI, so that a directory reported in
 // decomposed form (macOS HFS+) maps to the same project as its composed
 // spelling. The standard library has no normalizer and this module takes no
-// dependencies, so the tables in sessions_nfc_tables.go are generated from
-// Python's unicodedata and parsed lazily on first use.
+// dependencies, so the tables in unicode_nfc_tables.go and
+// unicode_nfkc_tables.go are generated from Python's unicodedata and parsed
+// lazily on first use.
 
 // Hangul syllable composition constants (Unicode §3.12).
 const (
@@ -43,29 +46,16 @@ var nfcTables = sync.OnceValue(func() *nfcData {
 		ccc:     make(map[rune]uint8, 1000),
 		compose: make(map[[2]rune]rune, 1000),
 	}
-	hex := func(s string) rune {
-		n, err := strconv.ParseUint(s, 16, 32)
-		if err != nil {
-			panic("claude: corrupt NFC table: " + s)
-		}
-		return rune(n)
-	}
 	excluded := map[rune]bool{}
 	for _, f := range strings.Split(nfcCompositionExclusions, ";") {
-		excluded[hex(f)] = true
+		excluded[parseTableRune(f, "NFC")] = true
 	}
-	for _, rec := range strings.Split(nfcDecompositions, ";") {
-		cp, list, _ := strings.Cut(rec, ":")
-		var seq []rune
-		for _, f := range strings.Split(list, ",") {
-			seq = append(seq, hex(f))
-		}
-		r := hex(cp)
+	parseDecompTable(nfcDecompositions, "NFC", func(r rune, seq []rune) {
 		d.decomp[r] = seq
 		if len(seq) == 2 && !excluded[r] {
 			d.compose[[2]rune{seq[0], seq[1]}] = r
 		}
-	}
+	})
 	for _, rec := range strings.Split(nfcCombiningClasses, ";") {
 		span, class, _ := strings.Cut(rec, ":")
 		k, err := strconv.Atoi(class)
@@ -73,10 +63,10 @@ var nfcTables = sync.OnceValue(func() *nfcData {
 			panic("claude: corrupt NFC table: " + rec)
 		}
 		lo, hi, ok := strings.Cut(span, "-")
-		start := hex(lo)
+		start := parseTableRune(lo, "NFC")
 		end := start
 		if ok {
-			end = hex(hi)
+			end = parseTableRune(hi, "NFC")
 		}
 		for r := start; r <= end; r++ {
 			d.ccc[r] = uint8(k)
@@ -84,6 +74,30 @@ var nfcTables = sync.OnceValue(func() *nfcData {
 	}
 	return d
 })
+
+// parseTableRune parses a hex code point of a generated table, panicking
+// with the table's name when it is corrupt.
+func parseTableRune(s, table string) rune {
+	n, err := strconv.ParseUint(s, 16, 32)
+	if err != nil {
+		panic("claude: corrupt " + table + " table: " + s)
+	}
+	return rune(n)
+}
+
+// parseDecompTable parses a generated decomposition table of
+// "cp:d1[,d2...]" hex records separated by ';', calling add for each record
+// in order.
+func parseDecompTable(records, table string, add func(cp rune, seq []rune)) {
+	for _, rec := range strings.Split(records, ";") {
+		cp, list, _ := strings.Cut(rec, ":")
+		var seq []rune
+		for _, f := range strings.Split(list, ",") {
+			seq = append(seq, parseTableRune(f, table))
+		}
+		add(parseTableRune(cp, table), seq)
+	}
+}
 
 // normalizeNFC returns s in Unicode Normalization Form C. Bytes that are
 // not valid UTF-8 are preserved as-is and act as composition barriers.
@@ -203,4 +217,96 @@ func (t *nfcData) composePair(a, b rune) (rune, bool) {
 	}
 	r, ok := t.compose[[2]rune{a, b}]
 	return r, ok
+}
+
+// ---------------------------------------------------------------------------
+// Unicode sanitization
+// ---------------------------------------------------------------------------
+
+// sanitizeUnicode removes characters that are invisible or can be abused
+// for spoofing: it repeatedly applies NFKC normalization and strips format
+// (Cf), private-use (Co) and unassigned (Cn) code points until the result
+// is stable, at most 10 times. Invalid UTF-8 becomes U+FFFD.
+//
+// The categories come from Go's unicode tables and NFKC from tables
+// generated from Python's unicodedata, so the result can differ from the
+// Python SDK's for code points whose status differs between the Unicode
+// versions involved (for example characters assigned after the Python
+// runtime's Unicode version, which Python strips as unassigned).
+func sanitizeUnicode(s string) string {
+	current := string([]rune(s))
+	for range 10 {
+		previous := current
+		current = normalizeNFKC(current)
+		current = strings.Map(func(r rune) rune {
+			if isStrippedRune(r) {
+				return -1
+			}
+			return r
+		}, current)
+		if current == previous {
+			break
+		}
+	}
+	return current
+}
+
+// isStrippedRune reports whether sanitizeUnicode removes r.
+func isStrippedRune(r rune) bool {
+	// Explicit ranges, redundant with the category checks but kept to
+	// match the reference implementations: zero-width spaces and LTR/RTL
+	// marks, directional formatting, directional isolates, BOM, and the
+	// BMP private use area.
+	switch {
+	case r >= 0x200b && r <= 0x200f, r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069,
+		r == 0xfeff, r >= 0xe000 && r <= 0xf8ff:
+		return true
+	}
+	return unicode.In(r, unicode.Cf, unicode.Co, unicode.Cn)
+}
+
+// nfkcCompat holds the compatibility decompositions parsed from
+// nfkcCompatDecompositions.
+var nfkcCompat = sync.OnceValue(func() map[rune][]rune {
+	m := make(map[rune][]rune, 4000)
+	parseDecompTable(nfkcCompatDecompositions, "NFKC", func(cp rune, seq []rune) { m[cp] = seq })
+	return m
+})
+
+// normalizeNFKC returns s in Unicode Normalization Form KC, the Go
+// counterpart of unicodedata.normalize("NFKC", s). Invalid UTF-8 becomes
+// U+FFFD.
+func normalizeNFKC(s string) string {
+	ascii := true
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return s // ASCII has no decompositions
+	}
+	// NFKC is canonical composition of the full compatibility
+	// decomposition; nfcRunes performs the reordering and composition.
+	compat, canon := nfkcCompat(), nfcTables().decomp
+	buf := make([]rune, 0, len(s))
+	var decompose func(r rune)
+	decompose = func(r rune) {
+		seq, ok := compat[r]
+		if !ok {
+			seq, ok = canon[r]
+		}
+		if !ok {
+			buf = append(buf, r) // Hangul syllables are left to nfcRunes
+			return
+		}
+		for _, c := range seq {
+			decompose(c)
+		}
+	}
+	for _, r := range s {
+		decompose(r)
+	}
+	return string(nfcRunes(buf))
 }

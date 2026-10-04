@@ -85,7 +85,7 @@ func TestSessionImportMainTranscript(t *testing.T) {
 		entries := importEntries(0, 7)
 		writeImportJSONL(t, filepath.Join(dir, importSID+".jsonl"), entries...)
 		store := NewInMemorySessionStore()
-		if err := importSessionIn(ctx, root, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
+		if err := newLocalSessions(root).importSession(ctx, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
 			t.Fatal(err)
 		}
 		if got := store.Entries(SessionKey{ProjectKey: pk, SessionID: importSID}); !reflect.DeepEqual(got, entries) {
@@ -99,7 +99,7 @@ func TestSessionImportMainTranscript(t *testing.T) {
 		entries := importEntries(0, 5)
 		writeImportJSONL(t, filepath.Join(dir, importSID+".jsonl"), entries...)
 		store := &recordingStore{InMemorySessionStore: NewInMemorySessionStore()}
-		if err := importSessionIn(ctx, root, importSID, store, &ImportSessionOptions{Directory: cwd, BatchSize: 2}, noEnv); err != nil {
+		if err := newLocalSessions(root).importSession(ctx, importSID, store, &ImportSessionOptions{Directory: cwd, BatchSize: 2}, noEnv); err != nil {
 			t.Fatal(err)
 		}
 		key := SessionKey{ProjectKey: pk, SessionID: importSID}
@@ -120,7 +120,7 @@ func TestSessionImportMainTranscript(t *testing.T) {
 		b2, _ := json.Marshal(importEntry(2))
 		writeFile(t, filepath.Join(dir, importSID+".jsonl"), string(b0)+"\n\n"+string(b1)+"\r\n\r\n"+string(b2)) // no final newline
 		store := NewInMemorySessionStore()
-		if err := importSessionIn(ctx, root, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
+		if err := newLocalSessions(root).importSession(ctx, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
 			t.Fatal(err)
 		}
 		if got := store.Entries(SessionKey{ProjectKey: pk, SessionID: importSID}); !reflect.DeepEqual(got, importEntries(0, 3)) {
@@ -134,7 +134,7 @@ func TestSessionImportMainTranscript(t *testing.T) {
 		writeImportJSONL(t, filepath.Join(dir, importSID+".jsonl"), importEntries(0, 3)...)
 		for _, size := range []int{0, -1} {
 			store := &recordingStore{InMemorySessionStore: NewInMemorySessionStore()}
-			if err := importSessionIn(ctx, root, importSID, store, &ImportSessionOptions{Directory: cwd, BatchSize: size}, noEnv); err != nil {
+			if err := newLocalSessions(root).importSession(ctx, importSID, store, &ImportSessionOptions{Directory: cwd, BatchSize: size}, noEnv); err != nil {
 				t.Fatal(err)
 			}
 			if len(store.calls) != 1 {
@@ -153,7 +153,7 @@ func TestSessionImportMainTranscript(t *testing.T) {
 		}
 		writeImportJSONL(t, filepath.Join(dir, importSID+".jsonl"), entries...)
 		store := &recordingStore{InMemorySessionStore: NewInMemorySessionStore()}
-		if err := importSessionIn(ctx, root, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
+		if err := newLocalSessions(root).importSession(ctx, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
 			t.Fatal(err)
 		}
 		if len(store.calls) != 2 || len(store.calls[0].entries) != 2 || len(store.calls[1].entries) != 1 {
@@ -169,7 +169,7 @@ func TestSessionImportMainTranscript(t *testing.T) {
 			b1, _ := json.Marshal(importEntry(1))
 			writeFile(t, filepath.Join(dir, importSID+".jsonl"), string(b0)+"\n"+bad+"\n"+string(b1)+"\n")
 			store := NewInMemorySessionStore()
-			if err := importSessionIn(ctx, root, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
+			if err := newLocalSessions(root).importSession(ctx, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
 				t.Fatalf("%q: %v", bad, err)
 			}
 			if got := store.Entries(SessionKey{ProjectKey: pk, SessionID: importSID}); !reflect.DeepEqual(got, importEntries(0, 2)) {
@@ -180,7 +180,7 @@ func TestSessionImportMainTranscript(t *testing.T) {
 		root, cwd, pk, dir := importFixture(t)
 		writeFile(t, filepath.Join(dir, importSID+".jsonl"), "{\"type\":\"user\",\"x\":\"\xff\"}\n")
 		store := NewInMemorySessionStore()
-		if err := importSessionIn(ctx, root, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
+		if err := newLocalSessions(root).importSession(ctx, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
 			t.Fatal(err)
 		}
 		if got := store.Entries(SessionKey{ProjectKey: pk, SessionID: importSID}); len(got) != 1 || got[0]["x"] != "\ufffd" {
@@ -193,12 +193,12 @@ func TestSessionImportMainTranscript(t *testing.T) {
 		root, cwd, _, dir := importFixture(t)
 		writeImportJSONL(t, filepath.Join(dir, importSID+".jsonl"), importEntries(0, 2)...)
 		boom := errors.New("boom")
-		if err := importSessionIn(ctx, root, importSID, appendErrStore{boom}, &ImportSessionOptions{Directory: cwd}, noEnv); !errors.Is(err, boom) {
+		if err := newLocalSessions(root).importSession(ctx, importSID, appendErrStore{boom}, &ImportSessionOptions{Directory: cwd}, noEnv); !errors.Is(err, boom) {
 			t.Errorf("append error: %v", err)
 		}
 		cctx, cancel := context.WithCancel(ctx)
 		cancel()
-		if err := importSessionIn(cctx, root, importSID, NewInMemorySessionStore(), &ImportSessionOptions{Directory: cwd}, noEnv); !errors.Is(err, context.Canceled) {
+		if err := newLocalSessions(root).importSession(cctx, importSID, NewInMemorySessionStore(), &ImportSessionOptions{Directory: cwd}, noEnv); !errors.Is(err, context.Canceled) {
 			t.Errorf("cancelled: %v", err)
 		}
 	})
@@ -226,7 +226,7 @@ func TestSessionImportSubagents(t *testing.T) {
 		writeImportJSONL(t, filepath.Join(dir, importSID, "subagents", "workflows", "run-1", "agent-def.jsonl"), importEntry(20))
 		writeFile(t, filepath.Join(dir, importSID, "subagents", "notes.txt"), "ignored")
 		store := NewInMemorySessionStore()
-		if err := importSessionIn(ctx, root, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
+		if err := newLocalSessions(root).importSession(ctx, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
 			t.Fatal(err)
 		}
 		if got := store.Entries(subKey(pk, "subagents/agent-abc")); !reflect.DeepEqual(got, importEntries(10, 12)) {
@@ -255,7 +255,7 @@ func TestSessionImportSubagents(t *testing.T) {
 		writeImportJSONL(t, filepath.Join(sub, "agent-shadow.jsonl"), importEntry(11))
 		writeFile(t, filepath.Join(sub, "agent-shadow.meta.json"), `{"type": "something-else", "toolUseId": "toolu_1"}`)
 		store := NewInMemorySessionStore()
-		if err := importSessionIn(ctx, root, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
+		if err := newLocalSessions(root).importSession(ctx, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
 			t.Fatal(err)
 		}
 		want := []SessionStoreEntry{importEntry(10), {"type": "agent_metadata", "agentType": "coder", "worktreePath": "/tmp/wt"}}
@@ -277,7 +277,7 @@ func TestSessionImportSubagents(t *testing.T) {
 			writeImportJSONL(t, filepath.Join(sub, "agent-abc.jsonl"), importEntry(10))
 			writeFile(t, filepath.Join(sub, "agent-abc.meta.json"), sidecar)
 			store := NewInMemorySessionStore()
-			if err := importSessionIn(ctx, root, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
+			if err := newLocalSessions(root).importSession(ctx, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
 				t.Fatalf("%q: %v", sidecar, err)
 			}
 			if got := store.Entries(subKey(pk, "subagents/agent-abc")); !reflect.DeepEqual(got, importEntries(10, 11)) {
@@ -295,7 +295,7 @@ func TestSessionImportSubagents(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(sub, "agent-abc.meta.json"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := importSessionIn(ctx, root, importSID, NewInMemorySessionStore(), &ImportSessionOptions{Directory: cwd}, noEnv); err == nil {
+		if err := newLocalSessions(root).importSession(ctx, importSID, NewInMemorySessionStore(), &ImportSessionOptions{Directory: cwd}, noEnv); err == nil {
 			t.Error("directory sidecar accepted")
 		}
 	})
@@ -306,7 +306,7 @@ func TestSessionImportSubagents(t *testing.T) {
 		writeImportJSONL(t, filepath.Join(dir, importSID+".jsonl"), importEntry(0))
 		writeImportJSONL(t, filepath.Join(dir, importSID, "subagents", "agent-abc.jsonl"), importEntry(10))
 		store := NewInMemorySessionStore()
-		if err := importSessionIn(ctx, root, importSID, store, &ImportSessionOptions{Directory: cwd, ExcludeSubagents: true}, noEnv); err != nil {
+		if err := newLocalSessions(root).importSession(ctx, importSID, store, &ImportSessionOptions{Directory: cwd, ExcludeSubagents: true}, noEnv); err != nil {
 			t.Fatal(err)
 		}
 		if subs, _ := store.ListSubkeys(ctx, SessionListSubkeysKey{ProjectKey: pk, SessionID: importSID}); len(subs) != 0 {
@@ -316,7 +316,7 @@ func TestSessionImportSubagents(t *testing.T) {
 		root2, cwd2, pk2, dir2 := importFixture(t)
 		writeImportJSONL(t, filepath.Join(dir2, importSID+".jsonl"), importEntry(0))
 		store = NewInMemorySessionStore()
-		if err := importSessionIn(ctx, root2, importSID, store, &ImportSessionOptions{Directory: cwd2}, noEnv); err != nil {
+		if err := newLocalSessions(root2).importSession(ctx, importSID, store, &ImportSessionOptions{Directory: cwd2}, noEnv); err != nil {
 			t.Fatal(err)
 		}
 		if got := store.Entries(SessionKey{ProjectKey: pk2, SessionID: importSID}); !reflect.DeepEqual(got, importEntries(0, 1)) {
@@ -332,10 +332,10 @@ func TestSessionImportValidationAndKeys(t *testing.T) {
 	t.Run("validation", func(t *testing.T) {
 		t.Parallel()
 		root, cwd, _, _ := importFixture(t)
-		if err := importSessionIn(ctx, root, "../../etc/passwd", NewInMemorySessionStore(), nil, noEnv); !errors.Is(err, ErrInvalidSessionID) {
+		if err := newLocalSessions(root).importSession(ctx, "../../etc/passwd", NewInMemorySessionStore(), nil, noEnv); !errors.Is(err, ErrInvalidSessionID) {
 			t.Errorf("invalid: %v", err)
 		}
-		if err := importSessionIn(ctx, root, importSID, NewInMemorySessionStore(), &ImportSessionOptions{Directory: cwd}, noEnv); !errors.Is(err, ErrSessionNotFound) {
+		if err := newLocalSessions(root).importSession(ctx, importSID, NewInMemorySessionStore(), &ImportSessionOptions{Directory: cwd}, noEnv); !errors.Is(err, ErrSessionNotFound) {
 			t.Errorf("missing: %v", err)
 		}
 	})
@@ -348,7 +348,7 @@ func TestSessionImportValidationAndKeys(t *testing.T) {
 		writeImportJSONL(t, mainPath, importEntry(0))
 		writeImportJSONL(t, subPath, importEntry(1))
 		store := NewInMemorySessionStore()
-		if err := importSessionIn(ctx, root, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
+		if err := newLocalSessions(root).importSession(ctx, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
 			t.Fatal(err)
 		}
 		mainKey, ok1 := filePathToSessionKey(mainPath, root)
@@ -373,7 +373,7 @@ func TestSessionImportValidationAndKeys(t *testing.T) {
 			t.Fatal("precondition: cwd maps to the fixture project")
 		}
 		store := NewInMemorySessionStore()
-		if err := importSessionIn(ctx, root, importSID, store, nil, noEnv); err != nil {
+		if err := newLocalSessions(root).importSession(ctx, importSID, store, nil, noEnv); err != nil {
 			t.Fatal(err)
 		}
 		if got := store.Entries(SessionKey{ProjectKey: cwdKey, SessionID: importSID}); !reflect.DeepEqual(got, importEntries(0, 1)) {
@@ -384,7 +384,7 @@ func TestSessionImportValidationAndKeys(t *testing.T) {
 			return map[string]string{"CLAUDE_CONFIG_DIR": "/cfg", "CLAUDE_CODE_PROJECT_DIR_NAME": "my-proj"}[k]
 		}
 		store = NewInMemorySessionStore()
-		if err := importSessionIn(ctx, root, importSID, store, nil, env); err != nil {
+		if err := newLocalSessions(root).importSession(ctx, importSID, store, nil, env); err != nil {
 			t.Fatal(err)
 		}
 		if got := store.Entries(SessionKey{ProjectKey: "my-proj", SessionID: importSID}); len(got) != 1 {
@@ -397,14 +397,14 @@ func TestSessionImportValidationAndKeys(t *testing.T) {
 		root, cwd, _, dir := importFixture(t)
 		sid, _, uuids := makeTranscriptSession(t, dir, 2)
 		store := NewInMemorySessionStore()
-		if err := importSessionIn(ctx, root, sid, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
+		if err := newLocalSessions(root).importSession(ctx, sid, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
 			t.Fatal(err)
 		}
 		msgs, err := GetSessionMessagesFromStore(ctx, store, sid, &SessionMessagesOptions{Directory: cwd})
 		if err != nil || !slices.Equal(messageUUIDs(msgs), uuids) {
 			t.Errorf("messages = %v, %v", messageUUIDs(msgs), err)
 		}
-		local := getSessionMessagesIn(root, sid, &SessionMessagesOptions{Directory: cwd})
+		local := newLocalSessions(root).getSessionMessages(sid, &SessionMessagesOptions{Directory: cwd})
 		if !reflect.DeepEqual(local, msgs) {
 			t.Errorf("local %+v\nstore %+v", local, msgs)
 		}

@@ -363,7 +363,7 @@ func TestSummaryParityWithLiteParse(t *testing.T) {
 		folded = FoldSessionSummary(&folded, key, tt.entries[tt.split:])
 		incremental := summaryEntryToSessionInfo(folded, tt.cwd)
 
-		batch := parseSessionInfoFromLite(tt.sid, jsonlToLite(entriesToJSONL(tt.entries), folded.MTime), tt.cwd)
+		batch := parseSessionInfoFromLite(tt.sid, jsonlToLite(entriesToJSONL(tt.entries), folded.MTime), tt.cwd, "")
 		if incremental == nil || batch == nil {
 			t.Fatalf("%s: incremental=%+v batch=%+v", tt.name, incremental, batch)
 		}

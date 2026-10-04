@@ -2,9 +2,7 @@ package claude
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -21,10 +19,12 @@ import (
 // _internal/transcript_mirror_batcher.py.
 
 const (
-	// mirrorMaxPendingEntries and mirrorMaxPendingBytes are the batched-mode
-	// thresholds past which a background flush starts.
-	mirrorMaxPendingEntries = 500
-	mirrorMaxPendingBytes   = 1 << 20
+	// storeAppendBatchEntries and storeAppendBatchBytes bound the batches
+	// sent to SessionStore.Append: they are the batched-mode mirror
+	// thresholds past which a background flush starts, and the batch limits
+	// of ImportSessionToStore.
+	storeAppendBatchEntries = 500
+	storeAppendBatchBytes   = 1 << 20
 	// mirrorSendTimeout bounds one SessionStore.Append attempt.
 	mirrorSendTimeout = 60 * time.Second
 	// mirrorAppendMaxAttempts is the total number of Append attempts per batch.
@@ -126,7 +126,7 @@ func newMirrorBatcherForOptions(opts *Options, projectsDir string, onError func(
 	if opts == nil || opts.SessionStore == nil {
 		return nil
 	}
-	maxEntries, maxBytes := mirrorMaxPendingEntries, mirrorMaxPendingBytes
+	maxEntries, maxBytes := storeAppendBatchEntries, storeAppendBatchBytes
 	if opts.SessionStoreFlush == SessionStoreFlushEager {
 		maxEntries, maxBytes = 0, 0
 	}
@@ -327,33 +327,22 @@ func (b *transcriptMirrorBatcher) appendWithRetry(key SessionKey, entries []Sess
 	return lastErr
 }
 
-// appendOnce runs one Append bounded by sendTimeout. The call runs on its own
-// goroutine so a store that ignores its context cannot wedge the batcher; it
-// is abandoned on timeout and ends whenever the store returns.
+// appendOnce runs one Append bounded by sendTimeout (see runStoreCall), so a
+// store that ignores its context cannot wedge the batcher.
 func (b *transcriptMirrorBatcher) appendOnce(key SessionKey, entries []SessionStoreEntry) (timedOut bool, err error) {
-	ctx, cancel := context.WithTimeout(b.ctx, b.sendTimeout)
-	defer cancel()
-	result := make(chan error, 1)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				result <- fmt.Errorf("SessionStore.Append panicked: %v", r)
-			}
-		}()
-		result <- b.store.Append(ctx, key, entries)
-	}()
-	select {
-	case err := <-result:
-		if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) && b.ctx.Err() == nil {
-			return true, err
+	_, status, err := runStoreCall(b.ctx, b.sendTimeout,
+		func(r any) error { return fmt.Errorf("SessionStore.Append panicked: %v", r) },
+		func(ctx context.Context) (struct{}, error) { return struct{}{}, b.store.Append(ctx, key, entries) })
+	switch status {
+	case storeCallCanceled:
+		return false, fmt.Errorf("transcript mirror closed during append: %w", err)
+	case storeCallTimedOut:
+		if err == nil {
+			err = fmt.Errorf("SessionStore.Append timed out after %s", b.sendTimeout)
 		}
-		return false, err
-	case <-ctx.Done():
-		if b.ctx.Err() != nil {
-			return false, fmt.Errorf("transcript mirror closed during append: %w", b.ctx.Err())
-		}
-		return true, fmt.Errorf("SessionStore.Append timed out after %s", b.sendTimeout)
+		return true, err
 	}
+	return false, err
 }
 
 func (b *transcriptMirrorBatcher) reportError(key *SessionKey, msg string) {
@@ -535,14 +524,4 @@ func (e *engine) closeMessages() {
 	defer e.msgMu.Unlock()
 	e.msgClosed = true
 	close(e.messages)
-}
-
-// randomUUID returns a random RFC 4122 version 4 UUID, used for message,
-// request and session ids.
-func randomUUID() string {
-	var u [16]byte
-	_, _ = rand.Read(u[:])
-	u[6] = u[6]&0x0f | 0x40
-	u[8] = u[8]&0x3f | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
 }

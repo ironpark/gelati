@@ -119,6 +119,14 @@ func tsShape(t *testing.T, v any) any {
 	return out
 }
 
+// localSessionsSkipping is newLocalSessions(root) with the pre-compact skip
+// set explicitly instead of from the process environment.
+func localSessionsSkipping(root string, skipPrecompact bool) localSessions {
+	s := newLocalSessions(root)
+	s.skipPrecompact = skipPrecompact
+	return s
+}
+
 // tsSessionInfo renders a SessionInfo as the TS SDKSessionInfo.
 func tsSessionInfo(i *SessionInfo) map[string]any {
 	if i == nil {
@@ -496,7 +504,7 @@ func TestSessionParityWithTypeScript(t *testing.T) {
 		goCalls = append(goCalls, g)
 	}
 	list := func(opts map[string]any, o *ListSessionsOptions) {
-		call(tsCall{Fn: "listSessions", Opts: opts}, func() any { return tsSessionInfos(listSessionsIn(root, o)) })
+		call(tsCall{Fn: "listSessions", Opts: opts}, func() any { return tsSessionInfos(newLocalSessions(root).listSessions(o)) })
 	}
 	list(map[string]any{"dir": project}, &ListSessionsOptions{Directory: project})
 	list(map[string]any{"dir": project, "includeProgrammatic": false}, &ListSessionsOptions{Directory: project, ExcludeProgrammatic: true})
@@ -504,23 +512,23 @@ func TestSessionParityWithTypeScript(t *testing.T) {
 	list(map[string]any{"dir": project, "limit": 3, "offset": 2}, &ListSessionsOptions{Directory: project, Limit: 3, Offset: 2})
 	for _, sid := range sessions {
 		call(tsCall{Fn: "getSessionInfo", ID: sid, Opts: map[string]any{"dir": project}},
-			func() any { return tsSessionInfo(getSessionInfoIn(root, sid, project)) })
+			func() any { return tsSessionInfo(newLocalSessions(root).getSessionInfo(sid, project)) })
 		call(tsCall{Fn: "getSessionInfo", ID: sid},
-			func() any { return tsSessionInfo(getSessionInfoIn(root, sid, "")) })
+			func() any { return tsSessionInfo(newLocalSessions(root).getSessionInfo(sid, "")) })
 		for _, sys := range []bool{false, true} {
 			call(tsCall{Fn: "getSessionMessages", ID: sid, Opts: map[string]any{"dir": project, "includeSystemMessages": sys}},
 				func() any {
-					return tsSessionMessages(getSessionMessagesInEnv(root, sid, &SessionMessagesOptions{Directory: project, IncludeSystemMessages: sys}, true))
+					return tsSessionMessages(localSessionsSkipping(root, true).getSessionMessages(sid, &SessionMessagesOptions{Directory: project, IncludeSystemMessages: sys}))
 				})
 		}
 	}
 	call(tsCall{Fn: "getSessionMessages", ID: q.sid, Opts: map[string]any{"limit": 2, "offset": 1}},
 		func() any {
-			return tsSessionMessages(getSessionMessagesInEnv(root, q.sid, &SessionMessagesOptions{Limit: 2, Offset: 1}, true))
+			return tsSessionMessages(localSessionsSkipping(root, true).getSessionMessages(q.sid, &SessionMessagesOptions{Limit: 2, Offset: 1}))
 		})
 	call(tsCall{Fn: "getSubagentMessages", ID: q.sid, AgentID: "abc", Opts: map[string]any{"dir": project}},
 		func() any {
-			return tsSessionMessages(getSubagentMessagesIn(root, q.sid, "abc", &SessionMessagesOptions{Directory: project}))
+			return tsSessionMessages(newLocalSessions(root).getSubagentMessages(q.sid, "abc", &SessionMessagesOptions{Directory: project}))
 		})
 
 	// The same transcripts through a SessionStore (the CLI's mirror shape).
@@ -668,7 +676,7 @@ func TestSessionParityLargeTranscript(t *testing.T) {
 		{"skip", true, nil},
 		{"opt-out", false, []string{"CLAUDE_CODE_DISABLE_PRECOMPACT_SKIP=1"}},
 	} {
-		got := tsShape(t, tsSessionMessages(getSessionMessagesInEnv(root, b.sid, opts, tt.skip)))
+		got := tsShape(t, tsSessionMessages(localSessionsSkipping(root, tt.skip).getSessionMessages(b.sid, opts)))
 		want := runTS(t, sdk, configDir, calls, nil, tt.env...)[0]
 		if !reflect.DeepEqual(got, want) {
 			gj, _ := json.Marshal(got)

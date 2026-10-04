@@ -197,7 +197,7 @@ func TestFilePathToSessionKey(t *testing.T) {
 func TestMirrorBatcherEnqueueThenFlush(t *testing.T) {
 	t.Parallel()
 	store := &mirrorStoreFake{}
-	b, _ := newTestMirrorBatcher(t, store, nil, mirrorMaxPendingEntries, mirrorMaxPendingBytes)
+	b, _ := newTestMirrorBatcher(t, store, nil, storeAppendBatchEntries, storeAppendBatchBytes)
 	b.enqueue(mirrorMainPath("proj", "sess"), []SessionStoreEntry{{"type": "user", "n": 1}})
 	b.enqueue(mirrorMainPath("proj", "sess"), []SessionStoreEntry{{"type": "assistant", "n": 2}})
 	time.Sleep(10 * time.Millisecond)
@@ -223,7 +223,7 @@ func TestMirrorBatcherEnqueueThenFlush(t *testing.T) {
 func TestMirrorBatcherFlushWithNothingPending(t *testing.T) {
 	t.Parallel()
 	store := &mirrorStoreFake{}
-	b, _ := newTestMirrorBatcher(t, store, nil, mirrorMaxPendingEntries, mirrorMaxPendingBytes)
+	b, _ := newTestMirrorBatcher(t, store, nil, storeAppendBatchEntries, storeAppendBatchBytes)
 	b.flush(t.Context())
 	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{})
 	b.flush(t.Context())
@@ -237,7 +237,7 @@ func TestMirrorBatcherFlushWithNothingPending(t *testing.T) {
 func TestMirrorBatcherCoalescesPerPathInOrder(t *testing.T) {
 	t.Parallel()
 	store := &mirrorStoreFake{}
-	b, _ := newTestMirrorBatcher(t, store, nil, mirrorMaxPendingEntries, mirrorMaxPendingBytes)
+	b, _ := newTestMirrorBatcher(t, store, nil, storeAppendBatchEntries, storeAppendBatchBytes)
 	b.enqueue(mirrorMainPath("p", "a"), []SessionStoreEntry{{"n": 1}})
 	b.enqueue(mirrorMainPath("p", "b"), []SessionStoreEntry{{"n": 2}})
 	b.enqueue(mirrorMainPath("p", "a"), []SessionStoreEntry{{"n": 3}})
@@ -260,7 +260,7 @@ func TestMirrorBatcherThresholds(t *testing.T) {
 	t.Run("entries", func(t *testing.T) {
 		t.Parallel()
 		store := &mirrorStoreFake{}
-		b, _ := newTestMirrorBatcher(t, store, nil, 5, mirrorMaxPendingBytes)
+		b, _ := newTestMirrorBatcher(t, store, nil, 5, storeAppendBatchBytes)
 		b.enqueue(mirrorMainPath("p", "s"), make([]SessionStoreEntry, 5))
 		time.Sleep(10 * time.Millisecond)
 		if n := len(store.appendCalls()); n != 0 {
@@ -275,7 +275,7 @@ func TestMirrorBatcherThresholds(t *testing.T) {
 	t.Run("bytes", func(t *testing.T) {
 		t.Parallel()
 		store := &mirrorStoreFake{}
-		b, _ := newTestMirrorBatcher(t, store, nil, mirrorMaxPendingEntries, 100)
+		b, _ := newTestMirrorBatcher(t, store, nil, storeAppendBatchEntries, 100)
 		b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"type": "x", "blob": strings.Repeat("a", 200)}})
 		waitUntil(t, "eager flush", func() bool { return len(store.appendCalls()) == 1 })
 	})
@@ -293,8 +293,8 @@ func TestNewMirrorBatcherForOptions(t *testing.T) {
 		mode               SessionStoreFlushMode
 		wantEntries, bytes int
 	}{
-		{"", mirrorMaxPendingEntries, mirrorMaxPendingBytes},
-		{SessionStoreFlushBatched, mirrorMaxPendingEntries, mirrorMaxPendingBytes},
+		{"", storeAppendBatchEntries, storeAppendBatchBytes},
+		{SessionStoreFlushBatched, storeAppendBatchEntries, storeAppendBatchBytes},
 		{SessionStoreFlushEager, 0, 0},
 	}
 	for _, tc := range cases {
@@ -307,7 +307,7 @@ func TestNewMirrorBatcherForOptions(t *testing.T) {
 		}
 		b.close(t.Context())
 	}
-	if mirrorMaxPendingEntries != 500 || mirrorMaxPendingBytes != 1<<20 || mirrorAppendMaxAttempts != 3 ||
+	if storeAppendBatchEntries != 500 || storeAppendBatchBytes != 1<<20 || mirrorAppendMaxAttempts != 3 ||
 		!slices.Equal(mirrorAppendBackoff, []time.Duration{200 * time.Millisecond, 800 * time.Millisecond}) {
 		t.Fatal("mirror constants drifted from the Python SDK")
 	}
@@ -337,7 +337,7 @@ func TestMirrorBatcherAppendFailureReportedOnce(t *testing.T) {
 		return errors.New("boom")
 	}}
 	errs := &mirrorErrors{}
-	b, sleeps := newTestMirrorBatcher(t, store, errs, mirrorMaxPendingEntries, mirrorMaxPendingBytes)
+	b, sleeps := newTestMirrorBatcher(t, store, errs, storeAppendBatchEntries, storeAppendBatchBytes)
 	b.enqueue(mirrorMainPath("proj", "sess"), []SessionStoreEntry{{"type": "x"}})
 	b.flush(t.Context())
 
@@ -375,7 +375,7 @@ func TestMirrorBatcherRetryThenSucceed(t *testing.T) {
 		return nil
 	}}
 	errs := &mirrorErrors{}
-	b, sleeps := newTestMirrorBatcher(t, store, errs, mirrorMaxPendingEntries, mirrorMaxPendingBytes)
+	b, sleeps := newTestMirrorBatcher(t, store, errs, storeAppendBatchEntries, storeAppendBatchBytes)
 	b.enqueue(mirrorMainPath("proj", "sess"), []SessionStoreEntry{{"type": "x"}})
 	b.flush(t.Context())
 
@@ -397,7 +397,7 @@ func TestMirrorBatcherPanickingStoreIsAFailure(t *testing.T) {
 		panic("kaboom")
 	}}
 	errs := &mirrorErrors{}
-	b, _ := newTestMirrorBatcher(t, store, errs, mirrorMaxPendingEntries, mirrorMaxPendingBytes)
+	b, _ := newTestMirrorBatcher(t, store, errs, storeAppendBatchEntries, storeAppendBatchBytes)
 	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"type": "x"}})
 	b.flush(t.Context())
 	if got := errs.get(); len(got) != 1 || !strings.Contains(got[0].msg, "kaboom") {
@@ -437,7 +437,7 @@ func TestMirrorBatcherTimeoutNotRetried(t *testing.T) {
 				return nil
 			}}
 			errs := &mirrorErrors{}
-			b, sleeps := newTestMirrorBatcher(t, store, errs, mirrorMaxPendingEntries, mirrorMaxPendingBytes)
+			b, sleeps := newTestMirrorBatcher(t, store, errs, storeAppendBatchEntries, storeAppendBatchBytes)
 			b.sendTimeout = 20 * time.Millisecond
 			b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"type": "x"}})
 			b.flush(t.Context())
@@ -461,7 +461,7 @@ func TestMirrorBatcherUnmappedPathDropped(t *testing.T) {
 	t.Parallel()
 	store := &mirrorStoreFake{}
 	errs := &mirrorErrors{}
-	b, _ := newTestMirrorBatcher(t, store, errs, mirrorMaxPendingEntries, mirrorMaxPendingBytes)
+	b, _ := newTestMirrorBatcher(t, store, errs, storeAppendBatchEntries, storeAppendBatchBytes)
 	b.enqueue(filepath.Join(string(filepath.Separator), "elsewhere", "x.jsonl"), []SessionStoreEntry{{"type": "x"}})
 	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"type": "y"}})
 	b.flush(t.Context())
@@ -532,7 +532,7 @@ func TestMirrorBatcherFlushWaitsForInFlightEagerFlush(t *testing.T) {
 	gate := make(chan struct{})
 	entered := make(chan struct{}, 1)
 	store := gatedStore(gate, entered)
-	b, _ := newTestMirrorBatcher(t, store, nil, 1, mirrorMaxPendingBytes)
+	b, _ := newTestMirrorBatcher(t, store, nil, 1, storeAppendBatchBytes)
 	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"n": 1}, {"n": 2}})
 	<-entered
 	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"n": 3}})
@@ -559,7 +559,7 @@ func TestMirrorBatcherFlushReturnsOnContext(t *testing.T) {
 	gate := make(chan struct{})
 	entered := make(chan struct{}, 1)
 	store := gatedStore(gate, entered)
-	b, _ := newTestMirrorBatcher(t, store, nil, mirrorMaxPendingEntries, mirrorMaxPendingBytes)
+	b, _ := newTestMirrorBatcher(t, store, nil, storeAppendBatchEntries, storeAppendBatchBytes)
 	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"n": 1}})
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
@@ -574,7 +574,7 @@ func TestMirrorBatcherFlushReturnsOnContext(t *testing.T) {
 func TestMirrorBatcherCloseFlushesPending(t *testing.T) {
 	t.Parallel()
 	store := &mirrorStoreFake{}
-	b := newTranscriptMirrorBatcher(store, mirrorProjectsDir, nil, mirrorMaxPendingEntries, mirrorMaxPendingBytes)
+	b := newTranscriptMirrorBatcher(store, mirrorProjectsDir, nil, storeAppendBatchEntries, storeAppendBatchBytes)
 	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"n": 1}})
 	b.close(t.Context())
 	if n := len(store.appendCalls()); n != 1 {

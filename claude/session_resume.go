@@ -1,7 +1,6 @@
 package claude
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -87,18 +86,6 @@ func (r resumeEnv) withDefaults() resumeEnv {
 		r.retryDelay = rmtreeRetryDelay
 	}
 	return r
-}
-
-// userHomeDir is Python's Path.home(): $HOME, then the password database.
-func userHomeDir() (string, error) {
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return home, nil
-	}
-	u, err := user.Current()
-	if err != nil {
-		return "", err
-	}
-	return u.HomeDir, nil
 }
 
 // materializedResume is a session written to a temporary config directory.
@@ -319,126 +306,25 @@ func resolveContinueCandidate(ctx context.Context, store SessionStore, projectKe
 	return "", nil, nil
 }
 
-// callWithLoadTimeout runs one store call bounded by timeout. The call runs
-// on its own goroutine so a store that ignores its context cannot hang the
-// resume; on timeout it is abandoned and ends whenever the store returns.
+// callWithLoadTimeout runs one store call bounded by timeout (see
+// runStoreCall), so a store that ignores its context cannot hang the resume.
 // Failures are wrapped with what and the materialization context.
 func callWithLoadTimeout[T any](ctx context.Context, timeout time.Duration, what string, call func(context.Context) (T, error)) (T, error) {
 	var zero T
 	if err := ctx.Err(); err != nil {
 		return zero, fmt.Errorf("claude: %s during resume materialization: %w", what, err)
 	}
-	callCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	type result struct {
-		v   T
-		err error
-	}
-	done := make(chan result, 1)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				done <- result{err: fmt.Errorf("panic: %v", r)}
-			}
-		}()
-		v, err := call(callCtx)
-		done <- result{v, err}
-	}()
-	timedOut := func() error {
-		return fmt.Errorf("claude: %s timed out after %dms during resume materialization: %w",
+	v, status, err := runStoreCall(ctx, timeout, func(r any) error { return fmt.Errorf("panic: %v", r) }, call)
+	switch {
+	case status == storeCallTimedOut:
+		return zero, fmt.Errorf("claude: %s timed out after %dms during resume materialization: %w",
 			what, timeout.Milliseconds(), context.DeadlineExceeded)
+	case status == storeCallCanceled:
+		return zero, fmt.Errorf("claude: %s during resume materialization: %w", what, err)
+	case err != nil:
+		return zero, fmt.Errorf("claude: %s failed during resume materialization: %w", what, err)
 	}
-	select {
-	case r := <-done:
-		if r.err == nil {
-			return r.v, nil
-		}
-		if ctx.Err() == nil && errors.Is(callCtx.Err(), context.DeadlineExceeded) {
-			return zero, timedOut()
-		}
-		return zero, fmt.Errorf("claude: %s failed during resume materialization: %w", what, r.err)
-	case <-callCtx.Done():
-		if err := ctx.Err(); err != nil {
-			return zero, fmt.Errorf("claude: %s during resume materialization: %w", what, err)
-		}
-		return zero, timedOut()
-	}
-}
-
-// writeEntriesJSONL streams entries to path as one compact JSON object per
-// line, with "type" first as in entriesToJSONL, and makes the file 0600.
-// Unlike entriesToJSONL it fails on a value that cannot be encoded instead
-// of writing null for it.
-func writeEntriesJSONL(path string, entries []SessionStoreEntry) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("claude: writing %s: %w", path, err)
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return fmt.Errorf("claude: writing %s: %w", path, err)
-	}
-	w := bufio.NewWriter(f)
-	err = encodeEntriesJSONL(w, entries)
-	if err == nil {
-		err = w.Flush()
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return fmt.Errorf("claude: writing %s: %w", path, err)
-	}
-	_ = os.Chmod(path, 0o600)
-	return nil
-}
-
-func encodeEntriesJSONL(w *bufio.Writer, entries []SessionStoreEntry) error {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	encode := func(v any) error {
-		buf.Reset()
-		if err := enc.Encode(v); err != nil {
-			return err
-		}
-		_, err := w.Write(bytes.TrimSuffix(buf.Bytes(), []byte("\n")))
-		return err
-	}
-	for _, e := range entries {
-		if e == nil {
-			if _, err := w.WriteString("null\n"); err != nil {
-				return err
-			}
-			continue
-		}
-		keys := make([]string, 0, len(e))
-		for k := range e {
-			if k != "type" {
-				keys = append(keys, k)
-			}
-		}
-		slices.Sort(keys)
-		if _, ok := e["type"]; ok {
-			keys = append([]string{"type"}, keys...)
-		}
-		_ = w.WriteByte('{')
-		for i, k := range keys {
-			if i > 0 {
-				_ = w.WriteByte(',')
-			}
-			if err := encode(k); err != nil {
-				return err
-			}
-			_ = w.WriteByte(':')
-			if err := encode(e[k]); err != nil {
-				return fmt.Errorf("entry field %q: %w", k, err)
-			}
-		}
-		if _, err := w.WriteString("}\n"); err != nil {
-			return err
-		}
-	}
-	return nil
+	return v, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -460,7 +346,8 @@ func copyAuthFiles(ctx context.Context, tmpBase string, optEnv map[string]string
 	if !callerConfigDirSet {
 		callerConfigDir, callerConfigDirSet = env.lookupEnv("CLAUDE_CONFIG_DIR")
 	}
-	envTruthy := func(key string) bool {
+	// envSet reports whether key is set to a non-empty value.
+	envSet := func(key string) bool {
 		if optEnv[key] != "" {
 			return true
 		}
@@ -485,7 +372,7 @@ func copyAuthFiles(ctx context.Context, tmpBase string, optEnv map[string]string
 	// so the subprocess's lookup would miss and fall back to
 	// <configDir>/.credentials.json: populate that file from the parent's
 	// Keychain. Skipped when env-based auth or a custom config dir is in play.
-	if !callerConfigDirSet && !envTruthy("ANTHROPIC_API_KEY") && !envTruthy("CLAUDE_CODE_OAUTH_TOKEN") {
+	if !callerConfigDirSet && !envSet("ANTHROPIC_API_KEY") && !envSet("CLAUDE_CODE_OAUTH_TOKEN") {
 		if keychain, ok := env.readKeychain(ctx); ok {
 			creds = []byte(keychain)
 		}
