@@ -93,7 +93,7 @@ func (u PermissionUpdate) MarshalJSON() ([]byte, error) {
 func (u *PermissionUpdate) UnmarshalJSON(data []byte) error {
 	type alias PermissionUpdate
 	var a alias
-	if err := json.Unmarshal(data, &a); fatalDecodeErr(err) {
+	if err := unmarshalLenient(data, &a); err != nil {
 		return err
 	}
 	*u = PermissionUpdate(a)
@@ -274,47 +274,57 @@ func toolPermissionContext(requestID string, request map[string]any) ToolPermiss
 // result is not a *PermissionResultAllow or *PermissionResultDeny (nil
 // included); callers report that in their own words.
 //
-// With a nil request it renders the decision of a PermissionRequest hook
-// output, where optional members are left out when empty. With the
-// can_use_tool request it answers, it renders the control reply: an allow
-// always carries updatedInput (the request's input when UpdatedInput is nil),
-// a deny always carries message, and stampPermissionReply's fields are added.
-func permissionDecisionWire(result PermissionResult, request map[string]any) (out map[string]any, ok bool) {
-	reply := request != nil
+// This is the decision of a PermissionRequest hook output, where optional
+// members are left out when empty; permissionReply renders the control reply.
+func permissionDecisionWire(result PermissionResult) (out map[string]any, ok bool) {
 	switch r := result.(type) {
 	case *PermissionResultAllow:
 		if r == nil {
 			return nil, false
 		}
 		out = map[string]any{"behavior": BehaviorAllow}
-		switch {
-		case reply && r.UpdatedInput == nil:
-			out["updatedInput"], _ = request["input"].(map[string]any)
-		case reply || r.UpdatedInput != nil:
+		if r.UpdatedInput != nil {
 			out["updatedInput"] = r.UpdatedInput
 		}
 		if r.UpdatedPermissions != nil {
 			out["updatedPermissions"] = r.UpdatedPermissions
-		}
-		if reply {
-			stampPermissionReply(out, request, r.DecisionClassification)
 		}
 	case *PermissionResultDeny:
 		if r == nil {
 			return nil, false
 		}
 		out = map[string]any{"behavior": BehaviorDeny}
-		if r.Message != "" || reply {
+		if r.Message != "" {
 			out["message"] = r.Message
 		}
 		if r.Interrupt {
 			out["interrupt"] = true
 		}
-		if reply {
-			stampPermissionReply(out, request, r.DecisionClassification)
-		}
 	default:
 		return nil, false
+	}
+	return out, true
+}
+
+// permissionReply renders result as the reply to the can_use_tool request it
+// answers: the permissionDecisionWire object, where an allow always carries
+// updatedInput (the request's input when UpdatedInput is nil), a deny always
+// carries message, and stampPermissionReply's fields are added. ok is as for
+// permissionDecisionWire.
+func permissionReply(result PermissionResult, request map[string]any) (out map[string]any, ok bool) {
+	out, ok = permissionDecisionWire(result)
+	if !ok {
+		return nil, false
+	}
+	switch r := result.(type) {
+	case *PermissionResultAllow:
+		if r.UpdatedInput == nil {
+			out["updatedInput"], _ = request["input"].(map[string]any)
+		}
+		stampPermissionReply(out, request, r.DecisionClassification)
+	case *PermissionResultDeny:
+		out["message"] = r.Message
+		stampPermissionReply(out, request, r.DecisionClassification)
 	}
 	return out, true
 }

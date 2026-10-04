@@ -11,7 +11,9 @@ import (
 // validateOptions rejects option combinations the CLI could not serve and
 // values that cannot be rendered for it, as the TypeScript SDK does at option
 // intake. It runs in prepareOptions, before anything is spawned, so the errors
-// surface with a custom Transport too. opts may be nil.
+// surface with a custom Transport too; values whose encoding fails (Settings,
+// Sandbox and the like) are reported by resolveLaunch, which prepareOptions
+// runs next. opts may be nil.
 func validateOptions(opts *Options) error {
 	if opts == nil {
 		return nil
@@ -34,7 +36,7 @@ func validateOptions(opts *Options) error {
 			}
 		}
 	}
-	return validateSettingsOptions(opts)
+	return nil
 }
 
 // validateCallbackOptions rejects callback option combinations the CLI could
@@ -73,29 +75,6 @@ func validateProcessOptions(opts *Options) error {
 		if p.Type != "" && p.Type != "local" {
 			return fmt.Errorf("claude: unsupported plugin type: %s", p.Type)
 		}
-	}
-	return nil
-}
-
-// validateSettingsOptions checks that Options.Settings and Options.Sandbox
-// encode as JSON objects and can be merged into one --settings value.
-func validateSettingsOptions(opts *Options) error {
-	isPath := false
-	switch value := opts.Settings.(type) {
-	case nil:
-	case string:
-		isPath = isSettingsPath(value)
-	default:
-		if _, _, err := encodeJSONObject(value, "Options.Settings"); err != nil {
-			return err
-		}
-	}
-	_, hasSandbox, err := encodeJSONObject(opts.Sandbox, "Options.Sandbox")
-	if err != nil {
-		return err
-	}
-	if isPath && hasSandbox {
-		return errSettingsPathWithSandbox
 	}
 	return nil
 }

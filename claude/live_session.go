@@ -17,10 +17,7 @@ type sessionDeps struct {
 // session is a live CLI session: its engine and what must be cleaned up
 // after it.
 type session struct {
-	// opts are the effective options: prepared, and pointed at the
-	// materialized config directory when there is one.
-	opts *Options
-	eng  *engine
+	eng *engine
 	// materialized is the temp config dir of a SessionStore resume, or nil.
 	// Remove it with cleanup once eng is closed.
 	materialized *materializedResume
@@ -56,16 +53,16 @@ func startSession(ctx context.Context, opts *Options, entry string, deps *sessio
 }
 
 // openSession runs the setup that precedes the handshake, in the order of the
-// Python SDK: validate the options; materialize a SessionStore-backed resume
-// into a temp CLAUDE_CONFIG_DIR (skipped with a custom Transport, which never
-// sees the rewritten options); resolve the launch configuration; connect the
-// transport; build the engine with SDK MCP servers and, with a SessionStore,
-// transcript mirroring. Nothing is left behind on failure.
+// Python SDK: validate the options and resolve the launch configuration;
+// materialize a SessionStore-backed resume into a temp CLAUDE_CONFIG_DIR
+// (skipped with a custom Transport, which never sees the rewritten options);
+// connect the transport; build the engine with SDK MCP servers and, with a
+// SessionStore, transcript mirroring. Nothing is left behind on failure.
 func openSession(ctx context.Context, raw *Options, entry string, deps *sessionDeps) (*session, error) {
 	if deps == nil {
 		deps = &sessionDeps{}
 	}
-	opts, err := prepareOptions(raw, entry)
+	opts, launch, err := prepareOptions(raw, entry)
 	if err != nil {
 		return nil, err
 	}
@@ -78,21 +75,19 @@ func openSession(ctx context.Context, raw *Options, entry string, deps *sessionD
 	}
 	mirrorDir := projectsDir(opts.Env)
 	if materialized != nil {
+		// The rewrite touches only single-channel flags and the
+		// environment, which the subprocess transport renders from opts,
+		// so launch stays valid.
 		opts = applyMaterializedOptions(opts, materialized)
 		mirrorDir = materialized.projectsDir()
 	}
 
-	launch, err := resolveLaunch(opts)
-	if err != nil {
-		materialized.cleanup()
-		return nil, err
-	}
 	transport := opts.Transport
 	if transport == nil {
 		if deps.newTransport != nil {
 			transport = deps.newTransport(opts)
 		} else {
-			transport = newSubprocessTransport(opts).withLaunch(launch)
+			transport = newSubprocessTransport(opts, launch)
 		}
 	}
 	if err := transport.Connect(ctx); err != nil {
@@ -101,15 +96,18 @@ func openSession(ctx context.Context, raw *Options, entry string, deps *sessionD
 	}
 
 	eng := newEngine(transport, opts, launch)
-	eng.enableTranscriptMirror(mirrorDir)
-	return &session{opts: opts, eng: eng, materialized: materialized}, nil
+	eng.enableTranscriptMirror(opts, mirrorDir)
+	return &session{eng: eng, materialized: materialized}, nil
 }
 
 // prepareOptions validates the options and returns a copy carrying the
-// derived settings: the SDK permission handler and the entrypoint marker.
-func prepareOptions(opts *Options, entry string) (*Options, error) {
+// derived settings (the SDK permission handler and the entrypoint marker),
+// resolved as a launchConfig. The launch is resolved here, before anything is
+// materialized or spawned, so its encoding errors surface early whatever the
+// transport, and its settings are encoded once per session.
+func prepareOptions(opts *Options, entry string) (*Options, *launchConfig, error) {
 	if err := validateOptions(opts); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var copied Options
 	if opts != nil {
@@ -125,5 +123,9 @@ func prepareOptions(opts *Options, entry string) (*Options, error) {
 		env["CLAUDE_CODE_ENTRYPOINT"] = entry
 	}
 	copied.Env = env
-	return &copied, nil
+	launch, err := resolveLaunch(&copied)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &copied, launch, nil
 }

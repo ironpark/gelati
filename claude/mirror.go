@@ -432,11 +432,11 @@ func (e *engine) setMirrorBatcher(b *transcriptMirrorBatcher) {
 	e.mirror.Store(b)
 }
 
-// enableTranscriptMirror attaches a batcher for e.opts.SessionStore, reporting
+// enableTranscriptMirror attaches a batcher for opts.SessionStore, reporting
 // failures as MirrorErrorMessage. It does nothing without a store. Call it
 // before start; projectsDir is as for newMirrorBatcherForOptions.
-func (e *engine) enableTranscriptMirror(projectsDir string) {
-	if b := newMirrorBatcherForOptions(e.opts, projectsDir, e.reportMirrorError); b != nil {
+func (e *engine) enableTranscriptMirror(opts *Options, projectsDir string) {
+	if b := newMirrorBatcherForOptions(opts, projectsDir, e.reportMirrorError); b != nil {
 		e.setMirrorBatcher(b)
 	}
 }

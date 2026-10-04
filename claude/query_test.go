@@ -234,7 +234,7 @@ func TestQueryRejectsConflictingPermissionOptions(t *testing.T) {
 func TestPrepareOptions(t *testing.T) {
 	t.Parallel()
 	// The permission callback routes prompts over the control protocol.
-	opts, err := prepareOptions(&Options{CanUseTool: func(context.Context, string, map[string]any, ToolPermissionContext) (PermissionResult, error) {
+	opts, _, err := prepareOptions(&Options{CanUseTool: func(context.Context, string, map[string]any, ToolPermissionContext) (PermissionResult, error) {
 		return &PermissionResultAllow{}, nil
 	}}, entrypoint)
 	if err != nil {
@@ -250,7 +250,7 @@ func TestPrepareOptions(t *testing.T) {
 	// The caller's own entrypoint wins, and the original options are not
 	// mutated.
 	original := &Options{Env: map[string]string{"CLAUDE_CODE_ENTRYPOINT": "custom"}}
-	opts, err = prepareOptions(original, entrypointClient)
+	opts, _, err = prepareOptions(original, entrypointClient)
 	if err != nil {
 		t.Fatalf("prepareOptions: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestPrepareOptions(t *testing.T) {
 	}
 
 	// nil options are usable.
-	if opts, err = prepareOptions(nil, entrypoint); err != nil || opts == nil {
+	if opts, _, err = prepareOptions(nil, entrypoint); err != nil || opts == nil {
 		t.Fatalf("prepareOptions(nil) = %v, %v", opts, err)
 	}
 }

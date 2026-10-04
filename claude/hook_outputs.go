@@ -285,7 +285,7 @@ func (*PermissionRequestHookSpecificOutput) HookEventName() HookEvent {
 func (o *PermissionRequestHookSpecificOutput) MarshalJSON() ([]byte, error) {
 	out := map[string]any{}
 	if o.Decision != nil {
-		decision, ok := permissionDecisionWire(o.Decision, nil)
+		decision, ok := permissionDecisionWire(o.Decision)
 		if !ok {
 			return nil, fmt.Errorf("claude: PermissionRequest hook decision %T, want *PermissionResultAllow or *PermissionResultDeny", o.Decision)
 		}

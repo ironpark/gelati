@@ -746,3 +746,46 @@ func TestParseResultFractionalCounters(t *testing.T) {
 		t.Fatalf("got %+v", rm)
 	}
 }
+
+// encoding/json allocates a pointer field before it finds a type mismatch;
+// lenient decoding must still leave a wrong-typed optional member nil.
+func TestLenientWrongTypedPointersAreNil(t *testing.T) {
+	t.Parallel()
+	rl := mustParse(t, `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed",`+
+		`"utilization":"high","surpassedThreshold":0.75,"resetsAt":"soon"}}`).(*RateLimitEvent)
+	info := rl.RateLimitInfo
+	if info.Utilization != nil || info.ResetsAt != nil || info.Status != "allowed" ||
+		info.SurpassedThreshold == nil || *info.SurpassedThreshold != 0.75 {
+		t.Fatalf("rate limit info = %+v", info)
+	}
+
+	retry := mustParse(t, `{"type":"system","subtype":"api_retry","attempt":2,"error_status":"x"}`).(*APIRetryMessage)
+	if retry.ErrorStatus != nil || retry.Attempt != 2 {
+		t.Fatalf("api retry = %+v", retry)
+	}
+	retry = mustParse(t, `{"type":"system","subtype":"api_retry","error_status":529,"no_response":true}`).(*APIRetryMessage)
+	if retry.ErrorStatus == nil || *retry.ErrorStatus != 529 || retry.NoResponse != nil {
+		t.Fatalf("api retry = %+v", retry)
+	}
+
+	hook := mustParse(t, `{"type":"system","subtype":"hook_response","hook_event":"Stop","exit_code":[1]}`).(*HookEventMessage)
+	if hook.ExitCode != nil || hook.HookEventName != "Stop" {
+		t.Fatalf("hook event = %+v", hook)
+	}
+
+	type response struct {
+		N    *int    `json:"n"`
+		S    *string `json:"s"`
+		Name string  `json:"name"`
+	}
+	data := map[string]any{"n": "x", "s": "ok", "name": "v"}
+	got, err := decodeControl[response](data, nil)
+	if err != nil || got.N != nil || got.S == nil || *got.S != "ok" || got.Name != "v" {
+		t.Fatalf("decodeControl = %+v, %v", got, err)
+	}
+	var value response
+	decodeValue(data, &value)
+	if value.N != nil || value.S == nil || value.Name != "v" {
+		t.Fatalf("decodeValue = %+v", value)
+	}
+}

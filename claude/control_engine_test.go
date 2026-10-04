@@ -581,12 +581,12 @@ func TestEnginePendingIgnoredOnOtherResponses(t *testing.T) {
 
 func TestValidateCallbackOptions(t *testing.T) {
 	t.Parallel()
-	if _, err := prepareOptions(&Options{SupportedDialogKinds: []string{"k"}}, entrypoint); err == nil {
+	if _, _, err := prepareOptions(&Options{SupportedDialogKinds: []string{"k"}}, entrypoint); err == nil {
 		t.Fatal("SupportedDialogKinds without OnUserDialog should fail")
 	}
 	ok := &Options{SupportedDialogKinds: []string{"k"},
 		OnUserDialog: func(context.Context, UserDialogRequest) (*UserDialogResult, error) { return nil, nil }}
-	if _, err := prepareOptions(ok, entrypoint); err != nil {
+	if _, _, err := prepareOptions(ok, entrypoint); err != nil {
 		t.Fatal(err)
 	}
 }

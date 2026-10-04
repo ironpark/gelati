@@ -13,161 +13,187 @@ import (
 )
 
 // launchConfig is what Options contribute to starting a session, resolved
-// once: the CLI's flags and environment, for the subprocess transport, and the
-// option-derived fields of the initialize request, for the engine. A custom
-// Transport receives only the latter.
+// once per session by resolveLaunch: the option-derived fields of the
+// initialize request, for the engine, and the encoded values of the CLI flags
+// whose encoding can fail, so those errors surface before anything is
+// spawned, whatever the transport. Only the subprocess transport renders the
+// full command line (commandArgs) and environment (buildEnv), when it starts
+// the CLI.
 //
 // Several options reach the CLI on two channels (SystemPrompt, Plugins,
-// OutputFormat, Skills); each is rendered by one helper that writes both
-// halves.
+// OutputFormat, Skills): resolveLaunch writes their initialize half and
+// commandArgs their flag half.
 type launchConfig struct {
-	// args are the CLI flags, without the program or script path.
-	args []string
-	// env is the CLI's complete environment as KEY=VALUE pairs, sorted by
-	// key. It is the inherited environment overlaid with Options.Env and the
-	// SDK's own variables; see buildEnv.
-	env []string
 	// initFields are the option-derived fields of the initialize request,
 	// following the TypeScript SDK's buildInitializeRequest. The engine adds
 	// only the hook registrations and the in-process MCP server
 	// declarations.
 	initFields map[string]any
+
+	// The encoded values of --settings, --managed-settings, an inline
+	// --mcp-config and --json-schema; empty when the flag is not passed.
+	settings, managedSettings, mcpConfig, jsonSchema string
 }
 
-// resolveLaunch renders opts as a launchConfig. opts may be nil. The SDK
-// always drives the CLI in streaming-json mode on both directions, matching
-// the reference SDKs, so large configuration (agents, hooks, most system
-// prompts) can ride on the initialize request instead of the command line.
+// resolveLaunch resolves opts as a launchConfig. The SDK always drives the
+// CLI in streaming-json mode on both directions, matching the reference SDKs,
+// so large configuration (agents, hooks, most system prompts) can ride on the
+// initialize request instead of the command line.
 //
-// opts should have passed prepareOptions, which validates option
-// combinations; resolveLaunch reports only encoding failures and the
-// conflicts it cannot render.
+// prepareOptions calls it after validating option combinations; resolveLaunch
+// reports the encoding failures and the conflicts it cannot render.
 func resolveLaunch(opts *Options) (*launchConfig, error) {
-	if opts == nil {
-		opts = &Options{}
-	}
 	l := &launchConfig{initFields: map[string]any{}}
-	l.flag("--output-format", "stream-json", "--verbose")
-	l.addSystemPrompt(opts.SystemPrompt)
+	l.addSystemPromptFields(opts.SystemPrompt)
+	if skills, ok := opts.Skills.(SkillList); ok {
+		// "all" and unset are the same on the wire, so only a list is sent.
+		l.initFields["skills"] = []string(skills)
+	}
 
-	switch tools := opts.Tools.(type) {
-	case nil:
-	case ToolList:
-		l.flag("--tools", strings.Join(tools, ","))
-	case ToolsPreset:
-		// The claude_code preset maps to the CLI's "default" tool set.
-		l.flag("--tools", "default")
-	}
-	l.addAllowedToolsAndSkills(opts)
-
-	// Zero turns is dropped, as in the TypeScript SDK.
-	if opts.MaxTurns != nil && *opts.MaxTurns != 0 {
-		l.flag("--max-turns", strconv.Itoa(*opts.MaxTurns))
-	}
-	if opts.MaxBudgetUSD != nil {
-		l.flag("--max-budget-usd", strconv.FormatFloat(*opts.MaxBudgetUSD, 'g', -1, 64))
-	}
-	if len(opts.DisallowedTools) > 0 {
-		l.flag("--disallowedTools", strings.Join(opts.DisallowedTools, ","))
-	}
-	if opts.TaskBudget != nil {
-		l.flag("--task-budget", strconv.Itoa(opts.TaskBudget.Total))
-	}
-	l.flagIf(opts.Model != "", "--model", opts.Model)
-	l.flagIf(opts.Agent != "", "--agent", opts.Agent)
-	l.flagIf(opts.FallbackModel != "", "--fallback-model", opts.FallbackModel)
-	if len(opts.Betas) > 0 {
-		l.flag("--betas", strings.Join(opts.Betas, ","))
-	}
-	if opts.DebugFile != "" {
-		l.flag("--debug-file", opts.DebugFile)
-	} else if opts.Debug {
-		l.flag("--debug")
-	}
-	l.flagIf(opts.PermissionPromptToolName != "", "--permission-prompt-tool", opts.PermissionPromptToolName)
-	l.flagIf(opts.PermissionPrompts != "", "--permission-prompts", opts.PermissionPrompts)
-	l.flagIf(opts.PermissionMode != "", "--permission-mode", opts.PermissionMode)
-	l.flagIf(opts.AllowDangerouslySkipPermissions, "--allow-dangerously-skip-permissions")
-	l.flagIf(opts.ContinueConversation, "--continue")
-	// The equals form binds a dash-leading value to its flag; in the
-	// two-token form the CLI would parse it as a separate flag, which lets an
-	// untrusted session name inject arbitrary options.
-	l.flagIf(opts.Resume != "", "--resume="+opts.Resume)
-	l.flagIf(opts.SessionID != "", "--session-id="+opts.SessionID)
-
-	settings, err := buildSettingsValue(opts)
-	if err != nil {
+	var err error
+	if l.settings, err = buildSettingsValue(opts); err != nil {
 		return nil, err
 	}
-	l.flagIf(settings != "", "--settings", settings)
 	if opts.ManagedSettings != nil {
 		payload, err := json.Marshal(opts.ManagedSettings)
 		if err != nil {
 			return nil, fmt.Errorf("claude: encoding managed settings: %w", err)
 		}
-		l.flag("--managed-settings", string(payload))
+		l.managedSettings = string(payload)
 	}
-	l.flagIf(opts.ProjectConfigRoot != "", "--project-config-root="+opts.ProjectConfigRoot)
+	if opts.MCPConfigPath == "" {
+		if servers := processMCPServers(opts.MCPServers); len(servers) > 0 {
+			// In-process SDK servers are declared in the initialize
+			// request (sdkMcpServers), as the TypeScript SDK does, not
+			// here.
+			payload, err := json.Marshal(map[string]any{"mcpServers": servers})
+			if err != nil {
+				return nil, fmt.Errorf("claude: encoding mcp servers: %w", err)
+			}
+			l.mcpConfig = string(payload)
+		}
+	}
+	l.addPluginFields(opts)
+	if err := l.addOutputFormat(opts); err != nil {
+		return nil, err
+	}
+	l.addInitializeOnlyFields(opts)
+	return l, nil
+}
+
+// commandArgs renders the CLI flags for opts, the options l was resolved
+// from or a copy differing only in single-channel flags (a materialized
+// resume's Resume and ContinueConversation). They exclude the program or
+// script path.
+func (l *launchConfig) commandArgs(opts *Options) []string {
+	var a cliArgs
+	a.flag("--output-format", "stream-json", "--verbose")
+	if sp, ok := opts.SystemPrompt.(*SystemPromptFile); ok {
+		// The only system prompt form that is not sent in the initialize
+		// request; see addSystemPromptFields.
+		a.flag("--system-prompt-file", sp.Path)
+	}
+
+	switch tools := opts.Tools.(type) {
+	case nil:
+	case ToolList:
+		a.flag("--tools", strings.Join(tools, ","))
+	case ToolsPreset:
+		// The claude_code preset maps to the CLI's "default" tool set.
+		a.flag("--tools", "default")
+	}
+	a.addAllowedTools(opts)
+
+	// Zero turns is dropped, as in the TypeScript SDK.
+	if opts.MaxTurns != nil && *opts.MaxTurns != 0 {
+		a.flag("--max-turns", strconv.Itoa(*opts.MaxTurns))
+	}
+	if opts.MaxBudgetUSD != nil {
+		a.flag("--max-budget-usd", strconv.FormatFloat(*opts.MaxBudgetUSD, 'g', -1, 64))
+	}
+	if len(opts.DisallowedTools) > 0 {
+		a.flag("--disallowedTools", strings.Join(opts.DisallowedTools, ","))
+	}
+	if opts.TaskBudget != nil {
+		a.flag("--task-budget", strconv.Itoa(opts.TaskBudget.Total))
+	}
+	a.flagIf(opts.Model != "", "--model", opts.Model)
+	a.flagIf(opts.Agent != "", "--agent", opts.Agent)
+	a.flagIf(opts.FallbackModel != "", "--fallback-model", opts.FallbackModel)
+	if len(opts.Betas) > 0 {
+		a.flag("--betas", strings.Join(opts.Betas, ","))
+	}
+	if opts.DebugFile != "" {
+		a.flag("--debug-file", opts.DebugFile)
+	} else if opts.Debug {
+		a.flag("--debug")
+	}
+	a.flagIf(opts.PermissionPromptToolName != "", "--permission-prompt-tool", opts.PermissionPromptToolName)
+	a.flagIf(opts.PermissionPrompts != "", "--permission-prompts", opts.PermissionPrompts)
+	a.flagIf(opts.PermissionMode != "", "--permission-mode", opts.PermissionMode)
+	a.flagIf(opts.AllowDangerouslySkipPermissions, "--allow-dangerously-skip-permissions")
+	a.flagIf(opts.ContinueConversation, "--continue")
+	// The equals form binds a dash-leading value to its flag; in the
+	// two-token form the CLI would parse it as a separate flag, which lets an
+	// untrusted session name inject arbitrary options.
+	a.flagIf(opts.Resume != "", "--resume="+opts.Resume)
+	a.flagIf(opts.SessionID != "", "--session-id="+opts.SessionID)
+
+	a.flagIf(l.settings != "", "--settings", l.settings)
+	a.flagIf(opts.ManagedSettings != nil, "--managed-settings", l.managedSettings)
+	a.flagIf(opts.ProjectConfigRoot != "", "--project-config-root="+opts.ProjectConfigRoot)
 	for _, dir := range opts.AddDirs {
-		l.flag("--add-dir", dir)
+		a.flag("--add-dir", dir)
 	}
 	if opts.MCPConfigPath != "" {
-		l.flag("--mcp-config", opts.MCPConfigPath)
-	} else if servers := processMCPServers(opts.MCPServers); len(servers) > 0 {
-		// In-process SDK servers are declared in the initialize request
-		// (sdkMcpServers), as the TypeScript SDK does, not here.
-		payload, err := json.Marshal(map[string]any{"mcpServers": servers})
-		if err != nil {
-			return nil, fmt.Errorf("claude: encoding mcp servers: %w", err)
-		}
-		l.flag("--mcp-config", string(payload))
+		a.flag("--mcp-config", opts.MCPConfigPath)
+	} else {
+		a.flagIf(l.mcpConfig != "", "--mcp-config", l.mcpConfig)
 	}
-	l.flagIf(opts.IncludePartialMessages, "--include-partial-messages")
-	l.flagIf(opts.IncludeHookEvents, "--include-hook-events")
-	l.flagIf(opts.StrictMCPConfig, "--strict-mcp-config")
-	l.flagIf(opts.ForkSession, "--fork-session")
-	l.flagIf(opts.ResumeSessionAt != "", "--resume-session-at="+opts.ResumeSessionAt)
-	l.flagIf(opts.ResumeDropsTurn != "", "--resume-drops-turn="+opts.ResumeDropsTurn)
-	l.flagIf(opts.NoSessionPersistence, "--no-session-persistence")
+	a.flagIf(opts.IncludePartialMessages, "--include-partial-messages")
+	a.flagIf(opts.IncludeHookEvents, "--include-hook-events")
+	a.flagIf(opts.StrictMCPConfig, "--strict-mcp-config")
+	a.flagIf(opts.ForkSession, "--fork-session")
+	a.flagIf(opts.ResumeSessionAt != "", "--resume-session-at="+opts.ResumeSessionAt)
+	a.flagIf(opts.ResumeDropsTurn != "", "--resume-drops-turn="+opts.ResumeDropsTurn)
+	a.flagIf(opts.NoSessionPersistence, "--no-session-persistence")
 	// With a store the CLI emits transcript_mirror frames, which the engine
 	// forwards to it.
-	l.flagIf(opts.SessionStore != nil, "--session-mirror")
+	a.flagIf(opts.SessionStore != nil, "--session-mirror")
 	if opts.SettingSources != nil {
-		l.flag("--setting-sources=" + strings.Join(*opts.SettingSources, ","))
+		a.flag("--setting-sources=" + strings.Join(*opts.SettingSources, ","))
 	}
-	l.addPlugins(opts)
+	a.addPluginFlags(opts)
 	for _, flag := range sortedKeys(opts.ExtraArgs) {
 		value := opts.ExtraArgs[flag]
 		switch {
 		case value == nil:
-			l.flag("--" + flag)
+			a.flag("--" + flag)
 		case len(*value) > 1 && strings.HasPrefix(*value, "-"):
-			l.flag("--" + flag + "=" + *value)
+			a.flag("--" + flag + "=" + *value)
 		default:
-			l.flag("--"+flag, *value)
+			a.flag("--"+flag, *value)
 		}
 	}
-	l.args = appendThinkingArgs(l.args, opts)
-	l.flagIf(opts.Effort != "", "--effort", opts.Effort)
-	if err := l.addOutputFormat(opts); err != nil {
-		return nil, err
-	}
-	l.flag("--input-format", "stream-json")
-
-	l.addInitializeOnlyFields(opts)
-	l.env = buildEnv(opts)
-	return l, nil
+	a.addThinking(opts)
+	a.flagIf(opts.Effort != "", "--effort", opts.Effort)
+	a.flagIf(l.jsonSchema != "", "--json-schema", l.jsonSchema)
+	a.flag("--input-format", "stream-json")
+	return a
 }
 
+// cliArgs accumulates CLI flags.
+type cliArgs []string
+
 // flag appends CLI arguments.
-func (l *launchConfig) flag(args ...string) {
-	l.args = append(l.args, args...)
+func (a *cliArgs) flag(args ...string) {
+	*a = append(*a, args...)
 }
 
 // flagIf appends CLI arguments when cond holds.
-func (l *launchConfig) flagIf(cond bool, args ...string) {
+func (a *cliArgs) flagIf(cond bool, args ...string) {
 	if cond {
-		l.flag(args...)
+		a.flag(args...)
 	}
 }
 
@@ -175,11 +201,12 @@ func (l *launchConfig) flagIf(cond bool, args ...string) {
 // Two-channel options
 // ---------------------------------------------------------------------------
 
-// addSystemPrompt renders Options.SystemPrompt the way the TypeScript SDK
-// does: every form travels in the initialize request, so a long prompt does
-// not count against the OS command-line limit, except SystemPromptFile, which
-// is --system-prompt-file. nil becomes an empty custom prompt.
-func (l *launchConfig) addSystemPrompt(prompt SystemPrompt) {
+// addSystemPromptFields renders Options.SystemPrompt the way the TypeScript
+// SDK does: every form travels in the initialize request, so a long prompt
+// does not count against the OS command-line limit, except SystemPromptFile,
+// which commandArgs passes as --system-prompt-file. nil becomes an empty
+// custom prompt.
+func (l *launchConfig) addSystemPromptFields(prompt SystemPrompt) {
 	fields := l.initFields
 	switch sp := prompt.(type) {
 	case nil:
@@ -203,19 +230,17 @@ func (l *launchConfig) addSystemPrompt(prompt SystemPrompt) {
 		if sp.Snapshot != nil {
 			fields["systemPromptSnapshot"] = *sp.Snapshot
 		}
-	case *SystemPromptFile:
-		l.flag("--system-prompt-file", sp.Path)
 	}
 }
 
-// addAllowedToolsAndSkills renders Options.AllowedTools and Options.Skills.
-// Enabling skills implies the Skill tool, so --allowedTools gains the
-// matching Skill rules and callers do not have to allow it by hand; an
-// explicit skill list also filters the session's skills through the
-// initialize request ("all" and unset are the same on the wire, so only a
-// list is sent). Like the TypeScript SDK, the setting sources are left alone.
-// Skill names were checked by validateOptions.
-func (l *launchConfig) addAllowedToolsAndSkills(opts *Options) {
+// addAllowedTools renders Options.AllowedTools and the flag half of
+// Options.Skills. Enabling skills implies the Skill tool, so --allowedTools
+// gains the matching Skill rules and callers do not have to allow it by hand;
+// an explicit skill list also filters the session's skills through the
+// initialize request (see resolveLaunch). Like the TypeScript SDK, the
+// setting sources are left alone. Skill names were checked by
+// validateOptions.
+func (a *cliArgs) addAllowedTools(opts *Options) {
 	allowed := slices.Clone(opts.AllowedTools)
 	switch skills := opts.Skills.(type) {
 	case SkillsAll:
@@ -229,31 +254,19 @@ func (l *launchConfig) addAllowedToolsAndSkills(opts *Options) {
 				allowed = append(allowed, rule)
 			}
 		}
-		l.initFields["skills"] = []string(skills)
 	}
 	if len(allowed) > 0 {
-		l.flag("--allowedTools", strings.Join(allowed, ","))
+		a.flag("--allowedTools", strings.Join(allowed, ","))
 	}
 }
 
-// addPlugins renders Options.Plugins: one --plugin-dir flag per plugin, or
-// with PluginDeliveryInitialize the list in the initialize request and
-// --await-initialize, so the command line does not grow with it.
-func (l *launchConfig) addPlugins(opts *Options) {
-	if len(opts.Plugins) == 0 {
+// addPluginFields renders the initialize half of Options.Plugins: with
+// PluginDeliveryInitialize the list travels in the initialize request, so the
+// command line does not grow with it.
+func (l *launchConfig) addPluginFields(opts *Options) {
+	if len(opts.Plugins) == 0 || opts.PluginDelivery != PluginDeliveryInitialize {
 		return
 	}
-	if opts.PluginDelivery != PluginDeliveryInitialize {
-		for _, p := range opts.Plugins {
-			flag := "--plugin-dir"
-			if p.SkipMCPDiscovery {
-				flag = "--plugin-dir-no-mcp"
-			}
-			l.flag(flag, p.Path)
-		}
-		return
-	}
-	l.flag("--await-initialize")
 	plugins := make([]map[string]any, 0, len(opts.Plugins))
 	for _, p := range opts.Plugins {
 		plugin := map[string]any{"type": "local", "path": p.Path}
@@ -265,8 +278,28 @@ func (l *launchConfig) addPlugins(opts *Options) {
 	l.initFields["plugins"] = plugins
 }
 
+// addPluginFlags renders the flag half of Options.Plugins: one --plugin-dir
+// flag per plugin, or --await-initialize when the list is in the initialize
+// request.
+func (a *cliArgs) addPluginFlags(opts *Options) {
+	if len(opts.Plugins) == 0 {
+		return
+	}
+	if opts.PluginDelivery == PluginDeliveryInitialize {
+		a.flag("--await-initialize")
+		return
+	}
+	for _, p := range opts.Plugins {
+		flag := "--plugin-dir"
+		if p.SkipMCPDiscovery {
+			flag = "--plugin-dir-no-mcp"
+		}
+		a.flag(flag, p.Path)
+	}
+}
+
 // addOutputFormat sends the schema of a json_schema Options.OutputFormat both
-// as --json-schema and in the initialize request.
+// in the initialize request and, encoded here, as --json-schema.
 func (l *launchConfig) addOutputFormat(opts *Options) error {
 	schema, ok := outputSchema(opts)
 	if !ok {
@@ -276,7 +309,7 @@ func (l *launchConfig) addOutputFormat(opts *Options) error {
 	if err != nil {
 		return fmt.Errorf("claude: encoding output schema: %w", err)
 	}
-	l.flag("--json-schema", string(payload))
+	l.jsonSchema = string(payload)
 	l.initFields["jsonSchema"] = schema
 	return nil
 }
@@ -328,9 +361,9 @@ func (l *launchConfig) addInitializeOnlyFields(opts *Options) {
 	}
 }
 
-// appendThinkingArgs renders Options.Thinking, or the deprecated
-// MaxThinkingTokens, as the TypeScript SDK does.
-func appendThinkingArgs(args []string, opts *Options) []string {
+// addThinking renders Options.Thinking, or the deprecated MaxThinkingTokens,
+// as the TypeScript SDK does.
+func (a *cliArgs) addThinking(opts *Options) {
 	thinking := opts.Thinking
 	if thinking == nil && opts.MaxThinkingTokens != nil {
 		if *opts.MaxThinkingTokens == 0 {
@@ -340,24 +373,21 @@ func appendThinkingArgs(args []string, opts *Options) []string {
 		}
 	}
 	if thinking == nil {
-		return args
+		return
 	}
 	switch thinking.Type {
 	case ThinkingAdaptive:
-		args = append(args, "--thinking", "adaptive")
+		a.flag("--thinking", "adaptive")
 	case ThinkingEnabled:
 		if thinking.BudgetTokens == nil {
-			args = append(args, "--thinking", "adaptive")
+			a.flag("--thinking", "adaptive")
 		} else {
-			args = append(args, "--max-thinking-tokens", strconv.Itoa(*thinking.BudgetTokens))
+			a.flag("--max-thinking-tokens", strconv.Itoa(*thinking.BudgetTokens))
 		}
 	case ThinkingDisabled:
-		args = append(args, "--thinking", "disabled")
+		a.flag("--thinking", "disabled")
 	}
-	if thinking.Type != ThinkingDisabled && thinking.Display != "" {
-		args = append(args, "--thinking-display", thinking.Display)
-	}
-	return args
+	a.flagIf(thinking.Type != ThinkingDisabled && thinking.Display != "", "--thinking-display", thinking.Display)
 }
 
 // nonNilStrings keeps an empty list encoding as [] rather than null.

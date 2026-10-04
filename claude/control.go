@@ -33,13 +33,8 @@ type ControlError struct {
 // requests the SDK sends with their responses.
 type engine struct {
 	transport Transport
-	// opts are the session's options. The engine reads cfg; opts serve the
-	// transcript mirror.
-	opts *Options
-	cfg  engineConfig
+	cfg       engineConfig
 
-	// hookCallbacks answers hook_callback requests by callback ID.
-	hookCallbacks map[string]HookCallback
 	// mcpServers is the mutable registry of in-process MCP servers that
 	// answers mcp_message requests.
 	mcpServers *sdkMCPRegistry
@@ -91,16 +86,13 @@ type inflightHandler struct {
 }
 
 // newEngine builds an engine over transport, with the in-process MCP servers
-// of opts registered. opts may be nil. launch supplies the option-derived
-// initialize fields; nil sends none.
+// of opts registered. launch is opts resolved by resolveLaunch; it supplies the
+// option-derived initialize fields.
 func newEngine(transport Transport, opts *Options, launch *launchConfig) *engine {
-	if opts == nil {
-		opts = &Options{}
-	}
 	closed := make(chan struct{})
 	e := &engine{
 		transport:  transport,
-		opts:       opts,
+		cfg:        newEngineConfig(opts, launch),
 		run:        newRunTracker(runEndCeiling(opts.Env), closed),
 		messages:   newMessageQueue(closed),
 		baseCtx:    context.Background(),
@@ -109,7 +101,6 @@ func newEngine(transport Transport, opts *Options, launch *launchConfig) *engine
 		closed:     closed,
 		readerDone: make(chan struct{}),
 	}
-	e.cfg, e.hookCallbacks = newEngineConfig(opts, launch)
 	e.mcpServers = newSDKMCPRegistry(e.sendMCPFrame)
 	servers := sdkMCPServers(opts)
 	for _, name := range slices.Sorted(maps.Keys(servers)) {
@@ -572,7 +563,7 @@ func (e *engine) initializeFields() map[string]any {
 // Raw still has it.
 func (e *engine) setInitResponse(response map[string]any) *InitializeResult {
 	result := &InitializeResult{Raw: response}
-	_ = decodeResponse(response, result)
+	decodeValue(response, result)
 	e.mu.Lock()
 	e.initResult = result
 	e.mu.Unlock()
@@ -691,12 +682,9 @@ func (e *engine) close() error {
 		e.mcpServers.closeAll()
 		e.run.finalize()
 		err = e.transport.Close()
-		select {
-		case <-e.readerDone:
-		case <-time.After(5 * time.Second):
-			// A transport whose Close leaves the reader blocked must not
-			// wedge the caller; the goroutine ends when its stream does.
-		}
+		// A transport whose Close leaves the reader blocked must not wedge
+		// the caller; the goroutine ends when its stream does.
+		waitClosed(e.readerDone, 5*time.Second)
 		e.handlers.Wait()
 		if mirror != nil {
 			// Final flush of whatever the reader enqueued while stopping;

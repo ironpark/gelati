@@ -13,19 +13,34 @@ import (
 	"time"
 )
 
-// buildCommandArgs returns the CLI flags resolveLaunch renders for opts.
+// buildCommandArgs returns the CLI flags the subprocess transport renders
+// for opts.
 func buildCommandArgs(opts *Options) ([]string, error) {
 	launch, err := resolveLaunch(opts)
 	if err != nil {
 		return nil, err
 	}
-	return launch.args, nil
+	return launch.commandArgs(opts), nil
+}
+
+// newTestTransport builds a subprocess transport for opts, with its launch
+// resolved.
+func newTestTransport(t *testing.T, opts *Options) *subprocessTransport {
+	t.Helper()
+	launch, err := resolveLaunch(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return newSubprocessTransport(opts, launch)
 }
 
 // initializeExtras returns the initialize fields resolveLaunch renders for
-// opts.
+// opts, nil meaning none.
 func initializeExtras(t *testing.T, opts *Options) map[string]any {
 	t.Helper()
+	if opts == nil {
+		opts = &Options{}
+	}
 	launch, err := resolveLaunch(opts)
 	if err != nil {
 		t.Fatal(err)
@@ -319,7 +334,7 @@ func TestBuildEnv(t *testing.T) {
 	if got := envMap(buildEnv(&Options{}))["CLAUDE_CODE_ENTRYPOINT"]; got != "cli" {
 		t.Fatalf("entrypoint = %q, want the inherited value", got)
 	}
-	prepared, err := prepareOptions(&Options{}, entrypoint)
+	prepared, _, err := prepareOptions(&Options{}, entrypoint)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +470,7 @@ echo ''
 echo '[SandboxDebug] not json'
 printf '{"type":"result","subtype":"success"}'
 `)
-	tr := newSubprocessTransport(&Options{CLIPath: stub})
+	tr := newTestTransport(t, &Options{CLIPath: stub})
 	if err := tr.Connect(t.Context()); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -477,7 +492,7 @@ func TestSubprocessTransportWriteAndEndInput(t *testing.T) {
 	// The stub echoes back whatever it is sent, so the round trip proves both
 	// stdin framing and stdout reading.
 	stub := writeStub(t, `while IFS= read -r line; do echo "$line"; done`)
-	tr := newSubprocessTransport(&Options{CLIPath: stub})
+	tr := newTestTransport(t, &Options{CLIPath: stub})
 	if err := tr.Connect(t.Context()); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -515,7 +530,7 @@ echo 'boom happened' >&2
 exit 3
 `)
 	var stderrLines []string
-	tr := newSubprocessTransport(&Options{
+	tr := newTestTransport(t, &Options{
 		CLIPath: stub,
 		Stderr:  func(line string) { stderrLines = append(stderrLines, line) },
 	})
@@ -546,7 +561,7 @@ func TestSubprocessTransportOversizedLine(t *testing.T) {
 	stub := writeStub(t, `
 awk 'BEGIN { printf "{\"a\":\""; for (i = 0; i < 200; i++) printf "0123456789"; print "\"}" }'
 `)
-	tr := newSubprocessTransport(&Options{CLIPath: stub, MaxBufferSize: 64})
+	tr := newTestTransport(t, &Options{CLIPath: stub, MaxBufferSize: 64})
 	if err := tr.Connect(t.Context()); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -566,7 +581,7 @@ func TestSubprocessTransportSkipsInvalidJSON(t *testing.T) {
 echo '{"type": broken}'
 echo '{"type":"result","subtype":"success"}'
 `)
-	tr := newSubprocessTransport(&Options{CLIPath: stub})
+	tr := newTestTransport(t, &Options{CLIPath: stub})
 	if err := tr.Connect(t.Context()); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -585,7 +600,7 @@ func TestSubprocessTransportCloseTerminates(t *testing.T) {
 echo '{"type":"system","subtype":"init"}'
 exec sleep 30
 `)
-	tr := newSubprocessTransport(&Options{CLIPath: stub})
+	tr := newTestTransport(t, &Options{CLIPath: stub})
 	tr.gracefulTimeout = 50 * time.Millisecond
 	if err := tr.Connect(t.Context()); err != nil {
 		t.Fatalf("connect: %v", err)
@@ -617,7 +632,7 @@ exec sleep 30
 func TestSubprocessTransportContextCancelKills(t *testing.T) {
 	stub := writeStub(t, `exec sleep 30`)
 	ctx, cancel := context.WithCancel(t.Context())
-	tr := newSubprocessTransport(&Options{CLIPath: stub})
+	tr := newTestTransport(t, &Options{CLIPath: stub})
 	tr.gracefulTimeout = 50 * time.Millisecond
 	if err := tr.Connect(ctx); err != nil {
 		t.Fatalf("connect: %v", err)
@@ -640,7 +655,7 @@ func TestSubprocessTransportContextCancelKills(t *testing.T) {
 func TestSubprocessTransportConnectErrors(t *testing.T) {
 	t.Parallel()
 	// A missing working directory is reported before the process starts.
-	tr := newSubprocessTransport(&Options{CLIPath: "/bin/echo", Cwd: filepath.Join(t.TempDir(), "nope")})
+	tr := newTestTransport(t, &Options{CLIPath: "/bin/echo", Cwd: filepath.Join(t.TempDir(), "nope")})
 	err := tr.Connect(t.Context())
 	var connErr *ConnectionError
 	if !errors.As(err, &connErr) || !strings.Contains(err.Error(), "Working directory") {
@@ -648,22 +663,22 @@ func TestSubprocessTransportConnectErrors(t *testing.T) {
 	}
 
 	// Options.User is refused rather than silently ignored.
-	tr = newSubprocessTransport(&Options{CLIPath: "/bin/echo", User: "nobody"})
+	tr = newTestTransport(t, &Options{CLIPath: "/bin/echo", User: "nobody"})
 	if err := tr.Connect(t.Context()); err == nil || !strings.Contains(err.Error(), "Options.User") {
 		t.Fatalf("error = %v", err)
 	}
 
-	// An option that cannot be rendered is reported from Connect, not
-	// swallowed.
-	tr = newSubprocessTransport(&Options{CLIPath: "/bin/echo", Settings: []string{"x"}})
-	if err := tr.Connect(t.Context()); err == nil || !strings.Contains(err.Error(), "JSON object") {
+	// An option that cannot be rendered is reported before any transport
+	// is built, not swallowed.
+	if _, err := resolveLaunch(&Options{CLIPath: "/bin/echo", Settings: []string{"x"}}); err == nil ||
+		!strings.Contains(err.Error(), "JSON object") {
 		t.Fatalf("error = %v, want a settings encoding error", err)
 	}
 }
 
 func TestSubprocessTransportReadBeforeConnect(t *testing.T) {
 	t.Parallel()
-	tr := newSubprocessTransport(&Options{})
+	tr := newTestTransport(t, &Options{})
 	_, err := collect(t, tr)
 	var connErr *ConnectionError
 	if !errors.As(err, &connErr) {

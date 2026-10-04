@@ -97,10 +97,16 @@ func parseOrigin(data map[string]any) *MessageOrigin {
 // OriginUnclassified rather than discarding the rest of the origin; the raw
 // kind, if any, is kept in Extra.
 func originFromMap(raw map[string]any) MessageOrigin {
-	type alias MessageOrigin
-	var a alias
-	decodeValue(raw, &a)
-	o := MessageOrigin(a)
+	o := MessageOrigin{
+		Kind:         str(raw["kind"]),
+		Server:       str(raw["server"]),
+		From:         str(raw["from"]),
+		Name:         str(raw["name"]),
+		FromSession:  str(raw["fromSession"]),
+		SenderTaskID: str(raw["senderTaskId"]),
+		Body:         str(raw["body"]),
+		Subkind:      str(raw["subkind"]),
+	}
 	// A fractional PID is truncated rather than dropped.
 	o.VerifiedPeerPID, _ = toInt(raw["verifiedPeerPid"])
 	for k, v := range raw {

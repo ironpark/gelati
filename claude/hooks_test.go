@@ -256,7 +256,7 @@ func TestTypedHook(t *testing.T) {
 func TestEngineHookCallbackTypedAndVerbatim(t *testing.T) {
 	t.Parallel()
 	eng, ft := startEngine(t, nil)
-	eng.hookCallbacks["hook_0"] = TypedHook(func(_ context.Context, in *PreToolUseHookInput, _ string, hc HookContext) (HookOutput, error) {
+	eng.cfg.hookCallbacks["hook_0"] = TypedHook(func(_ context.Context, in *PreToolUseHookInput, _ string, hc HookContext) (HookOutput, error) {
 		return HookOutput{
 			TerminalSequence: "\a",
 			Specific:         &PreToolUseHookSpecificOutput{PermissionDecision: PermissionDecisionAsk},

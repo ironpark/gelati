@@ -11,16 +11,6 @@ import (
 // requests the TypeScript SDK deliberately leaves unanswered.
 var errSuppressReply = errors.New("claude: control request left unanswered")
 
-// unansweredSubtypes are inbound requests meant for the machine that serves
-// this session's tools, not for this host; the TypeScript SDK leaves them
-// unanswered so its reply cannot pre-empt the real answerer.
-var unansweredSubtypes = map[string]bool{
-	"remote_tool_call":        true,
-	"remote_plumbing_call":    true,
-	"remote_tools_probe":      true,
-	"remote_tools_reannounce": true,
-}
-
 // ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
@@ -88,13 +78,22 @@ func (e *engine) handleControlRequest(ctx context.Context, requestID string, fra
 	_ = e.writeFrame(ctx, reply)
 }
 
-// dispatchControlRequest runs the handler for one control request subtype.
-func (e *engine) dispatchControlRequest(ctx context.Context, requestID string, request map[string]any) (map[string]any, error) {
+// dispatchControlRequest runs the handler for one control request subtype. A
+// panicking callback becomes an error reply naming the subtype rather than
+// taking the process down.
+func (e *engine) dispatchControlRequest(ctx context.Context, requestID string, request map[string]any) (data map[string]any, err error) {
 	subtype := str(request["subtype"])
-	if unansweredSubtypes[subtype] {
-		return nil, errSuppressReply
-	}
+	defer func() {
+		if r := recover(); r != nil {
+			data, err = nil, fmt.Errorf("%s callback panicked: %v", subtype, r)
+		}
+	}()
 	switch subtype {
+	case "remote_tool_call", "remote_plumbing_call", "remote_tools_probe", "remote_tools_reannounce":
+		// Meant for the machine that serves this session's tools, not for
+		// this host; the TypeScript SDK leaves them unanswered so its reply
+		// cannot pre-empt the real answerer.
+		return nil, errSuppressReply
 	case "can_use_tool":
 		return e.handleCanUseTool(ctx, requestID, request)
 	case "hook_callback":
@@ -108,18 +107,6 @@ func (e *engine) dispatchControlRequest(ctx context.Context, requestID string, r
 	default:
 		return nil, fmt.Errorf("Unsupported control request subtype: %s", subtype)
 	}
-}
-
-// guardCallback runs fn, the part of a handler that calls user code, so a
-// panicking callback becomes an error reply naming what panicked rather than
-// taking the process down.
-func guardCallback(what string, fn func() (map[string]any, error)) (data map[string]any, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			data, err = nil, fmt.Errorf("%s panicked: %v", what, r)
-		}
-	}()
-	return fn()
 }
 
 // callbackReply renders the result of a callback that must either answer or
@@ -145,33 +132,29 @@ func (e *engine) handleCanUseTool(ctx context.Context, requestID string, request
 	}
 	input, _ := request["input"].(map[string]any)
 	permCtx := toolPermissionContext(requestID, request)
-	return guardCallback("can_use_tool callback", func() (map[string]any, error) {
-		result, err := e.cfg.canUseTool(ctx, str(request["tool_name"]), input, permCtx)
-		if err != nil {
-			return nil, err
-		}
-		out, ok := permissionDecisionWire(result, request)
-		if !ok {
-			return nil, fmt.Errorf("permission callback returned %T, want *PermissionResultAllow or *PermissionResultDeny", result)
-		}
-		return out, nil
-	})
+	result, err := e.cfg.canUseTool(ctx, str(request["tool_name"]), input, permCtx)
+	if err != nil {
+		return nil, err
+	}
+	out, ok := permissionReply(result, request)
+	if !ok {
+		return nil, fmt.Errorf("permission callback returned %T, want *PermissionResultAllow or *PermissionResultDeny", result)
+	}
+	return out, nil
 }
 
 func (e *engine) handleHookCallback(ctx context.Context, request map[string]any) (map[string]any, error) {
 	id := str(request["callback_id"])
-	callback, ok := e.hookCallbacks[id]
+	callback, ok := e.cfg.hookCallbacks[id]
 	if !ok {
 		return nil, fmt.Errorf("No hook callback found for ID: %s", id)
 	}
 	input, _ := request["input"].(map[string]any)
-	return guardCallback("hook callback", func() (map[string]any, error) {
-		out, err := callback(ctx, input, str(request["tool_use_id"]), HookContext{Raw: input})
-		if err != nil {
-			return nil, err
-		}
-		return toWireMap(out, "hook output")
-	})
+	out, err := callback(ctx, input, str(request["tool_use_id"]), HookContext{Raw: input})
+	if err != nil {
+		return nil, err
+	}
+	return toWireMap(out, "hook output")
 }
 
 func (e *engine) handleElicitation(ctx context.Context, requestID string, request map[string]any) (map[string]any, error) {
@@ -191,11 +174,8 @@ func (e *engine) handleElicitation(ctx context.Context, requestID string, reques
 		Raw:           request,
 	}
 	req.RequestedSchema, _ = request["requested_schema"].(map[string]any)
-	const what = "elicitation callback"
-	return guardCallback(what, func() (map[string]any, error) {
-		result, err := e.cfg.onElicitation(ctx, req)
-		return callbackReply(what, result, err)
-	})
+	result, err := e.cfg.onElicitation(ctx, req)
+	return callbackReply("elicitation callback", result, err)
 }
 
 func (e *engine) handleUserDialog(ctx context.Context, requestID string, request map[string]any) (map[string]any, error) {
@@ -217,9 +197,6 @@ func (e *engine) handleUserDialog(ctx context.Context, requestID string, request
 		Raw:        request,
 	}
 	req.Payload, _ = request["payload"].(map[string]any)
-	const what = "user dialog callback"
-	return guardCallback(what, func() (map[string]any, error) {
-		result, err := e.cfg.onUserDialog(ctx, req)
-		return callbackReply(what, result, err)
-	})
+	result, err := e.cfg.onUserDialog(ctx, req)
+	return callbackReply("user dialog callback", result, err)
 }

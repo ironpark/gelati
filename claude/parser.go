@@ -308,13 +308,18 @@ func parseSessionKey(v any) *SessionKey {
 // ---------------------------------------------------------------------------
 
 func parseResultMessage(data map[string]any, src []byte) Message {
-	// The timing measurements are members of the result itself.
+	// The timing measurements are members of the result itself. The usage,
+	// errors and origin come from the decoded frame map instead.
 	var w struct {
 		ResultMessage
 		ResultTiming
+		Usage  skipValue `json:"usage"`
+		Errors skipValue `json:"errors"`
+		Origin skipValue `json:"origin"`
 	}
 	decodeLenient(src, &w)
 	m := &w.ResultMessage
+	m.Usage, _ = data["usage"].(map[string]any)
 	m.Errors = normalizeResultErrors(data["errors"])
 	m.Origin = parseOrigin(data)
 	m.Data = data
@@ -360,8 +365,8 @@ func parseRateLimitEvent(data map[string]any, src []byte) Message {
 	info, _ := data["rate_limit_info"].(map[string]any)
 	rli := &m.RateLimitInfo
 	rli.Raw = info
-	// Timestamps are read from the map so fractional seconds still parse,
-	// and a value that is not a number leaves them nil.
+	// Timestamps are read from the map so fractional seconds still parse
+	// (encoding/json refuses them for an integer field).
 	rli.ResetsAt, rli.OverageResetsAt = int64Ptr(info["resetsAt"]), int64Ptr(info["overageResetsAt"])
 	return m
 }

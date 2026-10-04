@@ -46,9 +46,8 @@ type runTracker struct {
 	mu             sync.Mutex
 	sessionState   string
 	resultReceived bool
-	// ended is set while the run is over; endCh is closed when it ends and
-	// replaced when work reopens it.
-	ended bool
+	// endCh is closed when the run ends, so the run is over while it is
+	// closed, and replaced when work reopens it.
 	endCh chan struct{}
 	// final is set once nothing can reopen the run.
 	final        bool
@@ -168,9 +167,10 @@ func (r *runTracker) finalize() {
 // wait blocks until the run ends, the engine closes or ctx is done.
 func (r *runTracker) wait(ctx context.Context) error {
 	r.mu.Lock()
-	ended, ch := r.ended, r.endCh
+	ch := r.endCh
 	r.mu.Unlock()
-	if ended {
+	if isDone(ch) {
+		// Ended runs win over a done ctx.
 		return nil
 	}
 	select {
@@ -195,18 +195,15 @@ func (r *runTracker) maybeEndLocked() {
 
 func (r *runTracker) endLocked() {
 	r.clearCeilingLocked()
-	if r.ended {
-		return
+	if !isDone(r.endCh) {
+		close(r.endCh)
 	}
-	r.ended = true
-	close(r.endCh)
 }
 
 // reopenLocked makes a later wait for the run end wait for new work. A
 // waiter the ended run already woke is unaffected.
 func (r *runTracker) reopenLocked() {
-	if r.ended && !r.final {
-		r.ended = false
+	if isDone(r.endCh) && !r.final {
 		r.endCh = make(chan struct{})
 	}
 }
@@ -215,7 +212,7 @@ func (r *runTracker) reopenLocked() {
 // CLI reporting "idle" or starting a new turn.
 func (r *runTracker) armCeilingLocked() {
 	r.clearCeilingLocked()
-	if r.ended || r.final || r.ceiling <= 0 || isDone(r.closed) {
+	if isDone(r.endCh) || r.final || r.ceiling <= 0 || isDone(r.closed) {
 		return
 	}
 	gen := r.ceilingGen
