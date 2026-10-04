@@ -2,7 +2,6 @@ package claude
 
 import (
 	"cmp"
-	"encoding/json"
 	"maps"
 	"math"
 	"slices"
@@ -33,49 +32,18 @@ var interruptMarkers = [...]string{
 	"[Tool call skipped: the turn ended to deliver the message that follows before this call ran. Nothing refused it; re-run it if still needed.]",
 }
 
-// ---------------------------------------------------------------------------
-// JS-semantics helpers
-// ---------------------------------------------------------------------------
-
-// jsTruthy reports JavaScript truthiness for a decoded JSON value (unlike
-// truthy, empty arrays and objects are truthy).
-func jsTruthy(v any) bool {
-	switch x := v.(type) {
-	case nil:
-		return false
-	case bool:
-		return x
-	case string:
-		return x != ""
-	case float64:
-		return x != 0 && x == x
-	case int:
-		return x != 0
-	case int64:
-		return x != 0
-	}
-	return true
+// transcriptEntryTypes are the entry types that carry uuid + parentUuid
+// chain links.
+var transcriptEntryTypes = map[string]bool{
+	"user": true, "assistant": true, "progress": true, "system": true, "attachment": true,
 }
 
-// jsStrictEqual is JavaScript === for two possibly absent JSON values:
-// absent (undefined) equals only absent, objects and arrays never compare
-// equal (they are distinct references after parsing).
-func jsStrictEqual(a any, aok bool, b any, bok bool) bool {
-	if aok != bok {
-		return false
-	}
-	if !aok {
-		return true
-	}
-	switch a.(type) {
-	case map[string]any, []any:
-		return false
-	}
-	switch b.(type) {
-	case map[string]any, []any:
-		return false
-	}
-	return a == b
+// isTranscriptEntry reports whether entry is a chain-linked transcript
+// message: a transcript entry type with a string uuid.
+func isTranscriptEntry(entry map[string]any) bool {
+	t, _ := entry["type"].(string)
+	_, ok := entry["uuid"].(string)
+	return ok && transcriptEntryTypes[t]
 }
 
 // entryUUID returns the entry's uuid; chain entries always have one.
@@ -87,16 +55,6 @@ func entryParent(e map[string]any) string { return str(e["parentUuid"]) }
 func isUserOrAssistant(e map[string]any) bool {
 	t := e["type"]
 	return t == "user" || t == "assistant"
-}
-
-// isChainEntryType reports whether t is one of the chain-linked transcript
-// entry types read by GetSessionMessages.
-func isChainEntryType(t any) bool {
-	switch t {
-	case "user", "assistant", "progress", "system", "attachment":
-		return true
-	}
-	return false
 }
 
 // withField returns a shallow copy of e with key set to v, or removed when
@@ -235,22 +193,27 @@ func normalizeOrigin(origin any) any {
 	return out
 }
 
+// queuedCommandAttachment returns the attachment of a queued_command
+// attachment entry; ok is false for any other entry.
+func queuedCommandAttachment(e map[string]any) (att map[string]any, ok bool) {
+	if e["type"] != "attachment" {
+		return nil, false
+	}
+	att, ok = e["attachment"].(map[string]any)
+	if !ok || att["type"] != "queued_command" {
+		return nil, false
+	}
+	return att, true
+}
+
 // queuedCommandField returns a non-empty string field of a queued_command
 // attachment entry (TS qL()).
 func queuedCommandField(e map[string]any, field string) string {
-	if e["type"] != "attachment" {
-		return ""
-	}
-	att, ok := e["attachment"].(map[string]any)
-	if !ok || att["type"] != "queued_command" {
+	att, ok := queuedCommandAttachment(e)
+	if !ok {
 		return ""
 	}
 	return str(att[field])
-}
-
-func isQueuedCommandAttachment(e map[string]any) bool {
-	att, ok := e["attachment"].(map[string]any)
-	return e["type"] == "attachment" && ok && att["type"] == "queued_command"
 }
 
 // ---------------------------------------------------------------------------
@@ -443,18 +406,6 @@ func (m *entryMap) relinkPreservedSegment(ps map[string]any) {
 	}
 }
 
-func isString(v any) bool {
-	_, ok := v.(string)
-	return ok
-}
-
-// jsJSONStringify serializes a decoded JSON value for equality checks.
-// Keys are sorted, so (unlike JSON.stringify) key order is ignored.
-func jsJSONStringify(v any) string {
-	b, _ := json.Marshal(v)
-	return string(b)
-}
-
 // chainResult is the reconstructed conversation.
 type chainResult struct {
 	chain []map[string]any // root first, including recovered siblings
@@ -464,15 +415,11 @@ type chainResult struct {
 	byUUID  *entryMap
 }
 
-// buildConversationChain picks the conversation's leaf and walks its
-// (relinked) parentUuid links back to the root, returning entries root
-// first. The leaf is the user/assistant message reached first from the
-// latest main-chain terminal: an entry that is not a sidechain, team,
-// progress or fork-briefing entry and that no such entry points at. When
-// no terminal reaches one, the latest main (not sidechain, team or meta)
-// user/assistant leaf of any terminal is used. Assistant messages split
-// across entries that fell off the chain, and their tool results, are
-// spliced back in after the chain's copy of the message.
+// buildConversationChain picks the conversation's leaf (see selectLeaf) and
+// walks its (relinked) parentUuid links back to the root, returning entries
+// root first. Assistant messages split across entries that fell off the
+// chain, and their tool results, are spliced back in after the chain's copy
+// of the message.
 func buildConversationChain(entries []map[string]any) chainResult {
 	if len(entries) == 0 {
 		return chainResult{}
@@ -480,6 +427,27 @@ func buildConversationChain(entries []map[string]any) chainResult {
 	m := newEntryMap(entries)
 	m.relinkCompactBoundaries()
 
+	leaf := m.selectLeaf(entries)
+	if leaf == nil {
+		return chainResult{byUUID: m}
+	}
+	var chain []map[string]any
+	inChain := map[string]bool{}
+	for cur := m.byUUID[entryUUID(leaf)]; cur != nil && !inChain[entryUUID(cur)]; cur = m.parentOf(cur) {
+		inChain[entryUUID(cur)] = true
+		chain = append(chain, cur)
+	}
+	slices.Reverse(chain)
+	chain = recoverSplitAssistantSiblings(m, chain, inChain)
+	return chainResult{chain: chain, leaf: leaf, inChain: inChain, byUUID: m}
+}
+
+// selectLeaf picks the conversation's leaf: the user/assistant message
+// reached first from the latest main-chain terminal (see
+// mainTerminalLeaf), else the latest leaf of any terminal (see
+// fallbackLeaf). It returns nil when no terminal reaches a user/assistant
+// message. Recency is the position in entries.
+func (m *entryMap) selectLeaf(entries []map[string]any) map[string]any {
 	position := make(map[string]int, len(entries))
 	for i, e := range entries {
 		position[entryUUID(e)] = i
@@ -490,107 +458,119 @@ func buildConversationChain(entries []map[string]any) chainResult {
 		}
 		return -1
 	}
+	if leaf := m.mainTerminalLeaf(pos); leaf != nil {
+		return leaf
+	}
+	return m.fallbackLeaf(pos)
+}
 
-	isMain := func(e map[string]any) bool {
-		if jsTruthy(e["isSidechain"]) || jsTruthy(e["teamName"]) || e["type"] == "progress" {
+// isMainChainEntry reports whether e belongs to the main chain: it is not a
+// sidechain, team, progress or fork-briefing entry.
+func isMainChainEntry(e map[string]any) bool {
+	if jsTruthy(e["isSidechain"]) || jsTruthy(e["teamName"]) || e["type"] == "progress" {
+		return false
+	}
+	if e["type"] == "attachment" {
+		if att, ok := e["attachment"].(map[string]any); ok && att["type"] == "fork_briefing" {
 			return false
 		}
-		if e["type"] == "attachment" {
-			if att, ok := e["attachment"].(map[string]any); ok && att["type"] == "fork_briefing" {
-				return false
-			}
-		}
-		return true
 	}
-	parents := map[string]bool{}
+	return true
+}
+
+// mainTerminalLeaf walks back from each main-chain terminal (a main-chain
+// entry that no main-chain entry points at), latest first, and returns the
+// first user/assistant message reached, or nil. Entries walked from an
+// earlier terminal are not walked again.
+func (m *entryMap) mainTerminalLeaf(pos func(map[string]any) int) map[string]any {
 	mainParents := map[string]bool{}
 	for _, u := range m.order {
 		e := m.byUUID[u]
-		if p := entryParent(e); p != "" {
-			parents[p] = true
-			if isMain(e) {
-				mainParents[p] = true
-			}
+		if p := entryParent(e); p != "" && isMainChainEntry(e) {
+			mainParents[p] = true
 		}
 	}
 	var mainTerminals []map[string]any
 	for _, u := range m.order {
-		if e := m.byUUID[u]; isMain(e) && !mainParents[u] {
+		if e := m.byUUID[u]; isMainChainEntry(e) && !mainParents[u] {
 			mainTerminals = append(mainTerminals, e)
 		}
 	}
 	slices.SortStableFunc(mainTerminals, func(a, b map[string]any) int { return pos(b) - pos(a) })
 
-	var leaf map[string]any
 	visited := map[string]bool{}
 	for _, terminal := range mainTerminals {
 		var walked []string
 		seen := map[string]bool{}
 		for cur := terminal; cur != nil && !visited[entryUUID(cur)] && !seen[entryUUID(cur)]; cur = m.parentOf(cur) {
 			if isUserOrAssistant(cur) {
-				leaf = cur
-				break
+				return cur
 			}
 			seen[entryUUID(cur)] = true
 			walked = append(walked, entryUUID(cur))
-		}
-		if leaf != nil {
-			break
 		}
 		for _, u := range walked {
 			visited[u] = true
 		}
 	}
+	return nil
+}
 
-	if leaf == nil {
-		var leaves []map[string]any
-		for _, u := range m.order {
-			if parents[u] {
-				continue
-			}
-			seen := map[string]bool{}
-			for cur := m.byUUID[u]; cur != nil && !seen[entryUUID(cur)]; cur = m.parentOf(cur) {
-				seen[entryUUID(cur)] = true
-				if isUserOrAssistant(cur) {
-					leaves = append(leaves, cur)
-					break
-				}
-			}
-		}
-		if len(leaves) == 0 {
-			return chainResult{byUUID: m}
-		}
-		latest := func(c []map[string]any) map[string]any {
-			best := c[0]
-			for _, e := range c[1:] {
-				if pos(e) > pos(best) {
-					best = e
-				}
-			}
-			return best
-		}
-		var main []map[string]any
-		for _, e := range leaves {
-			if !jsTruthy(e["isSidechain"]) && !jsTruthy(e["teamName"]) && !jsTruthy(e["isMeta"]) {
-				main = append(main, e)
-			}
-		}
-		if len(main) > 0 {
-			leaf = latest(main)
-		} else {
-			leaf = latest(leaves)
+// fallbackLeaf returns the latest of the user/assistant messages reached
+// first from each terminal (an entry nothing points at), preferring main
+// (not sidechain, team or meta) messages, or nil when there is none.
+func (m *entryMap) fallbackLeaf(pos func(map[string]any) int) map[string]any {
+	parents := map[string]bool{}
+	for _, u := range m.order {
+		if p := entryParent(m.byUUID[u]); p != "" {
+			parents[p] = true
 		}
 	}
-
-	var chain []map[string]any
-	inChain := map[string]bool{}
-	for cur := m.byUUID[entryUUID(leaf)]; cur != nil && !inChain[entryUUID(cur)]; cur = m.parentOf(cur) {
-		inChain[entryUUID(cur)] = true
-		chain = append(chain, cur)
+	var leaves []map[string]any
+	for _, u := range m.order {
+		if parents[u] {
+			continue
+		}
+		seen := map[string]bool{}
+		for cur := m.byUUID[u]; cur != nil && !seen[entryUUID(cur)]; cur = m.parentOf(cur) {
+			seen[entryUUID(cur)] = true
+			if isUserOrAssistant(cur) {
+				leaves = append(leaves, cur)
+				break
+			}
+		}
 	}
-	slices.Reverse(chain)
-	chain = recoverSplitAssistantSiblings(m, chain, inChain)
-	return chainResult{chain: chain, leaf: leaf, inChain: inChain, byUUID: m}
+	if len(leaves) == 0 {
+		return nil
+	}
+	latest := func(c []map[string]any) map[string]any {
+		best := c[0]
+		for _, e := range c[1:] {
+			if pos(e) > pos(best) {
+				best = e
+			}
+		}
+		return best
+	}
+	var main []map[string]any
+	for _, e := range leaves {
+		if !jsTruthy(e["isSidechain"]) && !jsTruthy(e["teamName"]) && !jsTruthy(e["isMeta"]) {
+			main = append(main, e)
+		}
+	}
+	if len(main) > 0 {
+		return latest(main)
+	}
+	return latest(leaves)
+}
+
+// ---------------------------------------------------------------------------
+// Split assistant messages (TS VSe)
+// ---------------------------------------------------------------------------
+
+// cmpTimestamp orders entries by their timestamp strings.
+func cmpTimestamp(a, b map[string]any) int {
+	return strings.Compare(str(a["timestamp"]), str(b["timestamp"]))
 }
 
 // recoverSplitAssistantSiblings splices back the parts of a streamed
@@ -613,86 +593,13 @@ func recoverSplitAssistantSiblings(m *entryMap, chain []map[string]any, inChain 
 			chainByMsgID[id] = e
 		}
 	}
-
-	byMsgID := map[string][]map[string]any{}
-	// toolUseOwner maps a tool_use id to its assistant entry, or nil when
-	// entries of different messages claim it.
-	toolUseOwner := map[string]map[string]any{}
-	var toolResults []map[string]any
-	for _, u := range m.order {
-		e := m.byUUID[u]
-		if id := assistantMessageID(e); id != "" {
-			byMsgID[id] = append(byMsgID[id], e)
-			for _, tu := range blockStrings(e, "tool_use", "id") {
-				prev, seen := toolUseOwner[tu]
-				if !seen || (prev != nil && assistantMessageID(prev) == id) {
-					toolUseOwner[tu] = e
-				} else {
-					toolUseOwner[tu] = nil
-				}
-			}
-		} else if isToolResultUser(e) {
-			toolResults = append(toolResults, e)
-		}
-	}
-
-	children := map[string][]map[string]any{}
-	linked := map[string]bool{}
-	link := func(parent string, e map[string]any) {
-		k := parent + "\n" + entryUUID(e)
-		if linked[k] {
-			return
-		}
-		linked[k] = true
-		children[parent] = append(children[parent], e)
-	}
-	sameScope := func(a, b map[string]any) bool {
-		as, aok := a["isSidechain"]
-		bs, bok := b["isSidechain"]
-		if !aok || as == nil {
-			as, aok = false, true
-		}
-		if !bok || bs == nil {
-			bs, bok = false, true
-		}
-		aa, aaok := a["agentId"]
-		ba, baok := b["agentId"]
-		return jsStrictEqual(as, aok, bs, bok) && jsStrictEqual(aa, aaok, ba, baok)
-	}
-	for _, e := range toolResults {
-		link(entryParent(e), e)
-		if src, ok := e["sourceToolAssistantUUID"].(string); ok && src != entryParent(e) {
-			if a := m.byUUID[src]; a != nil && sameScope(e, a) {
-				link(entryUUID(a), e)
-			}
-		}
-		for _, id := range blockStrings(e, "tool_result", "tool_use_id") {
-			if a := toolUseOwner[id]; a != nil && sameScope(e, a) {
-				link(entryUUID(a), e)
-			}
-		}
-	}
-
+	x := indexSplitSiblings(m)
 	answered := map[string]bool{}
 	for _, e := range chain {
 		for _, id := range blockStrings(e, "tool_result", "tool_use_id") {
 			answered[id] = true
 		}
 	}
-	var keyPos map[string]int
-	mapPos := func(e map[string]any) int {
-		if keyPos == nil {
-			keyPos = make(map[string]int, len(m.order))
-			for i, u := range m.order {
-				keyPos[u] = i
-			}
-		}
-		if p, ok := keyPos[entryUUID(e)]; ok {
-			return p
-		}
-		return math.MaxInt
-	}
-	byTimestamp := func(a, b map[string]any) int { return strings.Compare(str(a["timestamp"]), str(b["timestamp"])) }
 
 	done := map[string]bool{}
 	extras := map[string][]map[string]any{}
@@ -703,63 +610,10 @@ func recoverSplitAssistantSiblings(m *entryMap, chain []map[string]any, inChain 
 			continue
 		}
 		done[id] = true
-		parts := byMsgID[id]
-		if parts == nil {
-			parts = []map[string]any{e}
-		}
-		partUUIDs := map[string]bool{}
-		for _, p := range parts {
-			partUUIDs[entryUUID(p)] = true
-		}
-		var offChain, results, unlinked []map[string]any
-		for _, p := range parts {
-			if !inChain[entryUUID(p)] {
-				offChain = append(offChain, p)
-			}
-		}
-		seen := map[string]bool{}
-		for _, p := range parts {
-			for _, c := range children[entryUUID(p)] {
-				cu := entryUUID(c)
-				if inChain[cu] || seen[cu] {
-					continue
-				}
-				seen[cu] = true
-				if partUUIDs[entryParent(c)] {
-					results = append(results, c)
-				} else {
-					unlinked = append(unlinked, c)
-				}
-			}
-		}
-		if len(unlinked) > 0 {
-			claimed := maps.Clone(answered)
-			for _, r := range results {
-				for _, id := range blockStrings(r, "tool_result", "tool_use_id") {
-					claimed[id] = true
-				}
-			}
-			slices.SortStableFunc(unlinked, func(a, b map[string]any) int { return cmp.Compare(mapPos(a), mapPos(b)) })
-			for _, c := range unlinked {
-				ids := blockStrings(c, "tool_result", "tool_use_id")
-				if !slices.ContainsFunc(ids, func(id string) bool {
-					owner := toolUseOwner[id]
-					return !claimed[id] && owner != nil && partUUIDs[entryUUID(owner)]
-				}) {
-					continue
-				}
-				for _, id := range ids {
-					claimed[id] = true
-				}
-				results = append(results, c)
-			}
-		}
-		if len(offChain) == 0 && len(results) == 0 {
+		spliced := x.offChainSiblings(id, e, inChain, answered)
+		if len(spliced) == 0 {
 			continue
 		}
-		slices.SortStableFunc(offChain, byTimestamp)
-		slices.SortStableFunc(results, byTimestamp)
-		spliced := append(offChain, results...)
 		for _, s := range spliced {
 			inChain[entryUUID(s)] = true
 		}
@@ -777,6 +631,182 @@ func recoverSplitAssistantSiblings(m *entryMap, chain []map[string]any, inChain 
 	}
 	return out
 }
+
+// splitSiblingIndex indexes an entryMap's assistant parts and tool results
+// for recoverSplitAssistantSiblings.
+type splitSiblingIndex struct {
+	m *entryMap
+	// byMsgID holds the assistant entries of each message.id, in map order.
+	byMsgID map[string][]map[string]any
+	// toolUseOwner maps a tool_use id to its assistant entry, or nil when
+	// entries of different messages claim it.
+	toolUseOwner map[string]map[string]any
+	// children holds the tool results linked to each assistant uuid.
+	children map[string][]map[string]any
+	// keyPos is the map position of each uuid, built on first use.
+	keyPos map[string]int
+}
+
+// indexSplitSiblings builds the index. A tool result is linked to its
+// parent, to its sourceToolAssistantUUID and to the owners of the tool uses
+// it answers, the latter two only within the same sidechain scope.
+func indexSplitSiblings(m *entryMap) *splitSiblingIndex {
+	x := &splitSiblingIndex{
+		m:            m,
+		byMsgID:      map[string][]map[string]any{},
+		toolUseOwner: map[string]map[string]any{},
+		children:     map[string][]map[string]any{},
+	}
+	var toolResults []map[string]any
+	for _, u := range m.order {
+		e := m.byUUID[u]
+		if id := assistantMessageID(e); id != "" {
+			x.byMsgID[id] = append(x.byMsgID[id], e)
+			for _, tu := range blockStrings(e, "tool_use", "id") {
+				prev, seen := x.toolUseOwner[tu]
+				if !seen || (prev != nil && assistantMessageID(prev) == id) {
+					x.toolUseOwner[tu] = e
+				} else {
+					x.toolUseOwner[tu] = nil
+				}
+			}
+		} else if isToolResultUser(e) {
+			toolResults = append(toolResults, e)
+		}
+	}
+
+	linked := map[string]bool{}
+	link := func(parent string, e map[string]any) {
+		k := parent + "\n" + entryUUID(e)
+		if linked[k] {
+			return
+		}
+		linked[k] = true
+		x.children[parent] = append(x.children[parent], e)
+	}
+	for _, e := range toolResults {
+		link(entryParent(e), e)
+		if src, ok := e["sourceToolAssistantUUID"].(string); ok && src != entryParent(e) {
+			if a := m.byUUID[src]; a != nil && sameSidechainScope(e, a) {
+				link(entryUUID(a), e)
+			}
+		}
+		for _, id := range blockStrings(e, "tool_result", "tool_use_id") {
+			if a := x.toolUseOwner[id]; a != nil && sameSidechainScope(e, a) {
+				link(entryUUID(a), e)
+			}
+		}
+	}
+	return x
+}
+
+// sameSidechainScope reports whether two entries share isSidechain (absent
+// or null counting as false) and agentId.
+func sameSidechainScope(a, b map[string]any) bool {
+	as, aok := a["isSidechain"]
+	bs, bok := b["isSidechain"]
+	if !aok || as == nil {
+		as, aok = false, true
+	}
+	if !bok || bs == nil {
+		bs, bok = false, true
+	}
+	aa, aaok := a["agentId"]
+	ba, baok := b["agentId"]
+	return jsStrictEqual(as, aok, bs, bok) && jsStrictEqual(aa, aaok, ba, baok)
+}
+
+// mapPos returns the map position of e, or math.MaxInt when it is not in the
+// map.
+func (x *splitSiblingIndex) mapPos(e map[string]any) int {
+	if x.keyPos == nil {
+		x.keyPos = make(map[string]int, len(x.m.order))
+		for i, u := range x.m.order {
+			x.keyPos[u] = i
+		}
+	}
+	if p, ok := x.keyPos[entryUUID(e)]; ok {
+		return p
+	}
+	return math.MaxInt
+}
+
+// offChainSiblings returns what to splice after the chain's copy e of
+// message id: its parts that are off the chain, then the off-chain tool
+// results answering them, each group sorted by timestamp. answered holds the
+// tool_use ids the chain already answers.
+func (x *splitSiblingIndex) offChainSiblings(id string, e map[string]any, inChain, answered map[string]bool) []map[string]any {
+	parts := x.byMsgID[id]
+	if parts == nil {
+		parts = []map[string]any{e}
+	}
+	partUUIDs := map[string]bool{}
+	for _, p := range parts {
+		partUUIDs[entryUUID(p)] = true
+	}
+	var offChain, results, unlinked []map[string]any
+	for _, p := range parts {
+		if !inChain[entryUUID(p)] {
+			offChain = append(offChain, p)
+		}
+	}
+	seen := map[string]bool{}
+	for _, p := range parts {
+		for _, c := range x.children[entryUUID(p)] {
+			cu := entryUUID(c)
+			if inChain[cu] || seen[cu] {
+				continue
+			}
+			seen[cu] = true
+			if partUUIDs[entryParent(c)] {
+				results = append(results, c)
+			} else {
+				unlinked = append(unlinked, c)
+			}
+		}
+	}
+	if len(unlinked) > 0 {
+		results = x.claimUnlinkedResults(unlinked, results, partUUIDs, answered)
+	}
+	if len(offChain) == 0 && len(results) == 0 {
+		return nil
+	}
+	slices.SortStableFunc(offChain, cmpTimestamp)
+	slices.SortStableFunc(results, cmpTimestamp)
+	return append(offChain, results...)
+}
+
+// claimUnlinkedResults appends to results, in map order, each tool result of
+// unlinked (linked to the message only through a tool use id or
+// sourceToolAssistantUUID) that answers one of the message's tool uses not
+// yet answered by the chain, by results or by an earlier claim.
+func (x *splitSiblingIndex) claimUnlinkedResults(unlinked, results []map[string]any, partUUIDs, answered map[string]bool) []map[string]any {
+	claimed := maps.Clone(answered)
+	for _, r := range results {
+		for _, id := range blockStrings(r, "tool_result", "tool_use_id") {
+			claimed[id] = true
+		}
+	}
+	slices.SortStableFunc(unlinked, func(a, b map[string]any) int { return cmp.Compare(x.mapPos(a), x.mapPos(b)) })
+	for _, c := range unlinked {
+		ids := blockStrings(c, "tool_result", "tool_use_id")
+		if !slices.ContainsFunc(ids, func(id string) bool {
+			owner := x.toolUseOwner[id]
+			return !claimed[id] && owner != nil && partUUIDs[entryUUID(owner)]
+		}) {
+			continue
+		}
+		for _, id := range ids {
+			claimed[id] = true
+		}
+		results = append(results, c)
+	}
+	return results
+}
+
+// ---------------------------------------------------------------------------
+// Trailing queued commands (TS QSe)
+// ---------------------------------------------------------------------------
 
 // trailingQueuedCommands returns the queued_command attachments hanging
 // off the leaf through non-message entries: commands queued after the last
@@ -813,7 +843,6 @@ func trailingQueuedCommands(entries []map[string]any, res chainResult) []map[str
 			abandoned[entryUUID(p)] = true
 		}
 	}
-	byTimestamp := func(a, b map[string]any) int { return strings.Compare(str(a["timestamp"]), str(b["timestamp"])) }
 
 	var out []map[string]any
 	stack := []map[string]any{res.leaf}
@@ -826,7 +855,7 @@ func trailingQueuedCommands(entries []map[string]any, res chainResult) []map[str
 				continue
 			}
 			seen[entryUUID(d)] = true
-			if isQueuedCommandAttachment(d) && !abandoned[entryUUID(d)] {
+			if _, ok := queuedCommandAttachment(d); ok && !abandoned[entryUUID(d)] {
 				out = append(out, d)
 			}
 		}
@@ -834,7 +863,7 @@ func trailingQueuedCommands(entries []map[string]any, res chainResult) []map[str
 		kids := nonMessageChildren[entryUUID(d)]
 		if len(kids) > 1 {
 			kids = slices.Clone(kids)
-			slices.SortStableFunc(kids, byTimestamp)
+			slices.SortStableFunc(kids, cmpTimestamp)
 		}
 		for i := len(kids) - 1; i >= 0; i-- {
 			if !seen[entryUUID(kids[i])] {
@@ -990,22 +1019,23 @@ func isForwardedIntent(att map[string]any) bool {
 // user message it stands for (TS JSe), or returns e unchanged. uuids holds
 // the uuids already present and is extended.
 func queuedCommandAsUser(e map[string]any, render bool, uuids map[string]bool, keepMeta bool) map[string]any {
-	if !render || e["type"] != "attachment" {
+	if !render {
 		return e
 	}
-	att, ok := e["attachment"].(map[string]any)
-	if !ok || att == nil {
+	att, ok := queuedCommandAttachment(e)
+	if !ok {
 		return e
 	}
 	var origin any
-	if o, ok := att["origin"].(map[string]any); ok && isString(o["kind"]) {
-		origin = o
+	if o, ok := att["origin"].(map[string]any); ok {
+		if _, kindOK := o["kind"].(string); kindOK {
+			origin = o
+		}
 	}
 	prompt := att["prompt"]
 	_, promptIsString := prompt.(string)
 	_, promptIsArray := prompt.([]any)
-	if att["type"] != "queued_command" || (jsTruthy(att["isMeta"]) && !keepMeta && !keepsMetaOrigin(origin)) ||
-		(!promptIsString && !promptIsArray) {
+	if (jsTruthy(att["isMeta"]) && !keepMeta && !keepsMetaOrigin(origin)) || (!promptIsString && !promptIsArray) {
 		return e
 	}
 	if isForwardedIntent(att) {
@@ -1124,7 +1154,7 @@ func sessionMessagesFromParsed(parsed []map[string]any, includeSystem bool) []Se
 			continue
 		}
 		tracker.observe(e)
-		if _, ok := e["uuid"].(string); ok && isChainEntryType(e["type"]) {
+		if isTranscriptEntry(e) {
 			entries = append(entries, e)
 		}
 	}

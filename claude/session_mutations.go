@@ -1,7 +1,6 @@
 package claude
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,12 +10,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
-	"strconv"
 	"strings"
-	"sync"
 	"syscall"
-	"time"
-	"unicode"
 )
 
 // Session mutations: rename, tag, delete and fork, for local transcripts and
@@ -92,6 +87,85 @@ func normalizeSessionTag(tag string) (string, error) {
 }
 
 // ---------------------------------------------------------------------------
+// Rename and tag, shared by the filesystem and SessionStore paths
+// ---------------------------------------------------------------------------
+
+// metadataSink appends one typed metadata entry, given as ordered fields, to
+// a session: to its local transcript or to a SessionStore.
+type metadataSink interface {
+	appendMetadata(sessionID string, fields []jsonField) error
+}
+
+// renameSessionTo validates and normalizes a rename and appends the
+// custom-title entry to sink.
+func renameSessionTo(sink metadataSink, sessionID, title string) error {
+	if !validateUUID(sessionID) {
+		return invalidSessionIDError(sessionID)
+	}
+	stripped, err := normalizeSessionTitle(title)
+	if err != nil {
+		return err
+	}
+	return sink.appendMetadata(sessionID, []jsonField{
+		{"type", "custom-title"},
+		{"customTitle", stripped},
+		{"sessionId", sessionID},
+	})
+}
+
+// tagSessionTo validates and normalizes a tag and appends the tag entry to
+// sink.
+func tagSessionTo(sink metadataSink, sessionID, tag string) error {
+	if !validateUUID(sessionID) {
+		return invalidSessionIDError(sessionID)
+	}
+	tag, err := normalizeSessionTag(tag)
+	if err != nil {
+		return err
+	}
+	return sink.appendMetadata(sessionID, []jsonField{
+		{"type", "tag"},
+		{"tag", tag},
+		{"sessionId", sessionID},
+	})
+}
+
+// localMetadataSink appends metadata entries as JSONL lines to the local
+// transcript of a session (see appendToSession).
+type localMetadataSink struct {
+	sessions  localSessions
+	directory string
+}
+
+func (k localMetadataSink) appendMetadata(sessionID string, fields []jsonField) error {
+	line, err := pyJSONObject(fields)
+	if err != nil {
+		return err
+	}
+	return k.sessions.appendToSession(sessionID, line+"\n", k.directory)
+}
+
+// storeMetadataSink appends metadata entries to a SessionStore under the
+// project key of directory. Each entry gets a fresh uuid and timestamp for
+// the store's idempotency contract.
+type storeMetadataSink struct {
+	ctx       context.Context
+	store     SessionStore
+	directory string
+}
+
+func (k storeMetadataSink) appendMetadata(sessionID string, fields []jsonField) error {
+	entry := make(SessionStoreEntry, len(fields)+2)
+	for _, f := range fields {
+		entry[f.key] = f.value
+	}
+	entry["uuid"] = randomUUID()
+	entry["timestamp"] = pyISONowUTC()
+	key := SessionKey{ProjectKey: ProjectKeyForDirectory(k.directory), SessionID: sessionID}
+	return k.store.Append(k.ctx, key, []SessionStoreEntry{entry})
+}
+
+// ---------------------------------------------------------------------------
 // Local transcripts
 // ---------------------------------------------------------------------------
 
@@ -111,26 +185,12 @@ func normalizeSessionTag(tag string) (string, error) {
 // wrapping ErrSessionNotFound when no transcript is found; I/O errors are
 // returned as-is.
 func RenameSession(sessionID, title, directory string) error {
-	return renameSessionIn(projectsDir(nil), sessionID, title, directory)
+	return localSessionsFromEnv().renameSession(sessionID, title, directory)
 }
 
-func renameSessionIn(root, sessionID, title, directory string) error {
-	if !validateUUID(sessionID) {
-		return invalidSessionIDError(sessionID)
-	}
-	stripped, err := normalizeSessionTitle(title)
-	if err != nil {
-		return err
-	}
-	line, err := pyJSONObject([]jsonField{
-		{"type", "custom-title"},
-		{"customTitle", stripped},
-		{"sessionId", sessionID},
-	})
-	if err != nil {
-		return err
-	}
-	return appendToSession(root, sessionID, line+"\n", directory)
+// renameSession implements RenameSession.
+func (s localSessions) renameSession(sessionID, title, directory string) error {
+	return renameSessionTo(localMetadataSink{s, directory}, sessionID, title)
 }
 
 // TagSession tags a session by appending a tag entry to its transcript;
@@ -147,26 +207,12 @@ func renameSessionIn(root, sessionID, title, directory string) error {
 //
 // directory and the errors are as for RenameSession.
 func TagSession(sessionID, tag, directory string) error {
-	return tagSessionIn(projectsDir(nil), sessionID, tag, directory)
+	return localSessionsFromEnv().tagSession(sessionID, tag, directory)
 }
 
-func tagSessionIn(root, sessionID, tag, directory string) error {
-	if !validateUUID(sessionID) {
-		return invalidSessionIDError(sessionID)
-	}
-	tag, err := normalizeSessionTag(tag)
-	if err != nil {
-		return err
-	}
-	line, err := pyJSONObject([]jsonField{
-		{"type", "tag"},
-		{"tag", tag},
-		{"sessionId", sessionID},
-	})
-	if err != nil {
-		return err
-	}
-	return appendToSession(root, sessionID, line+"\n", directory)
+// tagSession implements TagSession.
+func (s localSessions) tagSession(sessionID, tag, directory string) error {
+	return tagSessionTo(localMetadataSink{s, directory}, sessionID, tag)
 }
 
 // DeleteSession permanently deletes a session's transcript, together with
@@ -179,14 +225,15 @@ func tagSessionIn(root, sessionID, tag, directory string) error {
 // when sessionID is not a UUID and one wrapping ErrSessionNotFound when no
 // non-empty transcript is found.
 func DeleteSession(sessionID, directory string) error {
-	return deleteSessionIn(projectsDir(nil), sessionID, directory)
+	return localSessionsFromEnv().deleteSession(sessionID, directory)
 }
 
-func deleteSessionIn(root, sessionID, directory string) error {
+// deleteSession implements DeleteSession.
+func (s localSessions) deleteSession(sessionID, directory string) error {
 	if !validateUUID(sessionID) {
 		return invalidSessionIDError(sessionID)
 	}
-	path := resolveSessionFilePath(root, sessionID, directory)
+	path := s.resolveSessionFilePath(sessionID, directory)
 	if path == "" {
 		return sessionNotFoundError(sessionID, directory)
 	}
@@ -228,10 +275,11 @@ func deleteSessionIn(root, sessionID, directory string) error {
 // a source without forkable messages or without the UpToMessageID message
 // is an error too.
 func ForkSession(sessionID string, opts *ForkSessionOptions) (*ForkSessionResult, error) {
-	return forkSessionIn(projectsDir(nil), sessionID, opts)
+	return localSessionsFromEnv().forkSession(sessionID, opts)
 }
 
-func forkSessionIn(root, sessionID string, opts *ForkSessionOptions) (*ForkSessionResult, error) {
+// forkSession implements ForkSession.
+func (s localSessions) forkSession(sessionID string, opts *ForkSessionOptions) (*ForkSessionResult, error) {
 	if opts == nil {
 		opts = &ForkSessionOptions{}
 	}
@@ -241,7 +289,7 @@ func forkSessionIn(root, sessionID string, opts *ForkSessionOptions) (*ForkSessi
 	if err := validateUpToMessageID(opts.UpToMessageID); err != nil {
 		return nil, err
 	}
-	filePath := resolveSessionFilePath(root, sessionID, opts.Directory)
+	filePath := s.resolveSessionFilePath(sessionID, opts.Directory)
 	if filePath == "" {
 		return nil, sessionNotFoundError(sessionID, opts.Directory)
 	}
@@ -258,15 +306,8 @@ func forkSessionIn(root, sessionID string, opts *ForkSessionOptions) (*ForkSessi
 
 	transcript, replacements := parseForkTranscript(decodeUTF8Replace(content), sessionID)
 	deriveTitle := func() string {
-		head := decodeUTF8Replace(content[:min(len(content), liteReadBufSize)])
-		tail := decodeUTF8Replace(content[max(0, len(content)-liteReadBufSize):])
-		return firstNonEmpty(
-			extractLastJSONStringField(tail, "customTitle"),
-			extractLastJSONStringField(head, "customTitle"),
-			extractLastJSONStringField(tail, "aiTitle"),
-			extractLastJSONStringField(head, "aiTitle"),
-			extractFirstPromptFromHead(head),
-		)
+		lite := jsonlToLite(content, 0)
+		return firstNonEmpty(liteTitle(lite, ""), extractFirstPromptFromHead(lite.head))
 	}
 	forkedID, lines, err := buildForkLines(transcript, replacements, sessionID, opts.UpToMessageID, opts.Title, deriveTitle)
 	if err != nil {
@@ -289,13 +330,13 @@ func forkSessionIn(root, sessionID string, opts *ForkSessionOptions) (*ForkSessi
 
 // appendToSession appends data to the transcript of sessionID, trying the
 // candidate files in search order: the project directory of directory and
-// its git worktrees when directory is set, otherwise every entry of root.
-// There is no separate existence check; see tryAppend.
-func appendToSession(root, sessionID, data, directory string) error {
+// its git worktrees when directory is set, otherwise every entry of the
+// projects directory. There is no separate existence check; see tryAppend.
+func (s localSessions) appendToSession(sessionID, data, directory string) error {
 	fileName := sessionID + ".jsonl"
 	if directory != "" {
 		canonical := canonicalizePath(directory)
-		if projectDir := findProjectDir(root, canonical); projectDir != "" {
+		if projectDir := s.findProjectDir(canonical); projectDir != "" {
 			if ok, err := tryAppend(filepath.Join(projectDir, fileName), data); ok || err != nil {
 				return err
 			}
@@ -305,7 +346,7 @@ func appendToSession(root, sessionID, data, directory string) error {
 			if wt == canonical {
 				continue // already tried
 			}
-			if projectDir := findProjectDir(root, wt); projectDir != "" {
+			if projectDir := s.findProjectDir(wt); projectDir != "" {
 				if ok, err := tryAppend(filepath.Join(projectDir, fileName), data); ok || err != nil {
 					return err
 				}
@@ -314,12 +355,12 @@ func appendToSession(root, sessionID, data, directory string) error {
 		return sessionNotFoundError(sessionID, directory)
 	}
 
-	entries, err := os.ReadDir(root)
+	entries, err := os.ReadDir(s.root)
 	if err != nil {
 		return fmt.Errorf("%w: %s (no projects directory: %w)", ErrSessionNotFound, sessionID, err)
 	}
 	for _, e := range entries {
-		if ok, err := tryAppend(filepath.Join(root, e.Name(), fileName), data); ok || err != nil {
+		if ok, err := tryAppend(filepath.Join(s.root, e.Name(), fileName), data); ok || err != nil {
 			return err
 		}
 	}
@@ -389,17 +430,7 @@ func (e forkEntry) sourceKeys() []string {
 	if e.keys != nil {
 		return e.keys
 	}
-	keys := make([]string, 0, len(e.fields))
-	for k := range e.fields {
-		if k != "type" {
-			keys = append(keys, k)
-		}
-	}
-	slices.Sort(keys)
-	if _, ok := e.fields["type"]; ok {
-		keys = append([]string{"type"}, keys...)
-	}
-	return keys
+	return typeFirstKeys(e.fields)
 }
 
 // marshal serializes e like Python's {**entry, **overrides} with the dropped
@@ -570,23 +601,6 @@ func buildForkLines(transcript []forkEntry, replacements []any, sessionID, upToM
 	for i, orig := range writable {
 		origUUID := orig.fields["uuid"].(string)
 
-		// Resolve parentUuid, skipping progress ancestors. The seen set
-		// guards against progress cycles, which Python would loop on.
-		var newParent any
-		seen := map[string]bool{}
-		for parentID := str(orig.fields["parentUuid"]); parentID != "" && !seen[parentID]; {
-			seen[parentID] = true
-			parent, ok := byUUID[parentID]
-			if !ok {
-				break
-			}
-			if parent.fields["type"] != "progress" {
-				newParent = mapping[parentID]
-				break
-			}
-			parentID = str(parent.fields["parentUuid"])
-		}
-
 		// Only the last message gets a fresh timestamp (leaf detection on
 		// resume).
 		var timestamp any = now
@@ -594,23 +608,10 @@ func buildForkLines(transcript []forkEntry, replacements []any, sessionID, upToM
 			timestamp = orig.value("timestamp")
 		}
 
-		// logicalParentUuid is the compact-boundary back-pointer; a target
-		// outside the fork becomes null, a falsy value is kept.
-		var newLogicalParent any
-		if lp := orig.fields["logicalParentUuid"]; truthy(lp) {
-			if s, ok := lp.(string); ok {
-				if m, ok := mapping[s]; ok {
-					newLogicalParent = m
-				}
-			}
-		} else if _, ok := orig.fields["logicalParentUuid"]; ok {
-			newLogicalParent = orig.value("logicalParentUuid")
-		}
-
 		line, err := orig.marshal([]jsonField{
 			{"uuid", mapping[origUUID]},
-			{"parentUuid", newParent},
-			{"logicalParentUuid", newLogicalParent},
+			{"parentUuid", forkParent(orig, byUUID, mapping)},
+			{"logicalParentUuid", forkLogicalParent(orig, mapping)},
 			{"sessionId", forkedID},
 			{"timestamp", timestamp},
 			{"isSidechain", false},
@@ -622,6 +623,59 @@ func buildForkLines(transcript []forkEntry, replacements []any, sessionID, upToM
 		lines = append(lines, line)
 	}
 
+	trailer, err := forkTrailerLines(sessionID, forkedID, now, replacements, title, deriveTitle)
+	if err != nil {
+		return "", nil, err
+	}
+	return forkedID, append(lines, trailer...), nil
+}
+
+// forkParent returns the forked parentUuid of orig: the new uuid of its
+// nearest ancestor that is not a progress entry, or nil when there is none
+// in the fork. The seen set guards against progress cycles, which Python
+// would loop on.
+func forkParent(orig forkEntry, byUUID map[string]forkEntry, mapping map[string]string) any {
+	seen := map[string]bool{}
+	for parentID := str(orig.fields["parentUuid"]); parentID != "" && !seen[parentID]; {
+		seen[parentID] = true
+		parent, ok := byUUID[parentID]
+		if !ok {
+			break
+		}
+		if parent.fields["type"] != "progress" {
+			return mapping[parentID]
+		}
+		parentID = str(parent.fields["parentUuid"])
+	}
+	return nil
+}
+
+// forkLogicalParent returns the forked logicalParentUuid of orig, the
+// compact-boundary back-pointer: a target outside the fork becomes null, a
+// falsy value is kept.
+func forkLogicalParent(orig forkEntry, mapping map[string]string) any {
+	lp, present := orig.fields["logicalParentUuid"]
+	if !truthy(lp) {
+		if present {
+			return orig.value("logicalParentUuid")
+		}
+		return nil
+	}
+	if s, ok := lp.(string); ok {
+		if m, ok := mapping[s]; ok {
+			return m
+		}
+	}
+	return nil
+}
+
+// forkTrailerLines returns the lines that end a fork of sessionID: a
+// content-replacement record carrying the source's replacements, when there
+// are any, and the custom-title entry. The title is title, else the source's
+// custom title, AI title or first prompt (deriveTitle) plus " (fork)".
+// Readers take the last custom-title entry, so this one is what surfaces.
+func forkTrailerLines(sessionID, forkedID, now string, replacements []any, title string, deriveTitle func() string) ([]string, error) {
+	var lines []string
 	if len(replacements) > 0 {
 		line, err := pyJSONObject([]jsonField{
 			{"type", "content-replacement"},
@@ -631,14 +685,11 @@ func buildForkLines(transcript []forkEntry, replacements []any, sessionID, upToM
 			{"timestamp", now},
 		})
 		if err != nil {
-			return "", nil, fmt.Errorf("claude: fork session %s: %w", sessionID, err)
+			return nil, fmt.Errorf("claude: fork session %s: %w", sessionID, err)
 		}
 		lines = append(lines, line)
 	}
 
-	// Title: explicit, else the source's custom title, AI title or first
-	// prompt plus " (fork)". Readers take the last custom-title entry, so
-	// this one is what surfaces.
 	forkTitle := pyStrip(title)
 	if forkTitle == "" {
 		forkTitle = firstNonEmpty(deriveTitle(), "Forked session") + " (fork)"
@@ -651,9 +702,9 @@ func buildForkLines(transcript []forkEntry, replacements []any, sessionID, upToM
 		{"timestamp", now},
 	})
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
-	return forkedID, append(lines, line), nil
+	return append(lines, line), nil
 }
 
 // forkedFrom is the "forkedFrom" value of forked entries.
@@ -687,166 +738,6 @@ func deriveTitleFromEntries(entries []SessionStoreEntry) string {
 }
 
 // ---------------------------------------------------------------------------
-// JSON in Python's json.dumps(..., separators=(",", ":")) format
-// ---------------------------------------------------------------------------
-
-// jsonField is one key/value pair of an ordered JSON object.
-type jsonField struct {
-	key   string
-	value any
-}
-
-// pyJSONObject serializes fields, in order, as a compact JSON object the way
-// Python's json.dumps with compact separators does: no HTML escaping and
-// every non-ASCII character escaped (ensure_ascii). json.RawMessage values
-// are copied compacted.
-func pyJSONObject(fields []jsonField) (string, error) {
-	var buf, scratch bytes.Buffer
-	enc := json.NewEncoder(&scratch)
-	enc.SetEscapeHTML(false)
-	encode := func(v any) error {
-		scratch.Reset()
-		if err := enc.Encode(v); err != nil {
-			return err
-		}
-		buf.Write(bytes.TrimSuffix(scratch.Bytes(), []byte("\n")))
-		return nil
-	}
-	buf.WriteByte('{')
-	for i, f := range fields {
-		if i > 0 {
-			buf.WriteByte(',')
-		}
-		if err := encode(f.key); err != nil {
-			return "", err
-		}
-		buf.WriteByte(':')
-		if err := encode(f.value); err != nil {
-			return "", fmt.Errorf("field %q: %w", f.key, err)
-		}
-	}
-	buf.WriteByte('}')
-	return asciiEscapeJSON(buf.Bytes()), nil
-}
-
-// pyISONowUTC returns the current UTC time the way Python's
-// datetime.now(timezone.utc).isoformat() does, with "Z" for "+00:00":
-// microsecond precision, and no fraction when it is zero.
-func pyISONowUTC() string {
-	t := time.Now().UTC()
-	if t.Nanosecond()/1000 == 0 {
-		return t.Format("2006-01-02T15:04:05Z")
-	}
-	return t.Format("2006-01-02T15:04:05.000000Z")
-}
-
-// ---------------------------------------------------------------------------
-// Unicode sanitization
-// ---------------------------------------------------------------------------
-
-// sanitizeUnicode removes characters that are invisible or can be abused
-// for spoofing: it repeatedly applies NFKC normalization and strips format
-// (Cf), private-use (Co) and unassigned (Cn) code points until the result
-// is stable, at most 10 times. Invalid UTF-8 becomes U+FFFD.
-//
-// The categories come from Go's unicode tables and NFKC from tables
-// generated from Python's unicodedata, so the result can differ from the
-// Python SDK's for code points whose status differs between the Unicode
-// versions involved (for example characters assigned after the Python
-// runtime's Unicode version, which Python strips as unassigned).
-func sanitizeUnicode(s string) string {
-	current := string([]rune(s))
-	for range 10 {
-		previous := current
-		current = normalizeNFKC(current)
-		current = strings.Map(func(r rune) rune {
-			if isStrippedRune(r) {
-				return -1
-			}
-			return r
-		}, current)
-		if current == previous {
-			break
-		}
-	}
-	return current
-}
-
-// isStrippedRune reports whether sanitizeUnicode removes r.
-func isStrippedRune(r rune) bool {
-	// Explicit ranges, redundant with the category checks but kept to
-	// match the reference implementations: zero-width spaces and LTR/RTL
-	// marks, directional formatting, directional isolates, BOM, and the
-	// BMP private use area.
-	switch {
-	case r >= 0x200b && r <= 0x200f, r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069,
-		r == 0xfeff, r >= 0xe000 && r <= 0xf8ff:
-		return true
-	}
-	return unicode.In(r, unicode.Cf, unicode.Co, unicode.Cn)
-}
-
-// nfkcCompat holds the compatibility decompositions parsed from
-// nfkcCompatDecompositions.
-var nfkcCompat = sync.OnceValue(func() map[rune][]rune {
-	m := make(map[rune][]rune, 4000)
-	hex := func(s string) rune {
-		n, err := strconv.ParseUint(s, 16, 32)
-		if err != nil {
-			panic("claude: corrupt NFKC table: " + s)
-		}
-		return rune(n)
-	}
-	for _, rec := range strings.Split(nfkcCompatDecompositions, ";") {
-		cp, list, _ := strings.Cut(rec, ":")
-		var seq []rune
-		for _, f := range strings.Split(list, ",") {
-			seq = append(seq, hex(f))
-		}
-		m[hex(cp)] = seq
-	}
-	return m
-})
-
-// normalizeNFKC returns s in Unicode Normalization Form KC, the Go
-// counterpart of unicodedata.normalize("NFKC", s). Invalid UTF-8 becomes
-// U+FFFD.
-func normalizeNFKC(s string) string {
-	ascii := true
-	for i := 0; i < len(s); i++ {
-		if s[i] >= 0x80 {
-			ascii = false
-			break
-		}
-	}
-	if ascii {
-		return s // ASCII has no decompositions
-	}
-	// NFKC is canonical composition of the full compatibility
-	// decomposition; nfcRunes performs the reordering and composition.
-	compat, canon := nfkcCompat(), nfcTables().decomp
-	buf := make([]rune, 0, len(s))
-	var decompose func(r rune)
-	decompose = func(r rune) {
-		seq, ok := compat[r]
-		if !ok {
-			seq, ok = canon[r]
-		}
-		if !ok {
-			buf = append(buf, r) // Hangul syllables are left to nfcRunes
-			return
-		}
-		for _, c := range seq {
-			decompose(c)
-		}
-	}
-	for _, r := range s {
-		decompose(r)
-	}
-	return string(nfcRunes(buf))
-}
-
-// ---------------------------------------------------------------------------
 // SessionStore-backed mutations
 // ---------------------------------------------------------------------------
 
@@ -861,21 +752,7 @@ func normalizeNFKC(s string) string {
 // ErrInvalidSessionID when sessionID is not a UUID; store errors are
 // returned.
 func RenameSessionViaStore(ctx context.Context, store SessionStore, sessionID, title, directory string) error {
-	if !validateUUID(sessionID) {
-		return invalidSessionIDError(sessionID)
-	}
-	stripped, err := normalizeSessionTitle(title)
-	if err != nil {
-		return err
-	}
-	key := SessionKey{ProjectKey: ProjectKeyForDirectory(directory), SessionID: sessionID}
-	return store.Append(ctx, key, []SessionStoreEntry{{
-		"type":        "custom-title",
-		"customTitle": stripped,
-		"sessionId":   sessionID,
-		"uuid":        randomUUID(),
-		"timestamp":   pyISONowUTC(),
-	}})
+	return renameSessionTo(storeMetadataSink{ctx, store, directory}, sessionID, title)
 }
 
 // TagSessionViaStore tags a session in a SessionStore by appending a tag
@@ -883,21 +760,7 @@ func RenameSessionViaStore(ctx context.Context, store SessionStore, sessionID, t
 // the tag. The tag rules are as for TagSession and directory, the entry and
 // the errors as for RenameSessionViaStore.
 func TagSessionViaStore(ctx context.Context, store SessionStore, sessionID, tag, directory string) error {
-	if !validateUUID(sessionID) {
-		return invalidSessionIDError(sessionID)
-	}
-	tag, err := normalizeSessionTag(tag)
-	if err != nil {
-		return err
-	}
-	key := SessionKey{ProjectKey: ProjectKeyForDirectory(directory), SessionID: sessionID}
-	return store.Append(ctx, key, []SessionStoreEntry{{
-		"type":      "tag",
-		"tag":       tag,
-		"sessionId": sessionID,
-		"uuid":      randomUUID(),
-		"timestamp": pyISONowUTC(),
-	}})
+	return tagSessionTo(storeMetadataSink{ctx, store, directory}, sessionID, tag)
 }
 
 // DeleteSessionViaStore deletes a session from a SessionStore, the

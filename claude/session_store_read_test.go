@@ -232,6 +232,12 @@ func summaryUser(text any, ts string, extra ...any) SessionStoreEntry {
 	return e
 }
 
+// jsonlByteSize returns the byte size of entries as JSON.stringify lines, the
+// FileSize the TypeScript SDK reports for store-backed sessions.
+func jsonlByteSize(entries []SessionStoreEntry) int64 {
+	return stringifySize(compactJSONL(entries))
+}
+
 // ---------------------------------------------------------------------------
 // Serialization helpers
 // ---------------------------------------------------------------------------

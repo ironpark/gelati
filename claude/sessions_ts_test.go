@@ -179,7 +179,7 @@ func TestSessionProjectDirNameOverride(t *testing.T) {
 
 	root := t.TempDir()
 	project := "/work/app"
-	if dirs := findProjectDirsWith(root, project, "named"); dirs != nil {
+	if dirs := (localSessions{root: root, dirNameOverride: "named"}).findProjectDirs(project); dirs != nil {
 		t.Errorf("none exist: %v", dirs)
 	}
 	named := filepath.Join(root, "named")
@@ -189,10 +189,10 @@ func TestSessionProjectDirNameOverride(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if dirs := findProjectDirsWith(root, project, "named"); !slices.Equal(dirs, []string{named, sanitized}) {
+	if dirs := (localSessions{root: root, dirNameOverride: "named"}).findProjectDirs(project); !slices.Equal(dirs, []string{named, sanitized}) {
 		t.Errorf("override dirs = %v", dirs)
 	}
-	if dirs := findProjectDirsWith(root, project, ""); !slices.Equal(dirs, []string{sanitized}) {
+	if dirs := (localSessions{root: root, dirNameOverride: ""}).findProjectDirs(project); !slices.Equal(dirs, []string{sanitized}) {
 		t.Errorf("default dirs = %v", dirs)
 	}
 }
@@ -388,8 +388,8 @@ func TestSessionListExcludeProgrammatic(t *testing.T) {
 		writeJSONL(t, filepath.Join(dir, sid+".jsonl"), jsonObj("type", "user", "entrypoint", ep, "message", map[string]any{"content": ep}))
 		ids = append(ids, sid)
 	}
-	all := listSessionsIn(root, &ListSessionsOptions{Directory: canonical})
-	interactive := listSessionsIn(root, &ListSessionsOptions{Directory: canonical, ExcludeProgrammatic: true})
+	all := newLocalSessions(root).listSessions(&ListSessionsOptions{Directory: canonical})
+	interactive := newLocalSessions(root).listSessions(&ListSessionsOptions{Directory: canonical, ExcludeProgrammatic: true})
 	if len(all) != 4 || len(interactive) != 1 || interactive[0].SessionID != ids[0] {
 		t.Errorf("all = %v, interactive = %v", sessionIDs(all), sessionIDs(interactive))
 	}

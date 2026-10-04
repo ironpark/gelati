@@ -1,185 +1,27 @@
 package claude
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"sync"
-	"time"
-	"unicode/utf8"
 )
 
-// SessionStore-backed counterparts of the session readers in sessions.go.
-// Ported from the *_from_store functions of _internal/sessions.py.
+// SessionStore-backed counterparts of the local session readers
+// (session_list.go, session_messages.go). Ported from the *_from_store
+// functions of _internal/sessions.py.
 
-// ProjectKeyForDirectory returns the SessionStore project key for a
-// directory; empty means the current working directory.
-//
-// It applies the same realpath, NFC normalization and djb2-hashed
-// sanitization the CLI uses to name project directories, so keys match
-// between local transcripts and store-mirrored ones, even on filesystems
-// that decompose Unicode (macOS HFS+). When CLAUDE_CONFIG_DIR and a valid
-// CLAUDE_CODE_PROJECT_DIR_NAME are both set in the process environment,
-// the key is that name for every directory, as in the CLI.
-func ProjectKeyForDirectory(directory string) string {
-	return projectKeyForDirectory(directory, os.Getenv)
-}
-
-// projectKeyForDirectory is ProjectKeyForDirectory against an explicit
-// environment.
-func projectKeyForDirectory(directory string, getenv func(string) string) string {
-	if override := projectDirNameOverrideFromEnv(getenv); override != "" {
-		return override
-	}
-	if directory == "" {
-		directory = "."
-	}
-	return sanitizePath(canonicalizePath(directory))
-}
-
-// storeProjectPath is the canonical project path for a store call's
-// directory argument; empty means the current working directory.
-func storeProjectPath(directory string) string {
-	if directory == "" {
-		directory = "."
-	}
-	return canonicalizePath(directory)
-}
-
-// entriesToJSONL serializes store entries to JSONL the way the Python SDK
-// does (json.dumps with compact separators and ensure_ascii), hoisting
-// "type" to the front of each object, where the CLI writes it too: adapters
-// may reorder keys (Postgres JSONB does).
-// The remaining keys are written in sorted order.
-func entriesToJSONL(entries []SessionStoreEntry) string {
-	return asciiEscapeJSON(compactJSONL(entries))
-}
-
-// jsonlByteSize returns the byte size of entries as JSON.stringify lines, the
-// FileSize the TypeScript SDK reports for store-backed sessions.
-func jsonlByteSize(entries []SessionStoreEntry) int64 {
-	return stringifySize(compactJSONL(entries))
-}
-
-// stringifySize converts the length of compactJSONL output to the length
-// JSON.stringify would produce: Go escapes U+2028 and U+2029 (6 bytes) where
-// JSON.stringify writes them raw (3 bytes).
-func stringifySize(raw []byte) int64 {
-	return int64(len(raw) - 3*(bytes.Count(raw, []byte(`\u2028`))+bytes.Count(raw, []byte(`\u2029`))))
-}
-
-// compactJSONL is entriesToJSONL before the ASCII escaping: compact JSON
-// lines with "type" first, as JSON.stringify writes them except that U+2028
-// and U+2029 are escaped.
-func compactJSONL(entries []SessionStoreEntry) []byte {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	encode := func(v any) {
-		if err := enc.Encode(v); err != nil {
-			buf.WriteString("null\n")
-		}
-		buf.Truncate(buf.Len() - 1) // drop Encode's trailing newline
-	}
-	for _, e := range entries {
-		if e == nil {
-			buf.WriteString("null\n")
-			continue
-		}
-		buf.WriteByte('{')
-		first := true
-		writeKey := func(k string) {
-			if !first {
-				buf.WriteByte(',')
-			}
-			first = false
-			encode(k)
-			buf.WriteByte(':')
-			encode(e[k])
-		}
-		if _, ok := e["type"]; ok {
-			writeKey("type")
-		}
-		keys := make([]string, 0, len(e))
-		for k := range e {
-			if k != "type" {
-				keys = append(keys, k)
-			}
-		}
-		slices.Sort(keys)
-		for _, k := range keys {
-			writeKey(k)
-		}
-		buf.WriteString("}\n")
-	}
-	if len(entries) == 0 {
-		buf.WriteByte('\n')
-	}
-	return buf.Bytes()
-}
-
-// asciiEscapeJSON rewrites every non-ASCII character (and DEL) of
-// serialized JSON as a \uXXXX escape, as Python's ensure_ascii does. Such
-// characters only occur inside strings, where the escape is equivalent.
-func asciiEscapeJSON(b []byte) string {
-	var sb strings.Builder
-	sb.Grow(len(b))
-	for i := 0; i < len(b); {
-		c := b[i]
-		if c < utf8.RuneSelf && c != 0x7f {
-			sb.WriteByte(c)
-			i++
-			continue
-		}
-		r, size := utf8.DecodeRune(b[i:])
-		i += size
-		if r > 0xFFFF {
-			r -= 0x10000
-			fmt.Fprintf(&sb, `\u%04x\u%04x`, 0xD800+(r>>10), 0xDC00+(r&0x3FF))
-		} else {
-			fmt.Fprintf(&sb, `\u%04x`, r)
-		}
-	}
-	return sb.String()
-}
-
-// jsonlToLite builds the head/tail lite shape from an in-memory transcript,
-// with the byte semantics of readSessionLite.
-func jsonlToLite(jsonl string, mtime int64) *liteSessionFile {
-	size := len(jsonl)
-	head := decodeUTF8Replace([]byte(jsonl[:min(size, liteReadBufSize)]))
-	tail := head
-	if size > liteReadBufSize {
-		tail = decodeUTF8Replace([]byte(jsonl[size-liteReadBufSize:]))
-	}
-	return &liteSessionFile{mtime: mtime, size: int64(size), head: head, tail: tail}
-}
-
-// mtimeFromJSONLTail returns the last entry's timestamp in Unix epoch
-// milliseconds, falling back to the current time when it is absent or
-// unparseable.
-func mtimeFromJSONLTail(jsonl string) int64 {
-	trimmed := strings.TrimRightFunc(jsonl, pyIsSpace)
-	lastLine := trimmed[strings.LastIndexByte(trimmed, '\n')+1:]
-	var obj map[string]any
-	if json.Unmarshal([]byte(lastLine), &obj) == nil {
-		if ts, ok := obj["timestamp"].(string); ok {
-			if ms, ok := isoToEpochMillis(ts); ok {
-				return ms
-			}
-		}
-	}
-	return time.Now().UnixMilli()
-}
+// storeListLoadConcurrency bounds the concurrent SessionStore.Load calls
+// issued by ListSessionsFromStore, so large listings do not exhaust
+// adapter connection pools or trip backend rate limits.
+const storeListLoadConcurrency = 16
 
 // loadStoreEntriesAsJSONL loads a main transcript from the store and
 // serializes it to JSONL; ok is false when the session has no entries.
-// size is jsonlByteSize of the entries.
+// size is the byte size of the entries as JSON.stringify lines (see
+// stringifySize), the FileSize the TypeScript SDK reports.
 func loadStoreEntriesAsJSONL(ctx context.Context, store SessionStore, projectKey, sessionID string) (jsonl string, size int64, ok bool, err error) {
 	entries, err := store.Load(ctx, SessionKey{ProjectKey: projectKey, SessionID: sessionID})
 	if err != nil || len(entries) == 0 {
@@ -187,17 +29,6 @@ func loadStoreEntriesAsJSONL(ctx context.Context, store SessionStore, projectKey
 	}
 	raw := compactJSONL(entries)
 	return asciiEscapeJSON(raw), stringifySize(raw), true, nil
-}
-
-// cmpMTimeDesc orders Unix-millisecond times newest first.
-func cmpMTimeDesc(a, b int64) int {
-	switch {
-	case a > b:
-		return -1
-	case a < b:
-		return 1
-	}
-	return 0
 }
 
 // deriveInfosViaLoad derives SessionInfo for each listing entry by loading
@@ -246,7 +77,7 @@ spawn:
 		if !o.ok {
 			continue
 		}
-		info := parseSessionInfoFromLite(entry.SessionID, jsonlToLite(o.jsonl, entry.MTime), projectPath)
+		info := parseSessionInfoFromLite(entry.SessionID, jsonlToLite(o.jsonl, entry.MTime), projectPath, "")
 		if info == nil {
 			continue // sidechain or no summary, as on disk
 		}
@@ -321,7 +152,8 @@ func ListSessionsFromStore(ctx context.Context, store SessionStore, opts *ListSe
 	if err != nil {
 		return nil, err
 	}
-	return applySortLimitOffset(results, opts.Limit, opts.Offset), nil
+	slices.SortStableFunc(results, func(a, b SessionInfo) int { return cmpMTimeDesc(a.LastModified, b.LastModified) })
+	return nilIfEmpty(paginate(results, opts.Limit, opts.Offset)), nil
 }
 
 // listFromSummaries is the ListSessionsFromStore fast path. lister is nil
@@ -376,13 +208,7 @@ func listFromSummaries(ctx context.Context, store SessionStore, lister SessionLi
 	// Paginate before loading, so the number of gap-fill loads is bounded
 	// by the page size rather than by the number of missing summaries.
 	slices.SortStableFunc(slots, func(a, b *slot) int { return cmpMTimeDesc(a.mtime, b.mtime) })
-	page := slots
-	if offset > 0 {
-		page = page[min(offset, len(page)):]
-	}
-	if limit > 0 && limit < len(page) {
-		page = page[:limit]
-	}
+	page := paginate(slots, limit, offset)
 
 	var toFill []SessionStoreListEntry
 	for _, sl := range page {
@@ -435,7 +261,7 @@ func GetSessionInfoFromStore(ctx context.Context, store SessionStore, sessionID,
 	if err != nil || !ok {
 		return nil, err
 	}
-	info := parseSessionInfoFromLite(sessionID, jsonlToLite(jsonl, mtimeFromJSONLTail(jsonl)), projectPath)
+	info := parseSessionInfoFromLite(sessionID, jsonlToLite(jsonl, mtimeFromJSONLTail(jsonl)), projectPath, "")
 	if info != nil {
 		info.FileSize = size
 	}
@@ -496,16 +322,21 @@ func ListSubagentsFromStore(ctx context.Context, store SessionStore, sessionID, 
 	seen := map[string]bool{}
 	var ids []string
 	for _, subpath := range subkeys {
-		if !strings.HasPrefix(subpath, "subagents/") {
-			continue
-		}
-		last := subpath[strings.LastIndexByte(subpath, '/')+1:]
-		if agentID, ok := strings.CutPrefix(last, "agent-"); ok && !seen[agentID] {
+		if agentID, ok := subagentIDFromSubkey(subpath); ok && !seen[agentID] {
 			seen[agentID] = true
 			ids = append(ids, agentID)
 		}
 	}
 	return ids, nil
+}
+
+// subagentIDFromSubkey returns the agent id of a subagent transcript subkey:
+// one under "subagents/" whose last path component is agent-<id>.
+func subagentIDFromSubkey(subpath string) (string, bool) {
+	if !strings.HasPrefix(subpath, "subagents/") {
+		return "", false
+	}
+	return strings.CutPrefix(subpath[strings.LastIndexByte(subpath, '/')+1:], "agent-")
 }
 
 // GetSubagentMessagesFromStore reads a subagent's conversation from a
@@ -538,9 +369,9 @@ func GetSubagentMessagesFromStore(ctx context.Context, store SessionStore, sessi
 		if err != nil {
 			return nil, err
 		}
-		target := "agent-" + agentID
 		i := slices.IndexFunc(subkeys, func(sk string) bool {
-			return strings.HasPrefix(sk, "subagents/") && sk[strings.LastIndexByte(sk, '/')+1:] == target
+			id, ok := subagentIDFromSubkey(sk)
+			return ok && id == agentID
 		})
 		if i < 0 {
 			return nil, nil

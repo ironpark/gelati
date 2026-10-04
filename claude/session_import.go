@@ -45,24 +45,26 @@ import (
 // is not a UUID and one wrapping ErrSessionNotFound when the transcript is
 // not found; store and I/O errors are returned.
 func ImportSessionToStore(ctx context.Context, sessionID string, store SessionStore, opts *ImportSessionOptions) error {
-	return importSessionIn(ctx, projectsDir(nil), sessionID, store, opts, os.Getenv)
+	return localSessionsFromEnv().importSession(ctx, sessionID, store, opts, os.Getenv)
 }
 
-func importSessionIn(ctx context.Context, root, sessionID string, store SessionStore, opts *ImportSessionOptions, getenv func(string) string) error {
+// importSession implements ImportSessionToStore; getenv is the environment
+// the destination project key is derived from (see projectKeyForDirectory).
+func (s localSessions) importSession(ctx context.Context, sessionID string, store SessionStore, opts *ImportSessionOptions, getenv func(string) string) error {
 	if opts == nil {
 		opts = &ImportSessionOptions{}
 	}
 	if !validateUUID(sessionID) {
 		return invalidSessionIDError(sessionID)
 	}
-	resolved := resolveSessionFilePath(root, sessionID, opts.Directory)
+	resolved := s.resolveSessionFilePath(sessionID, opts.Directory)
 	if resolved == "" {
 		return sessionNotFoundError(sessionID, opts.Directory)
 	}
 	projectKey := projectKeyForDirectory(opts.Directory, getenv)
 	batchSize := opts.BatchSize
 	if batchSize <= 0 {
-		batchSize = mirrorMaxPendingEntries
+		batchSize = storeAppendBatchEntries
 	}
 
 	mainKey := SessionKey{ProjectKey: projectKey, SessionID: sessionID}
@@ -113,7 +115,7 @@ func importSessionIn(ctx context.Context, root, sessionID string, store SessionS
 }
 
 // appendJSONLFileInBatches streams a JSONL file into store.Append in
-// batches of batchSize entries or mirrorMaxPendingBytes of line bytes,
+// batches of batchSize entries or storeAppendBatchBytes of line bytes,
 // whichever comes first. Blank lines and lines that are not a JSON object
 // are skipped; "\r\n" endings are accepted.
 func appendJSONLFileInBatches(ctx context.Context, path string, key SessionKey, store SessionStore, batchSize int) error {
@@ -145,7 +147,7 @@ func appendJSONLFileInBatches(ctx context.Context, path string, key SessionKey, 
 		if line != "" && json.Unmarshal([]byte(line), &entry) == nil && entry != nil {
 			batch = append(batch, entry)
 			nbytes += len(line)
-			if len(batch) >= batchSize || nbytes >= mirrorMaxPendingBytes {
+			if len(batch) >= batchSize || nbytes >= storeAppendBatchBytes {
 				if err := flush(); err != nil {
 					return err
 				}
@@ -159,24 +161,4 @@ func appendJSONLFileInBatches(ctx context.Context, path string, key SessionKey, 
 		return flush()
 	}
 	return nil
-}
-
-// collectJSONLFiles returns every *.jsonl file under baseDir, recursively,
-// sorted by name within each directory, following symlinks. It returns nil
-// when baseDir cannot be read.
-func collectJSONLFiles(baseDir string) []string {
-	entries, err := os.ReadDir(baseDir)
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, e := range entries {
-		switch {
-		case direntIsDir(baseDir, e):
-			out = append(out, collectJSONLFiles(filepath.Join(baseDir, e.Name()))...)
-		case direntIsFile(baseDir, e) && strings.HasSuffix(e.Name(), ".jsonl"):
-			out = append(out, filepath.Join(baseDir, e.Name()))
-		}
-	}
-	return out
 }
