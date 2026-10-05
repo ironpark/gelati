@@ -45,7 +45,7 @@ func startTurn(t *testing.T, client *Client, server *fakeServer, threadID, turnI
 func recvEvent(t *testing.T, stream *TurnStream) (Event, bool) {
 	t.Helper()
 	select {
-	case event, ok := <-stream.Events():
+	case event, ok := <-stream.events:
 		return event, ok
 	case <-time.After(fakeTimeout):
 		t.Fatal("timed out waiting for a turn event")
@@ -392,7 +392,7 @@ func TestAbandonedStreamDoesNotBlockOtherThreads(t *testing.T) {
 	deadline := time.After(fakeTimeout)
 	for {
 		select {
-		case _, ok := <-abandoned.Events():
+		case _, ok := <-abandoned.events:
 			if !ok {
 				return
 			}
@@ -432,7 +432,7 @@ func TestTurnStreamClosedOnClientShutdown(t *testing.T) {
 	deadline := time.After(fakeTimeout)
 	for {
 		select {
-		case _, ok := <-stream.Events():
+		case _, ok := <-stream.events:
 			if !ok {
 				return
 			}

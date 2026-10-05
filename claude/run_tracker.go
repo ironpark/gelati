@@ -337,7 +337,12 @@ func (t *errorResultTracker) translate(err error) error {
 	// The CLI exits non-zero on purpose after reporting an error result;
 	// the generic exit-code error carries nothing the result does not
 	// already say.
-	return NewResultError("Claude Code returned an error result: "+errorResultText(last), last, perr.ExitCode)
+	return newErrorResultError(last, perr.ExitCode)
+}
+
+// newErrorResultError reports a failed result frame as a ResultError.
+func newErrorResultError(frame map[string]any, exitCode *int) *ResultError {
+	return NewResultError("Claude Code returned an error result: "+errorResultText(frame), frame, exitCode)
 }
 
 // errorResultText picks the most informative text out of a failed result frame.

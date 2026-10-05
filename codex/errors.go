@@ -12,6 +12,47 @@ import (
 	"time"
 )
 
+// Error is implemented by every error type this package originates
+// (*RPCError, *TurnError, and *ProcessError), so callers can write
+//
+//	if sdkErr, ok := errors.AsType[codex.Error](err); ok { ... }
+type Error interface {
+	error
+	codexError()
+}
+
+func (*RPCError) codexError()     {}
+func (*TurnError) codexError()    {}
+func (*ProcessError) codexError() {}
+
+// ProcessError reports that the app-server subprocess exited. Client.Err
+// wraps it once the stream ends because of the exit.
+type ProcessError struct {
+	// ExitCode is the exit status, or nil when the process was killed by a
+	// signal or its status is unknown.
+	ExitCode *int
+	// Stderr is the tail of the process's stderr output.
+	Stderr string
+	// Err is the error cmd.Wait reported, if any.
+	Err error
+}
+
+func (e *ProcessError) Error() string {
+	msg := "codex: app-server exited"
+	switch {
+	case e.ExitCode != nil:
+		msg = fmt.Sprintf("codex: app-server exited with status %d", *e.ExitCode)
+	case e.Err != nil:
+		msg = "codex: app-server " + e.Err.Error()
+	}
+	if e.Stderr != "" {
+		msg += "\napp-server stderr:\n" + e.Stderr
+	}
+	return msg
+}
+
+func (e *ProcessError) Unwrap() error { return e.Err }
+
 // Sentinel errors returned by the package.
 var (
 	// ErrClosed is returned when the client or its transport has been closed.

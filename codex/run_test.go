@@ -261,3 +261,54 @@ func TestRetryOnOverload(t *testing.T) {
 		t.Fatalf("non-retryable error retried %d times", calls)
 	}
 }
+
+func TestEventsIterator(t *testing.T) {
+	t.Run("completes", func(t *testing.T) {
+		client, server := connect(t, Options{})
+		threadID := startThread(t, client, server, "thr_1")
+		stream := startTurn(t, client, server, threadID, "turn_1", Text("hi"))
+		notifyTurn(server, MethodAgentMessageDelta, map[string]any{"itemId": "m", "delta": "hi"})
+		server.notify(MethodTurnCompleted, map[string]any{"threadId": "thr_1",
+			"turn": map[string]any{"id": "turn_1", "status": "completed", "items": []any{}}})
+
+		var kinds []EventKind
+		for event, err := range stream.Events(context.Background()) {
+			if err != nil {
+				t.Fatalf("Events error: %v", err)
+			}
+			kinds = append(kinds, event.Kind)
+		}
+		if len(kinds) != 2 || kinds[0] != EventAgentMessageDelta || kinds[1] != EventTurnCompleted {
+			t.Fatalf("kinds = %v", kinds)
+		}
+	})
+	t.Run("abandoned", func(t *testing.T) {
+		client, server := connect(t, Options{})
+		threadID := startThread(t, client, server, "thr_1")
+		stream := startTurn(t, client, server, threadID, "turn_1", Text("hi"))
+		stream.Close()
+		// The pump closes the channel when it next sees the turn.
+		notifyTurn(server, MethodAgentMessageDelta, map[string]any{"itemId": "m", "delta": "hi"})
+
+		var last error
+		for _, err := range stream.Events(context.Background()) {
+			last = err
+		}
+		if !errors.Is(last, ErrTurnAbandoned) {
+			t.Fatalf("last error = %v, want ErrTurnAbandoned", last)
+		}
+	})
+	t.Run("context", func(t *testing.T) {
+		client, server := connect(t, Options{})
+		threadID := startThread(t, client, server, "thr_1")
+		stream := startTurn(t, client, server, threadID, "turn_1", Text("hi"))
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		for _, err := range stream.Events(ctx) {
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("err = %v", err)
+			}
+		}
+		stream.Close()
+	})
+}

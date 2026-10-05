@@ -261,7 +261,11 @@ func TestProcessExitReportsStderr(t *testing.T) {
 		Args:   []string{"-c", "echo boom >&2; exit 3"},
 		Stderr: io.Discard,
 	})
-	if err == nil || !strings.Contains(err.Error(), "exit status 3") || !strings.Contains(err.Error(), "boom") {
-		t.Fatalf("New = %v, want the exit status and stderr tail", err)
+	exit, ok := errors.AsType[*ProcessError](err)
+	if !ok || exit.ExitCode == nil || *exit.ExitCode != 3 || !strings.Contains(exit.Stderr, "boom") {
+		t.Fatalf("New = %v, want a *ProcessError with the exit status and stderr tail", err)
+	}
+	if _, ok := errors.AsType[Error](err); !ok {
+		t.Fatal("ProcessError does not implement Error")
 	}
 }

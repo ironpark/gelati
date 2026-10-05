@@ -58,6 +58,18 @@ for msg, err := range claude.Query(ctx, "What is 2+2?", nil) {
 }
 ```
 
+When only the final answer matters, `Run` drains the stream and returns the
+`*ResultMessage` (its `Result` field is the final text); an error result, a
+failed exit or a stream that ends without a result is returned as an error:
+
+```go
+res, err := claude.Run(ctx, "What is 2+2?", nil)
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(res.Result)
+```
+
 ### Interactive client
 
 ```go
@@ -82,6 +94,9 @@ A connected `Client` can also interrupt a turn, change the model or permission
 mode, rewind files, manage MCP servers, reload plugins and skills, apply
 settings mid-session, and query commands, models, account info and context
 usage. `SendControlRequest` reaches any control request without a wrapper.
+`client.Run(ctx, prompt, "")` sends a turn and waits for its `*ResultMessage`.
+`Done()` is closed when the session ends for any reason (`Disconnect`, ctx
+cancellation, CLI exit, transport failure) and `Err()` then reports why.
 
 ### Permissions, hooks and in-process tools
 
@@ -222,7 +237,10 @@ stream, err := client.StartTurn(ctx, thread.ID, codex.Text("Run the tests"), nil
 if err != nil {
 	log.Fatal(err)
 }
-for event := range stream.Events() {
+for event, err := range stream.Events(ctx) {
+	if err != nil {
+		log.Fatal(err)
+	}
 	if event.Kind == codex.EventAgentMessageDelta {
 		fmt.Print(event.Delta)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"iter"
 	"sync"
 )
 
@@ -73,9 +74,10 @@ type Event struct {
 	Params json.RawMessage
 }
 
-// TurnStream delivers a turn's events in arrival order. The channel returned
-// by Events is closed once the turn reaches a terminal status, the caller
-// calls Close, or the client shuts down.
+// TurnStream delivers a turn's events in arrival order. Iterate them with
+// Events, or call Result to wait for the turn and collect what it produced.
+// The stream ends once the turn reaches a terminal status, the caller calls
+// Close, or the client shuts down.
 type TurnStream struct {
 	client   *Client
 	threadID string
@@ -104,15 +106,70 @@ func (s *TurnStream) TurnID() string {
 	return s.turnID
 }
 
-// Events returns the stream's event channel.
-func (s *TurnStream) Events() <-chan Event { return s.events }
+// Events iterates the turn's events in arrival order until the turn reaches
+// a terminal status, the stream is closed, or the client shuts down. When the
+// stream ends abnormally, or ctx ends first, the last pair carries the error
+// (ErrTurnAbandoned, ErrClosed, or ctx's error) and a zero Event; a failed
+// turn ends normally with its EventTurnCompleted, and Result or Wait report
+// its *TurnError.
+//
+// Breaking out of the loop leaves the stream open: call Result to finish
+// collecting it, or Close to abandon it. Events and Result consume one queue,
+// so do not read the same stream from two goroutines.
+func (s *TurnStream) Events(ctx context.Context) iter.Seq2[Event, error] {
+	return func(yield func(Event, error) bool) {
+		for {
+			select {
+			case <-ctx.Done():
+				yield(Event{}, ctx.Err())
+				return
+			case event, ok := <-s.events:
+				if !ok {
+					if err := s.terminalErr(); err != nil {
+						yield(Event{}, err)
+					}
+					return
+				}
+				if !yield(event, nil) {
+					return
+				}
+			case <-s.done:
+				// An abandoned or failed stream may never see its channel
+				// closed, so stop on done. A completed turn's events are all
+				// buffered by then: drain them first.
+				if err := s.terminalErr(); err != nil {
+					yield(Event{}, err)
+					return
+				}
+				for {
+					select {
+					case event, ok := <-s.events:
+						if !ok || !yield(event, nil) {
+							return
+						}
+					default:
+						return
+					}
+				}
+			}
+		}
+	}
+}
+
+// terminalErr returns the error the stream ended with, or nil.
+func (s *TurnStream) terminalErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
+}
 
 // Done returns a channel closed when the turn ends for any reason.
 func (s *TurnStream) Done() <-chan struct{} { return s.done }
 
 // Wait blocks until the turn reaches a terminal status and returns the final
 // turn. It returns an error when the context ends first, when the client shut
-// down, or when the stream was abandoned.
+// down, or when the stream was abandoned. Wait does not consume events, so
+// use it after iterating Events; to wait without reading them, use Result.
 func (s *TurnStream) Wait(ctx context.Context) (*Turn, error) {
 	select {
 	case <-ctx.Done():
@@ -157,6 +214,11 @@ func (s *TurnStream) closeEvents() {
 // stream was abandoned or the client shut down, in which case the event and
 // every later one is dropped.
 func (s *TurnStream) deliver(event Event, quit <-chan struct{}) bool {
+	select {
+	case <-s.done:
+		return false // abandoned: do not buffer more
+	default:
+	}
 	select {
 	case s.events <- event:
 		return true

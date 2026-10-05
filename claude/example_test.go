@@ -33,6 +33,48 @@ func ExampleQuery() {
 	}
 }
 
+func ExampleRun() {
+	res, err := claude.Run(context.Background(), "What is 2+2?", nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(res.Result)
+}
+
+func ExampleClient_Run() {
+	ctx := context.Background()
+	client := claude.NewClient(nil)
+	if err := client.Connect(ctx); err != nil {
+		log.Fatal(err)
+	}
+	defer client.Disconnect()
+
+	for _, prompt := range []string{"Pick a number", "Double it"} {
+		res, err := client.Run(ctx, prompt, "")
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(res.Result)
+	}
+}
+
+func ExampleClient_Done() {
+	ctx := context.Background()
+	client := claude.NewClient(nil)
+	if err := client.Connect(ctx); err != nil {
+		log.Fatal(err)
+	}
+	defer client.Disconnect()
+
+	go func() {
+		<-client.Done()
+		if err := client.Err(); err != nil {
+			log.Printf("session ended: %v", err)
+		}
+	}()
+	// ... drive the session
+}
+
 func ExampleQuery_options() {
 	maxTurns := 5
 	opts := &claude.Options{

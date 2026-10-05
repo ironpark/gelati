@@ -395,9 +395,9 @@ func startProcess(bin string, args []string, env []string, dir string, stderr *t
 	return p, nil
 }
 
-// exitReader reads the process's stdout and turns its EOF into an error that
-// carries the exit status and the tail of stderr. Waiting for the exit first
-// guarantees stderr has been fully copied.
+// exitReader reads the process's stdout and turns its EOF into a
+// *ProcessError carrying the exit status and the tail of stderr. Waiting
+// for the exit first guarantees stderr has been fully copied.
 type exitReader struct{ p *processHandle }
 
 func (r exitReader) Read(b []byte) (int, error) {
@@ -410,14 +410,11 @@ func (r exitReader) Read(b []byte) (int, error) {
 	case <-time.After(exitWait):
 		return n, io.EOF
 	}
-	status := "exited"
-	if r.p.waitErr != nil {
-		status = r.p.waitErr.Error()
+	exit := &ProcessError{Stderr: r.p.stderr.String(), Err: r.p.waitErr}
+	if code := r.p.cmd.ProcessState.ExitCode(); code >= 0 {
+		exit.ExitCode = &code
 	}
-	if tail := r.p.stderr.String(); tail != "" {
-		return n, fmt.Errorf("codex: app-server %s\napp-server stderr:\n%s", status, tail)
-	}
-	return n, fmt.Errorf("codex: app-server %s", status)
+	return n, exit
 }
 
 // Close closes stdout so a blocked read returns.

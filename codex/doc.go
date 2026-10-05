@@ -33,18 +33,21 @@
 //	}
 //	fmt.Println(result.FinalResponse)
 //
-// To stream, read the events of a TurnStream and then call Wait or Result:
+// To stream, iterate the events of a TurnStream and then call Result:
 //
 //	stream, err := client.StartTurn(ctx, thread.ID, codex.Text("Run the tests"), nil)
 //	if err != nil {
 //		return err
 //	}
-//	for event := range stream.Events() {
+//	for event, err := range stream.Events(ctx) {
+//		if err != nil {
+//			return err
+//		}
 //		if event.Kind == codex.EventAgentMessageDelta {
 //			fmt.Print(event.Delta)
 //		}
 //	}
-//	turn, err := stream.Wait(ctx)
+//	result, err := stream.Result(ctx)
 //
 // # Upstream mapping
 //
@@ -78,12 +81,14 @@
 //
 // # Failure modes
 //
-// Server error responses surface as *RPCError; IsOverloaded reports the
+// Every error type the package originates implements Error. Server error
+// responses surface as *RPCError; IsOverloaded reports the
 // retryable overload errors and RetryOnOverload retries them. A failed turn
 // carries a *TurnError whose Kind reports the codexErrorInfo discriminator;
 // Run and TurnStream.Result return it as their error. Errors the server is
 // still retrying arrive as EventError events. If the subprocess exits, the
-// channel from Done closes, Err reports the cause, active turn streams fail
+// channel from Done closes, Err reports the cause (wrapping a *ProcessError
+// with the exit status and stderr tail), active turn streams fail
 // with ErrClosed, and later calls return ErrClosed.
 //
 // Unknown item types decode into UnknownItem and unmodeled turn-scoped

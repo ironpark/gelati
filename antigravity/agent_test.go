@@ -536,3 +536,65 @@ func TestAgentStartFailureIsConnectionError(t *testing.T) {
 		t.Fatal("started after failure")
 	}
 }
+
+func TestAgentDoneAndErr(t *testing.T) {
+	cfg, _, _ := fakeAgentConfig(t)
+	agent, err := NewAgent(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Before Start: closed channel, ErrNotStarted.
+	waitDone(t, agent.Done())
+	if err := agent.Err(); !errors.Is(err, ErrNotStarted) {
+		t.Fatalf("Err before Start = %v", err)
+	}
+
+	// Close: Done closes, Err is nil.
+	if err := agent.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	done := agent.Done()
+	select {
+	case <-done:
+		t.Fatal("Done closed while running")
+	default:
+	}
+	if err := agent.Err(); err != nil {
+		t.Fatalf("Err while running = %v", err)
+	}
+	if err := agent.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, done)
+	if err := agent.Err(); err != nil {
+		t.Fatalf("Err after Close = %v", err)
+	}
+
+	// Restart, then the harness process exits: Done closes and Err carries
+	// its stderr.
+	if err := agent.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	done = agent.Done()
+	select {
+	case <-done:
+		t.Fatal("Done of the restarted session already closed")
+	default:
+	}
+	text, err := chat(t, agent, "crash")
+	if _, ok := errors.AsType[*ConnectionError](err); !ok {
+		t.Fatalf("chat with a crashing harness: %q, %v", text, err)
+	}
+	waitDone(t, done)
+	ce, ok := errors.AsType[*ConnectionError](agent.Err())
+	if !ok || !strings.Contains(ce.Stderr, "crashing on purpose") {
+		t.Fatalf("Err after crash = %v", agent.Err())
+	}
+	if err := agent.Close(); err != nil {
+		t.Logf("Close after crash: %v", err)
+	}
+	if _, ok := errors.AsType[*ConnectionError](agent.Err()); !ok {
+		t.Fatalf("Err after crash and Close = %v", agent.Err())
+	}
+}

@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"io"
 	"iter"
 	"log/slog"
 	"maps"
@@ -18,8 +17,8 @@ import (
 )
 
 // transport carries wire events to and from the harness. *harness.Harness
-// implements it; tests substitute an in-memory fake. Receive returning
-// io.EOF is a clean end of stream.
+// implements it; tests substitute an in-memory fake. Any Receive error other
+// than ErrClosed after Close ends the session as a lost connection.
 type transport interface {
 	Send(ctx context.Context, ev *wire.InputEvent) error
 	Receive(ctx context.Context) (*wire.OutputEvent, error)
@@ -174,6 +173,9 @@ type Connection struct {
 	// streamErr is set once the event stream ended; turns started later
 	// end with it at once.
 	streamErr error
+	// doneErr is what Err reports once readerDone is closed: streamErr,
+	// unless the stream ended because of Close.
+	doneErr error
 }
 
 type connectionOptions struct {
@@ -546,6 +548,9 @@ func (c *Connection) readLoop() {
 		if c.streamErr == nil {
 			c.streamErr = &ConnectionError{Message: "antigravity: the harness connection is closed"}
 		}
+		if !c.closing.Load() {
+			c.doneErr = c.streamErr
+		}
 		c.mu.Unlock()
 	}()
 	for {
@@ -556,7 +561,6 @@ func (c *Connection) readLoop() {
 			switch {
 			case c.closing.Load(), errors.Is(err, harness.ErrClosed):
 				c.logger.Info("harness connection closed")
-			case errors.Is(err, io.EOF):
 			default:
 				streamErr = connectionErrorFrom(err)
 				c.logger.Error("harness connection lost", "error", streamErr)
@@ -565,6 +569,26 @@ func (c *Connection) readLoop() {
 		}
 		c.processEvent(ev)
 	}
+}
+
+// Done returns a channel closed when the session ends for any reason:
+// Close was called, the harness process exited, or the harness connection
+// was lost. After Close it is closed once the harness has been shut down.
+func (c *Connection) Done() <-chan struct{} { return c.readerDone }
+
+// Err returns the error that ended the session: nil while it runs and nil
+// when it ended because of Close (whose own result Close returns). When
+// the session ended on its own, Err returns a *ConnectionError: for a lost
+// connection or an exited harness process it carries the WebSocket close
+// code and the tail of the harness's stderr. Once Done is closed, Err no
+// longer changes.
+func (c *Connection) Err() error {
+	if !c.readerFinished() {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.doneErr
 }
 
 func (c *Connection) readerFinished() bool {

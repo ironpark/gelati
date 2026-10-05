@@ -524,7 +524,7 @@ func buildEnv(opts *Options) []string {
 		env[k] = v
 	}
 	maps.Copy(env, opts.Env)
-	env["CLAUDE_AGENT_SDK_VERSION"] = Version
+	env["CLAUDE_AGENT_SDK_VERSION"] = Version()
 	// The engine reads the CLI's session_state_changed frames to tell when
 	// a run has ended; a caller-chosen value (any case) is kept.
 	if !hasKeyFold(env, "CLAUDE_CODE_SDK_READS_SESSION_STATE") {

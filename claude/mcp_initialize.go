@@ -129,7 +129,7 @@ func captureSDKMCPManifest(ctx context.Context, handler MCPHandler) (manifest sd
 				"title":       "Claude Code",
 				"description": "Anthropic's agentic coding tool",
 				"websiteUrl":  "https://claude.com/claude-code",
-				"version":     Version,
+				"version":     Version(),
 			},
 		},
 	})

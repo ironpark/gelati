@@ -42,9 +42,9 @@ func (s *TurnStream) record(event Event) {
 	}
 }
 
-// Result waits for the turn to end and returns what it produced. It drains
-// the event channel while it waits, so call it instead of reading Events, or
-// after reading as many events as you need.
+// Result waits for the turn to end and returns what it produced. It consumes
+// the remaining events while it waits, so call it instead of iterating
+// Events, or after breaking out of that loop.
 //
 // A failed turn returns both the result and its *TurnError. An interrupted
 // turn returns the result and a nil error. When the context ends first, the

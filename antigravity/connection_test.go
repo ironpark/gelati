@@ -39,8 +39,7 @@ func TestReceiveStepsBasic(t *testing.T) {
 		Text:      new("Hello world"),
 		State:     new(wire.StepUpdateStateActive),
 		Source:    new(wire.StepUpdateSourceModel),
-	}))
-	tr.hangUp()
+	}), idleEvent("my_cascade", ""))
 	steps, err := collectSteps(t, c.ReceiveSteps(t.Context()))
 	if err != nil {
 		t.Fatal(err)
@@ -1018,5 +1017,60 @@ func TestHarnessStartedTurn(t *testing.T) {
 	}
 	if c.turnStopReason(first) != StopReasonQuotaExhausted || c.LastTurnStopReason() != StopReasonUnspecified {
 		t.Fatalf("stop reasons %s / %s", c.turnStopReason(first), c.LastTurnStopReason())
+	}
+}
+
+// waitDone fails the test unless c's Done channel closes in time.
+func waitDone(t *testing.T, done <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for Done")
+	}
+}
+
+func TestDoneAndErrOnTransportError(t *testing.T) {
+	c, tr := newTestConnection(t, connectionOptions{})
+	select {
+	case <-c.Done():
+		t.Fatal("Done closed while running")
+	default:
+	}
+	if err := c.Err(); err != nil {
+		t.Fatalf("Err while running = %v", err)
+	}
+	tr.errs <- &harness.ConnectionError{Code: 1006, Stderr: "panic: boom"}
+	waitDone(t, c.Done())
+	ce, ok := errors.AsType[*ConnectionError](c.Err())
+	if !ok || ce.Code != 1006 || !strings.Contains(ce.Stderr, "panic: boom") {
+		t.Fatalf("Err = %v", c.Err())
+	}
+	// Close keeps the terminal error.
+	_ = c.Close()
+	if _, ok := errors.AsType[*ConnectionError](c.Err()); !ok {
+		t.Fatalf("Err after Close = %v", c.Err())
+	}
+}
+
+func TestDoneAndErrOnHangUp(t *testing.T) {
+	c, tr := newTestConnection(t, connectionOptions{})
+	conv := newConversation(c, nil)
+	tr.hangUp()
+	waitDone(t, conv.Done())
+	if _, ok := errors.AsType[*ConnectionError](conv.Err()); !ok {
+		t.Fatalf("Err = %v", conv.Err())
+	}
+}
+
+func TestDoneOnClose(t *testing.T) {
+	c, _ := newTestConnection(t, connectionOptions{})
+	done := c.Done()
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, done)
+	if err := c.Err(); err != nil {
+		t.Fatalf("Err after Close = %v", err)
 	}
 }

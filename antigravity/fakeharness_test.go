@@ -245,6 +245,7 @@ func (s *fakeSession) say(idx uint32, text string) {
 //	fail             a fatal HTTP 400 system error
 //	slow             work until halted
 //	structured JSON  finish with JSON as structured output
+//	crash            write to stderr and exit the process
 func (s *fakeSession) runTurn(ev *wire.InputEvent) {
 	prompt := ev.GetUserInput().GetParts()[0].GetText()
 	cmd, rest, _ := strings.Cut(prompt, " ")
@@ -325,6 +326,9 @@ func (s *fakeSession) runTurn(ev *wire.InputEvent) {
 	case "slow":
 		s.step(1, &wire.StepUpdate{State: new(wire.StepUpdateStateActive), Source: new(wire.StepUpdateSourceModel), Target: new(wire.StepUpdateTargetUser), Text: new("working"), TextDelta: new("working")})
 		<-s.halt
+	case "crash":
+		fmt.Fprintln(os.Stderr, "fake harness: crashing on purpose")
+		os.Exit(3)
 	case "structured":
 		s.step(1, &wire.StepUpdate{State: new(wire.StepUpdateStateDone), Source: new(wire.StepUpdateSourceModel), Finish: &wire.ActionFinish{OutputString: new(rest)}})
 	default:

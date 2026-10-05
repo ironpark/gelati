@@ -353,5 +353,13 @@ func (c *Conversation) WaitForWakeup(ctx context.Context, timeout time.Duration)
 	return c.conn.WaitForWakeup(ctx, timeout)
 }
 
+// Done returns a channel closed when the underlying connection's session
+// ends; see Connection.Done.
+func (c *Conversation) Done() <-chan struct{} { return c.conn.Done() }
+
+// Err returns the error that ended the underlying connection's session;
+// see Connection.Err.
+func (c *Conversation) Err() error { return c.conn.Err() }
+
 // Close closes the underlying connection.
 func (c *Conversation) Close() error { return c.conn.Close() }

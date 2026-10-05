@@ -52,7 +52,9 @@
 // "async with"), and Chat sends a prompt. Agent.Conversation exposes the
 // Conversation underneath, which keeps the step history, turn count,
 // compaction indices and per-turn usage; Conversation.Connection exposes the
-// Connection to the harness for direct step access.
+// Connection to the harness for direct step access. Each layer has Done,
+// closed when the session ends (Close, the harness exiting or the
+// connection dropping), and Err, the error that ended it.
 //
 // A ChatResponse streams one turn. Text, Thoughts, ToolCalls and Chunks are
 // iter.Seq2 sequences; each is an independent cursor over a shared buffer,
@@ -80,7 +82,10 @@
 // *ConnectionError (a fatal HTTP 400/401/403 model error, or the harness
 // went away) or *CancelledError (after Cancel; it matches
 // context.Canceled). Invalid configuration and input yield
-// *ValidationError.
+// *ValidationError. A session that ends on its own (the harness exited or
+// the connection dropped) closes Done, and Err then returns a
+// *ConnectionError carrying the harness's stderr tail; Err is nil after a
+// Close.
 //
 // # Name mapping
 //

@@ -67,16 +67,19 @@ func ExampleTurnStream() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	for event := range stream.Events() {
+	for event, err := range stream.Events(ctx) {
+		if err != nil {
+			log.Fatal(err)
+		}
 		switch event.Kind {
 		case codex.EventAgentMessageDelta, codex.EventCommandOutputDelta:
 			fmt.Print(event.Delta)
 		}
 	}
 
-	turn, err := stream.Wait(ctx)
+	result, err := stream.Result(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("turn finished:", turn.Status)
+	fmt.Println("turn finished:", result.Turn.Status)
 }

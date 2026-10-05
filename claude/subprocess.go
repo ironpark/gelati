@@ -16,10 +16,12 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/ironpark/gelati/internal/tailbuf"
 )
 
-// stderrTailLimit caps how much stderr is retained for error reports.
-const stderrTailLimit = 8 * 1024
+// stderrTailLines caps how many stderr lines are retained for error reports.
+const stderrTailLines = 100
 
 // Graceful shutdown timings, matching the TypeScript SDK: after stdin is
 // closed the CLI gets defaultGracefulExitTimeout to exit on its own, then
@@ -60,8 +62,7 @@ type subprocessTransport struct {
 	waitErr  error
 	exited   chan struct{}
 
-	stderrMu   sync.Mutex
-	stderrTail []byte
+	stderrTail tailbuf.Buffer
 	stderrDone chan struct{}
 
 	termOnce        sync.Once
@@ -78,6 +79,7 @@ func newSubprocessTransport(opts *Options, launch *launchConfig) *subprocessTran
 	return &subprocessTransport{
 		opts:            opts,
 		launch:          launch,
+		stderrTail:      tailbuf.Buffer{Max: stderrTailLines},
 		gracefulTimeout: defaultGracefulExitTimeout,
 		killTimeout:     defaultForceKillTimeout,
 	}
@@ -183,7 +185,7 @@ func (t *subprocessTransport) pumpStderr(r io.Reader) {
 		if line == "" {
 			continue
 		}
-		t.appendStderr(line)
+		t.stderrTail.AddLine(line)
 		if t.opts.Stderr != nil {
 			// Isolated per line: a panicking callback must not stop the
 			// pump and silently drop every later line.
@@ -249,22 +251,6 @@ func waitClosed(ch <-chan struct{}, d time.Duration) bool {
 	case <-timer.C:
 		return false
 	}
-}
-
-func (t *subprocessTransport) appendStderr(line string) {
-	t.stderrMu.Lock()
-	defer t.stderrMu.Unlock()
-	t.stderrTail = append(t.stderrTail, line...)
-	t.stderrTail = append(t.stderrTail, '\n')
-	if len(t.stderrTail) > stderrTailLimit {
-		t.stderrTail = t.stderrTail[len(t.stderrTail)-stderrTailLimit:]
-	}
-}
-
-func (t *subprocessTransport) stderrSnapshot() string {
-	t.stderrMu.Lock()
-	defer t.stderrMu.Unlock()
-	return strings.TrimSpace(string(t.stderrTail))
 }
 
 // Write sends one frame to the CLI's stdin. mu is not held while writing,
@@ -404,7 +390,7 @@ func (t *subprocessTransport) ReadMessages() iter.Seq2[json.RawMessage, error] {
 		if exitErr, ok := errors.AsType[exitCoder](waitErr); ok {
 			code := exitErr.ExitCode()
 			perr := NewProcessError(
-				fmt.Sprintf("Command failed with exit code %d", code), &code, t.stderrSnapshot())
+				fmt.Sprintf("Command failed with exit code %d", code), &code, strings.TrimSpace(t.stderrTail.String()))
 			t.mu.Lock()
 			t.exitErr = perr
 			t.mu.Unlock()

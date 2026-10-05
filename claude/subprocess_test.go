@@ -322,7 +322,7 @@ func TestBuildEnv(t *testing.T) {
 	if got["CLAUDE_CODE_ENTRYPOINT"] != "custom" || got["EXTRA"] != "1" {
 		t.Fatalf("env = %#v", got)
 	}
-	if got["CLAUDE_AGENT_SDK_VERSION"] != Version {
+	if got["CLAUDE_AGENT_SDK_VERSION"] != Version() {
 		t.Fatalf("version = %q", got["CLAUDE_AGENT_SDK_VERSION"])
 	}
 	if got["CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING"] != "true" || got["PWD"] != "/tmp" {
@@ -554,6 +554,28 @@ exit 3
 	}
 	if !slices.Contains(stderrLines, "boom happened") {
 		t.Fatalf("stderr callback saw %q", stderrLines)
+	}
+}
+
+func TestSubprocessTransportStderrTailKeepsLastLines(t *testing.T) {
+	stub := writeStub(t, `
+i=0
+while [ $i -lt 150 ]; do echo "line $i" >&2; i=$((i+1)); done
+exit 1
+`)
+	tr := newTestTransport(t, &Options{CLIPath: stub})
+	if err := tr.Connect(t.Context()); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer tr.Close()
+	_, err := collect(t, tr)
+	perr, ok := errors.AsType[*ProcessError](err)
+	if !ok {
+		t.Fatalf("error = %T (%v), want *ProcessError", err, err)
+	}
+	lines := strings.Split(perr.Stderr, "\n")
+	if len(lines) != stderrTailLines || lines[0] != "line 50" || lines[len(lines)-1] != "line 149" {
+		t.Fatalf("stderr tail has %d lines, %q .. %q", len(lines), lines[0], lines[len(lines)-1])
 	}
 }
 

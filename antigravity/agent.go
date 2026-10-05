@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"sync"
+
+	"github.com/ironpark/gelati/internal/lifecycle"
 )
 
 // Agent is the high-level API: it starts a harness session from a Config
@@ -35,6 +37,9 @@ type Agent struct {
 	starting bool
 	conv     *Conversation
 	triggers *TriggerRunner
+	// last is the most recently started session's connection, kept after
+	// Close for Done and Err.
+	last *Connection
 }
 
 // NewAgent validates cfg (see Config.Validate, including its safety policy
@@ -68,7 +73,7 @@ func (a *Agent) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	a.conv, a.triggers = conv, triggers
+	a.conv, a.triggers, a.last = conv, triggers, conv.conn
 	return nil
 }
 
@@ -112,6 +117,37 @@ func (a *Agent) Close() error {
 		triggers.Stop()
 	}
 	return conv.Close()
+}
+
+// Done returns a channel closed when the agent's session ends: Close was
+// called, the harness process exited, or the harness connection was lost.
+// It refers to the session current at the time of the call (the latest
+// one, also after Close); call it again after a restart. Before the first
+// Start it returns a closed channel.
+//
+// A session that ended on its own leaves the agent started: Chat fails,
+// and Close must be called before Start can open a new session.
+func (a *Agent) Done() <-chan struct{} {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.last == nil {
+		return lifecycle.Closed()
+	}
+	return a.last.Done()
+}
+
+// Err returns the error that ended the latest session (see
+// Connection.Err): nil while it runs or when it ended because of Close,
+// a *ConnectionError when the harness exited or the connection was lost.
+// Before the first Start it returns ErrNotStarted.
+func (a *Agent) Err() error {
+	a.mu.Lock()
+	last := a.last
+	a.mu.Unlock()
+	if last == nil {
+		return ErrNotStarted
+	}
+	return last.Err()
 }
 
 // Chat sends a prompt and returns the turn's streaming response. The prompt

@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ironpark/gelati/internal/lifecycle"
 )
 
 // DefaultInitializeTimeout bounds the initialize handshake when the caller's
@@ -67,6 +69,14 @@ type engine struct {
 	closeOnce  sync.Once
 	closed     chan struct{}
 	readerDone chan struct{}
+
+	// startCtx is the ctx start was given; its cancellation is reported as
+	// the reason the session ended.
+	startCtx context.Context
+	// fatal is the error failAll reported, guarded by mu.
+	fatal error
+	// end records how the session ended, for Client.Done and Client.Err.
+	end lifecycle.Done
 }
 
 type controlResult struct {
@@ -115,6 +125,7 @@ func (e *engine) start(ctx context.Context) {
 		base := context.WithoutCancel(ctx)
 		e.mu.Lock()
 		e.baseCtx = base
+		e.startCtx = ctx
 		e.mu.Unlock()
 		go e.readLoop(base)
 	})
@@ -205,12 +216,19 @@ func (e *engine) sendMCPFrame(ctx context.Context, frame map[string]any) error {
 
 // readLoop demultiplexes the transport's frames until the CLI's output ends.
 func (e *engine) readLoop(ctx context.Context) {
+	var reason error
 	defer close(e.readerDone)
+	// Ends the session after the message stream is closed, so a consumer
+	// that sees the stream end and then checks Err finds the session over.
+	defer func() { e.end.Finish(reason) }()
 	defer e.closeMessages()
 	defer e.run.finalize()
 	// Flush mirror entries batched since the last result (late subagent
 	// writes, early EOF, transport errors) before the stream ends.
 	defer e.flushMirror(ctx)
+	// Decide why the output ended as the loop exits, before the flushes
+	// above: a Close during a slow flush must not hide a crash.
+	defer func() { reason = e.endReason() }()
 
 	for raw, err := range e.transport.ReadMessages() {
 		if err != nil {
@@ -347,6 +365,7 @@ func (e *engine) noteCommandsChanged(frame map[string]any) {
 func (e *engine) failAll(err error) {
 	err = e.errResults.translate(err)
 	e.mu.Lock()
+	e.fatal = err
 	pending := e.pending
 	e.pending = map[string]*pendingRequest{}
 	e.mu.Unlock()
@@ -691,6 +710,27 @@ func (e *engine) close() error {
 			// past the deadline in-flight appends are abandoned.
 			mirror.close(mirrorCtx)
 		}
+		// Covers an engine never started, or a reader still wedged.
+		e.end.Finish(nil)
 	})
 	return err
+}
+
+// endReason reports why the read loop stopped: nil when close stopped it,
+// else the cancellation of the session's ctx, the fatal error that ended
+// the output, or a ConnectionError when the output simply ended.
+func (e *engine) endReason() error {
+	if e.isClosed() {
+		return nil
+	}
+	e.mu.Lock()
+	ctx, fatal := e.startCtx, e.fatal
+	e.mu.Unlock()
+	if ctx != nil && ctx.Err() != nil {
+		return context.Cause(ctx)
+	}
+	if fatal != nil {
+		return fatal
+	}
+	return NewConnectionError("Claude Code output ended")
 }

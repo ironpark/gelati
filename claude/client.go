@@ -4,6 +4,8 @@ import (
 	"context"
 	"iter"
 	"sync"
+
+	"github.com/ironpark/gelati/internal/lifecycle"
 )
 
 // DefaultSessionID is the session a client's turns are attributed to when the
@@ -43,6 +45,9 @@ type Client struct {
 	connecting bool
 	// sess is the live session, nil while disconnected.
 	sess *session
+	// last is the engine of the current or most recent session, kept after
+	// Disconnect for Done and Err.
+	last *engine
 }
 
 // NewClient builds an unconnected client. opts may be nil.
@@ -73,6 +78,9 @@ func (c *Client) Connect(ctx context.Context, initial ...UserInput) error {
 	c.mu.Lock()
 	c.connecting = false
 	c.sess = sess
+	if err == nil {
+		c.last = sess.eng
+	}
 	c.mu.Unlock()
 	if err != nil {
 		return err
@@ -162,6 +170,17 @@ func (c *Client) ReceiveResponse(ctx context.Context) iter.Seq2[Message, error] 
 	}
 }
 
+// Run sends prompt as a new turn and waits for its ResultMessage, whose
+// Result field is the final response text. An empty sessionID uses
+// DefaultSessionID. Messages before the result are dropped; use Query and
+// ReceiveResponse to observe them. Errors are as for the package-level Run.
+func (c *Client) Run(ctx context.Context, prompt, sessionID string) (*ResultMessage, error) {
+	if err := c.Query(ctx, prompt, sessionID); err != nil {
+		return nil, err
+	}
+	return collectResult(c.ReceiveResponse(ctx))
+}
+
 // ServerInfo reports the raw initialize response: available commands, output
 // styles and other capabilities. It is nil before Connect. InitializationResult
 // is the typed form.
@@ -170,6 +189,36 @@ func (c *Client) ServerInfo() ServerInfo {
 		return ServerInfo(r.Raw)
 	}
 	return nil
+}
+
+// Done returns a channel that is closed when the session ends for any
+// reason: Disconnect, cancellation of the ctx given to Connect, the CLI
+// exiting, or a transport failure. It refers to the session current at the
+// time of the call (the latest one, also after Disconnect); call it again
+// after reconnecting. Before the first Connect it returns a closed channel.
+func (c *Client) Done() <-chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.last == nil {
+		return lifecycle.Closed()
+	}
+	return c.last.end.C()
+}
+
+// Err reports why the latest session ended: nil while it runs and after a
+// Disconnect that ended it; otherwise the cancellation cause of Connect's
+// ctx, the fatal error that ended the CLI's output (a *ProcessError or
+// *ResultError for a failed exit, say), or a *ConnectionError when the
+// output ended cleanly. Before the first Connect it returns a
+// *ConnectionError.
+func (c *Client) Err() error {
+	c.mu.Lock()
+	last := c.last
+	c.mu.Unlock()
+	if last == nil {
+		return NewConnectionError("Not connected. Call Connect first.")
+	}
+	return last.end.Err()
 }
 
 // Disconnect ends the session and releases its resources, including the

@@ -12,6 +12,10 @@ import (
 // maxPartial bounds an unterminated line before it is kept as a line.
 const maxPartial = 64 << 10
 
+// maxLine bounds each kept line, so the buffer holds at most Max*maxLine
+// bytes of lines.
+const maxLine = 4 << 10
+
 // Buffer keeps the last Max lines written to it and copies all output to
 // Tee. The zero value keeps nothing. It is safe for concurrent use.
 type Buffer struct {
@@ -47,7 +51,18 @@ func (b *Buffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// AddLine keeps line, which must not contain a newline, without copying it
+// to Tee. It is the cheap path for callers that already split the output.
+func (b *Buffer) AddLine(line string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.push(line)
+}
+
 func (b *Buffer) push(line string) {
+	if len(line) > maxLine {
+		line = line[:maxLine] + "…"
+	}
 	switch {
 	case b.Max <= 0:
 	case len(b.lines) < b.Max:

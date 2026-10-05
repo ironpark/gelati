@@ -24,6 +24,39 @@ func Query(ctx context.Context, prompt string, opts *Options) iter.Seq2[Message,
 	return QueryStream(ctx, slices.Values([]UserInput{{Content: prompt}}), opts)
 }
 
+// Run runs a one-shot prompt to completion and returns its final
+// ResultMessage, whose Result field is the final response text. It ranges over
+// Query, dropping the intermediate messages; use Query to observe them.
+//
+// The error is the one Query's stream ends with, returned alongside the
+// ResultMessage when one arrived first. Unlike Query, Run also reports an
+// error result as a *ResultError, and a stream with no result as a
+// *ConnectionError.
+func Run(ctx context.Context, prompt string, opts *Options) (*ResultMessage, error) {
+	return collectResult(Query(ctx, prompt, opts))
+}
+
+// collectResult drains messages and returns the last ResultMessage, with the
+// errors Run documents.
+func collectResult(messages iter.Seq2[Message, error]) (*ResultMessage, error) {
+	var result *ResultMessage
+	for msg, err := range messages {
+		if err != nil {
+			return result, err
+		}
+		if r, ok := msg.(*ResultMessage); ok {
+			result = r
+		}
+	}
+	if result == nil {
+		return nil, NewConnectionError("Claude Code ended without a result")
+	}
+	if result.IsError {
+		return result, newErrorResultError(result.Data, nil)
+	}
+	return result, nil
+}
+
 // QueryStream is Query with several user turns known up front. Every input is
 // written before the responses are consumed, so it stays unidirectional: use
 // Client when a later turn depends on an earlier response.

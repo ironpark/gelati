@@ -22,6 +22,11 @@
 //		}
 //	}
 //
+// [Run] runs the same one-shot prompt to completion and returns only the final
+// [ResultMessage], whose Result field is the final text:
+//
+//	res, err := claude.Run(ctx, "What is 2+2?", nil)
+//
 // [Client] runs an interactive session where later turns depend on earlier
 // responses, and supports interrupts and mid-conversation setters:
 //
@@ -37,6 +42,10 @@
 //		...
 //	}
 //
+// [Client.Run] is the one-turn shorthand of Query plus ReceiveResponse.
+// [Client.Done] is closed when the session ends for any reason, and
+// [Client.Err] then reports why.
+//
 // # Lifecycle
 //
 // Every blocking call takes a [context.Context]; cancelling it terminates the
@@ -44,7 +53,8 @@
 // output ends, and a fatal error arrives as the final item of the sequence
 // rather than as a panic. Breaking out of a [Query] range loop tears the
 // session down; a [Client] is torn down by [Client.Disconnect], which is
-// idempotent and safe to defer.
+// idempotent and safe to defer. [Client.Done] and [Client.Err] report a
+// session that ended on its own.
 //
 // Message and content-block unions, and the option unions, are sealed
 // interfaces ([Message], [ContentBlock], [PermissionResult], [MCPServerConfig],
@@ -133,7 +143,7 @@
 // The Go names differ from the Python and TypeScript ones where Go
 // conventions differ:
 //
-//	query()                        -> Query, QueryStream
+//	query()                        -> Query, QueryStream, Run (final result only)
 //	ClaudeSDKClient                -> Client
 //	ClaudeAgentOptions             -> Options
 //	create_sdk_mcp_server()        -> NewSDKMCPServer

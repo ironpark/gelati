@@ -74,7 +74,8 @@ func (f *fakeTransport) emit(evs ...*wire.OutputEvent) {
 	}
 }
 
-// hangUp ends the event stream cleanly after the events already emitted.
+// hangUp ends the event stream after the events already emitted, as a
+// dropped connection does.
 func (f *fakeTransport) hangUp() { f.events <- nil }
 
 // next returns the next event the connection sent.
