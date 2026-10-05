@@ -10,7 +10,7 @@ import (
 	"github.com/ironpark/gelati/agy"
 )
 
-// TestE2EHelloWorld chats with a real model through the real harness. It is
+// TestE2EHelloWorld runs a turn on a real model through the real harness. It is
 // skipped unless GELATI_AGY_E2E=1, since it needs GEMINI_API_KEY and
 // the localharness binary (ANTIGRAVITY_HARNESS_PATH or PATH) and costs
 // money.
@@ -37,7 +37,7 @@ func TestE2EHelloWorld(t *testing.T) {
 	}
 	defer agent.Close()
 
-	resp, err := agent.Chat(ctx, agy.Text("What is the capital of France?"))
+	resp, err := agent.Send(ctx, agy.Text("What is the capital of France?"))
 	if err != nil {
 		t.Fatal(err)
 	}

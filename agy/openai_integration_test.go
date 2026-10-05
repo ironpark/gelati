@@ -137,7 +137,7 @@ func TestRealHarnessOpenAI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	agent, stderr := openAIAgent(t, ctx, srv, weatherTool())
-	resp, err := agent.Chat(ctx, agy.Text("What's the weather in Seattle?"))
+	resp, err := agent.Send(ctx, agy.Text("What's the weather in Seattle?"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestRealHarnessOpenAIBadRequest(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	agent, _ := openAIAgent(t, ctx, srv, weatherTool())
-	resp, err := agent.Chat(ctx, agy.Text("What's the weather in Seattle?"))
+	resp, err := agent.Send(ctx, agy.Text("What's the weather in Seattle?"))
 	if err == nil {
 		_, err = resp.Result(ctx)
 	}

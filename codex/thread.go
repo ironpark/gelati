@@ -18,7 +18,7 @@ type ThreadEvent struct {
 	// ThreadID is the thread the event belongs to.
 	ThreadID string
 	// Thread is set for thread/started.
-	Thread *Thread
+	Thread *ThreadInfo
 	// Status is set for thread/status/changed.
 	Status *ThreadStatus
 	// Name is set for thread/name/updated.
@@ -26,6 +26,30 @@ type ThreadEvent struct {
 	// Params is the raw notification payload.
 	Params jsontext.Value
 }
+
+// Thread is a handle on one thread of a Client. StartThread, ResumeThread,
+// and ForkThread return one; Client.Thread wraps a known thread id. A Thread
+// is safe for concurrent use.
+type Thread struct {
+	client *Client
+	info   ThreadInfo
+}
+
+// Thread returns a handle for the thread id without contacting the server.
+// Its Info holds only the id. Turns need the thread loaded on this client's
+// app-server, by StartThread, ResumeThread, or ForkThread.
+func (c *Client) Thread(id string) *Thread {
+	return &Thread{client: c, info: ThreadInfo{ID: id}}
+}
+
+// ID returns the thread id.
+func (t *Thread) ID() string { return t.info.ID }
+
+// Info returns the thread as the server reported it when the handle was
+// created. It is not refreshed; call Client.ReadThread for the current state.
+// Its Turns are set when the server returned the history, which the handle
+// then keeps; set ExcludeTurns on resume or fork to leave it out.
+func (t *Thread) Info() ThreadInfo { return t.info }
 
 // threadSubscription tracks one subscribed thread and its active turns.
 type threadSubscription struct {
@@ -44,7 +68,7 @@ type threadSubscription struct {
 	queue   []queuedNotification
 }
 
-// emit delivers an event to every ThreadEvents loop without ever blocking the
+// emit delivers an event to every Events loop without ever blocking the
 // transport reader. A slow consumer loses events rather than stalling the
 // connection.
 func (s *threadSubscription) emit(c *Client, event ThreadEvent) {
@@ -53,7 +77,7 @@ func (s *threadSubscription) emit(c *Client, event ThreadEvent) {
 	}
 }
 
-// close stops delivery and ends every ThreadEvents loop.
+// close stops delivery and ends every Events loop.
 func (s *threadSubscription) close() {
 	if s.quit.Finish(nil) {
 		s.events.close()
@@ -97,8 +121,7 @@ func (c *Client) lookup(threadID string) *threadSubscription {
 	return c.threads[threadID]
 }
 
-// unsubscribeLocal removes a thread subscription and ends its ThreadEvents
-// loops.
+// unsubscribeLocal removes a thread subscription and ends its Events loops.
 func (c *Client) unsubscribeLocal(threadID string) {
 	c.mu.Lock()
 	sub := c.threads[threadID]
@@ -109,20 +132,22 @@ func (c *Client) unsubscribeLocal(threadID string) {
 	}
 }
 
-// ThreadEvents iterates the lifecycle events of a subscribed thread (one
-// opened by StartThread, ResumeThread, or ForkThread). Events are received
-// from the moment the loop starts until it exits; any number of loops may
-// range over the same thread, each seeing every event.
+// Events iterates the lifecycle events of the thread while this client is
+// subscribed to it (after StartThread, ResumeThread, ForkThread, or a turn
+// started on it). Events are received from the moment the loop starts until
+// it exits; any number of loops may range over the same thread, each seeing
+// every event.
 //
-// The sequence ends cleanly when UnsubscribeThread drops the thread. It ends
-// with an error when ctx ends (ctx's error), when the client shuts down
+// The sequence ends cleanly when Unsubscribe drops the thread. It ends with
+// an error when ctx ends (ctx's error), when the client shuts down
 // (Client.Err, typically ErrClosed), or immediately when the thread is not
 // subscribed.
 //
 // Each loop buffers up to Options.EventBuffer events; while that buffer is
 // full, newer events are dropped rather than stalling the connection, so
 // keep the loop body short.
-func (c *Client) ThreadEvents(ctx context.Context, threadID string) iter.Seq2[ThreadEvent, error] {
+func (t *Thread) Events(ctx context.Context) iter.Seq2[ThreadEvent, error] {
+	c, threadID := t.client, t.ID()
 	return func(yield func(ThreadEvent, error) bool) {
 		sub := c.lookup(threadID)
 		if sub == nil {
@@ -149,7 +174,7 @@ func (c *Client) endErr() error {
 }
 
 // isThreadMethod reports whether method is a thread lifecycle notification
-// delivered on ThreadEvents.
+// delivered on Thread.Events.
 func isThreadMethod(method string) bool {
 	switch method {
 	case MethodThreadStarted, MethodThreadStatusChanged, MethodThreadArchived,
@@ -196,36 +221,32 @@ func (c *Client) routeThreadNotification(method string, params jsontext.Value, t
 
 // StartThread creates a new thread and subscribes to its turn and item events.
 func (c *Client) StartThread(ctx context.Context, params StartThreadParams) (*Thread, error) {
-	var result ThreadResult
-	if err := c.tr.Call(ctx, "thread/start", params, &result); err != nil {
-		return nil, err
-	}
-	c.subscribe(result.Thread.ID)
-	return &result.Thread, nil
+	return c.openThread(ctx, "thread/start", params)
 }
 
 // ResumeThread reopens a stored thread so later turns append to it.
 func (c *Client) ResumeThread(ctx context.Context, params ResumeThreadParams) (*Thread, error) {
-	var result ThreadResult
-	if err := c.tr.Call(ctx, "thread/resume", params, &result); err != nil {
-		return nil, err
-	}
-	c.subscribe(result.Thread.ID)
-	return &result.Thread, nil
+	return c.openThread(ctx, "thread/resume", params)
 }
 
 // ForkThread branches a stored thread into a new thread id.
 func (c *Client) ForkThread(ctx context.Context, params ForkThreadParams) (*Thread, error) {
+	return c.openThread(ctx, "thread/fork", params)
+}
+
+// openThread sends a thread/start, thread/resume, or thread/fork request and
+// subscribes to the thread it returns.
+func (c *Client) openThread(ctx context.Context, method string, params any) (*Thread, error) {
 	var result ThreadResult
-	if err := c.tr.Call(ctx, "thread/fork", params, &result); err != nil {
+	if err := c.tr.Call(ctx, method, params, &result); err != nil {
 		return nil, err
 	}
 	c.subscribe(result.Thread.ID)
-	return &result.Thread, nil
+	return &Thread{client: c, info: result.Thread}, nil
 }
 
 // ReadThread reads a stored thread without resuming or subscribing to it.
-func (c *Client) ReadThread(ctx context.Context, params ReadThreadParams) (*Thread, error) {
+func (c *Client) ReadThread(ctx context.Context, params ReadThreadParams) (*ThreadInfo, error) {
 	var result ThreadResult
 	if err := c.tr.Call(ctx, "thread/read", params, &result); err != nil {
 		return nil, err
@@ -245,13 +266,13 @@ func (c *Client) ListThreads(ctx context.Context, params ListThreadsParams) (*Li
 
 // AllThreads iterates every stored thread matching params, following
 // nextCursor to exhaustion. Iteration stops after yielding a non-nil error.
-func (c *Client) AllThreads(ctx context.Context, params ListThreadsParams) iter.Seq2[Thread, error] {
-	return func(yield func(Thread, error) bool) {
+func (c *Client) AllThreads(ctx context.Context, params ListThreadsParams) iter.Seq2[ThreadInfo, error] {
+	return func(yield func(ThreadInfo, error) bool) {
 		page := params
 		for {
 			result, err := c.ListThreads(ctx, page)
 			if err != nil {
-				yield(Thread{}, err)
+				yield(ThreadInfo{}, err)
 				return
 			}
 			for _, thread := range result.Data {
@@ -274,7 +295,7 @@ func (c *Client) ArchiveThread(ctx context.Context, threadID string) error {
 }
 
 // UnarchiveThread restores an archived thread and returns it.
-func (c *Client) UnarchiveThread(ctx context.Context, threadID string) (*Thread, error) {
+func (c *Client) UnarchiveThread(ctx context.Context, threadID string) (*ThreadInfo, error) {
 	var result ThreadResult
 	if err := c.tr.Call(ctx, "thread/unarchive", ThreadIDParams{ThreadID: threadID}, &result); err != nil {
 		return nil, err
@@ -288,27 +309,46 @@ func (c *Client) DeleteThread(ctx context.Context, threadID string) error {
 	return c.tr.Call(ctx, "thread/delete", ThreadIDParams{ThreadID: threadID}, nil)
 }
 
-// UnsubscribeThread drops this connection's subscription to a thread and
-// ends its ThreadEvents loops. The returned status is "unsubscribed",
-// "notSubscribed", or "notLoaded".
-func (c *Client) UnsubscribeThread(ctx context.Context, threadID string) (string, error) {
+// Unsubscribe drops this connection's subscription to the thread, ends its
+// Events loops, and fails its open turn streams with ErrClosed. The returned
+// status is "unsubscribed", "notSubscribed", or "notLoaded".
+func (t *Thread) Unsubscribe(ctx context.Context) (string, error) {
 	var result UnsubscribeResult
-	err := c.tr.Call(ctx, "thread/unsubscribe", ThreadIDParams{ThreadID: threadID}, &result)
-	c.unsubscribeLocal(threadID)
+	err := t.client.tr.Call(ctx, "thread/unsubscribe", t.idParams(), &result)
+	t.client.unsubscribeLocal(t.ID())
 	if err != nil {
 		return "", err
 	}
 	return result.Status, nil
 }
 
-// SetThreadName sets a thread's user-facing name.
-func (c *Client) SetThreadName(ctx context.Context, threadID, name string) error {
+// SetName sets the thread's user-facing name.
+func (t *Thread) SetName(ctx context.Context, name string) error {
 	params := struct {
 		ThreadID string `json:"threadId"`
 		Name     string `json:"name"`
-	}{ThreadID: threadID, Name: name}
-	return c.tr.Call(ctx, "thread/name/set", params, nil)
+	}{ThreadID: t.ID(), Name: name}
+	return t.client.tr.Call(ctx, "thread/name/set", params, nil)
 }
+
+// Compact triggers manual history compaction. Progress streams as ordinary
+// turn and item notifications.
+func (t *Thread) Compact(ctx context.Context) error {
+	return t.client.tr.Call(ctx, "thread/compact/start", t.idParams(), nil)
+}
+
+// RunShellCommand runs a user-initiated shell command against the thread. It
+// runs outside the sandbox with full access.
+func (t *Thread) RunShellCommand(ctx context.Context, command string) error {
+	params := struct {
+		ThreadID string `json:"threadId"`
+		Command  string `json:"command"`
+	}{ThreadID: t.ID(), Command: command}
+	return t.client.tr.Call(ctx, "thread/shellCommand", params, nil)
+}
+
+// idParams returns the `{ "threadId": ... }` params of the thread.
+func (t *Thread) idParams() ThreadIDParams { return ThreadIDParams{ThreadID: t.ID()} }
 
 // ListLoadedThreads returns the thread ids currently loaded in memory.
 func (c *Client) ListLoadedThreads(ctx context.Context) ([]string, error) {

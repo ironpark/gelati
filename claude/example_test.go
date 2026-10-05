@@ -118,6 +118,31 @@ func ExampleClient() {
 	}
 }
 
+func ExampleTurnStream_Text() {
+	ctx := context.Background()
+	// With partial messages the text arrives token by token; without, a
+	// block at a time.
+	client, err := claude.New(ctx, claude.Options{IncludePartialMessages: true})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer client.Close()
+
+	turn, err := client.Send(ctx, claude.Text("Write a haiku about Go"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	for text, err := range turn.Text(ctx) {
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Print(text)
+	}
+	if res, err := turn.Result(ctx); err == nil && res.TotalCostUSD != nil {
+		fmt.Printf("\ncost: $%.4f\n", *res.TotalCostUSD)
+	}
+}
+
 func ExampleTurnStream_Cancel() {
 	ctx := context.Background()
 	client, err := claude.New(ctx, claude.Options{})

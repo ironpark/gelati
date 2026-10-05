@@ -479,6 +479,15 @@ func (e *StreamEvent) TextDelta() (string, bool) {
 	return text, ok
 }
 
+// messageStartID returns the API message id of a message_start event.
+func (e *StreamEvent) messageStartID() (string, bool) {
+	if e.Event["type"] != "message_start" {
+		return "", false
+	}
+	msg, _ := e.Event["message"].(map[string]any)
+	return jsonx.Str(msg["id"]), true
+}
+
 // RateLimitInfo describes the rate limit state at the moment it changed.
 type RateLimitInfo struct {
 	Status   RateLimitStatus `json:"status"`

@@ -142,8 +142,8 @@ func TestProcessExitFailsActiveTurns(t *testing.T) {
 	if client.Err() == nil {
 		t.Fatal("client Err = nil after process exit")
 	}
-	if _, err := client.StartTurn(context.Background(), threadID, Text("again"), nil); err == nil {
-		t.Fatal("StartTurn succeeded after process exit")
+	if _, err := client.Thread(threadID).Send(context.Background(), Text("again")); err == nil {
+		t.Fatal("Send succeeded after process exit")
 	}
 }
 

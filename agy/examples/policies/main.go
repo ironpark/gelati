@@ -89,11 +89,7 @@ func main() {
 		"Look up the secret named 'api_key' using lookup_secret.",
 	} {
 		fmt.Printf("\n  User: %s\n", prompt)
-		stream, err := agent.Chat(ctx, agy.Text(prompt))
-		if err != nil {
-			log.Fatal(err)
-		}
-		res, err := stream.Result(ctx)
+		res, err := agent.Run(ctx, agy.Text(prompt))
 		if err != nil {
 			log.Fatal(err)
 		}

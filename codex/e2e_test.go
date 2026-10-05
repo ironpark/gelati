@@ -45,15 +45,17 @@ func TestE2E(t *testing.T) {
 		t.Fatalf("StartThread: %v", err)
 	}
 
-	result, err := client.Run(ctx, thread.ID, Text("Reply with exactly the word pong and nothing else."),
-		&TurnOptions{
+	result, err := thread.RunTurn(ctx, TurnRequest{
+		Input: []InputItem{Text("Reply with exactly the word pong and nothing else.")},
+		TurnOptions: TurnOptions{
 			ApprovalPolicy: ApprovalNever,
 			SandboxPolicy:  SandboxModeReadOnly.Policy(),
 			Effort:         "low",
 			TurnTrigger:    "gelati-e2e",
-		})
+		},
+	})
 	if err != nil {
-		t.Fatalf("Run: %v", err)
+		t.Fatalf("RunTurn: %v", err)
 	}
 	if !strings.Contains(strings.ToLower(result.Text()), "pong") {
 		t.Fatalf("final response = %q (items: %d)", result.Text(), len(result.Items))
@@ -62,12 +64,15 @@ func TestE2E(t *testing.T) {
 		t.Fatalf("turn = %+v, usage = %+v", result.Turn, result.Usage)
 	}
 
-	result, err = client.Run(ctx, thread.ID, Text(`Return {"answer": 4} for 2+2.`), &TurnOptions{
-		OutputSchema: []byte(`{"type":"object","properties":{"answer":{"type":"integer"}},` +
-			`"required":["answer"],"additionalProperties":false}`),
+	result, err = thread.RunTurn(ctx, TurnRequest{
+		Input: []InputItem{Text(`Return {"answer": 4} for 2+2.`)},
+		TurnOptions: TurnOptions{
+			OutputSchema: []byte(`{"type":"object","properties":{"answer":{"type":"integer"}},` +
+				`"required":["answer"],"additionalProperties":false}`),
+		},
 	})
 	if err != nil {
-		t.Fatalf("Run with output schema: %v", err)
+		t.Fatalf("RunTurn with output schema: %v", err)
 	}
 	if strings.ReplaceAll(result.Text(), " ", "") != `{"answer":4}` {
 		t.Fatalf("structured response = %q", result.Text())

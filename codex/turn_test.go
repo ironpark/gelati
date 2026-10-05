@@ -23,11 +23,11 @@ func startThread(t *testing.T, client *Client, server *fakeServer, id string) st
 	if err != nil {
 		t.Fatalf("StartThread: %v", err)
 	}
-	return thread.ID
+	return thread.ID()
 }
 
 // startTurn starts a turn and answers turn/start with the given turn id.
-func startTurn(t *testing.T, client *Client, server *fakeServer, threadID, turnID string, input []InputItem) *TurnStream {
+func startTurn(t *testing.T, client *Client, server *fakeServer, threadID, turnID string, input ...InputItem) *TurnStream {
 	t.Helper()
 	done := serve(t, func() {
 		req := server.expect("turn/start")
@@ -35,10 +35,10 @@ func startTurn(t *testing.T, client *Client, server *fakeServer, threadID, turnI
 			"id": turnID, "status": "inProgress", "items": []any{}, "error": nil,
 		}})
 	})
-	stream, err := client.StartTurn(context.Background(), threadID, input, nil)
+	stream, err := client.Thread(threadID).Send(context.Background(), input...)
 	<-done
 	if err != nil {
-		t.Fatalf("StartTurn: %v", err)
+		t.Fatalf("Send: %v", err)
 	}
 	return stream
 }
@@ -92,11 +92,13 @@ func TestTurnStreamEndToEnd(t *testing.T) {
 		}})
 	})
 
-	stream, err := client.StartTurn(context.Background(), threadID, Text("Run tests"),
-		&TurnOptions{Model: "gpt-5.6-terra", Effort: "medium"})
+	stream, err := client.Thread(threadID).SendTurn(context.Background(), TurnRequest{
+		Input:       []InputItem{Text("Run tests")},
+		TurnOptions: TurnOptions{Model: "gpt-5.6-terra", Effort: "medium"},
+	})
 	<-done
 	if err != nil {
-		t.Fatalf("StartTurn: %v", err)
+		t.Fatalf("Send: %v", err)
 	}
 	if stream.TurnID() != "turn_1" || stream.ThreadID() != "thr_1" {
 		t.Fatalf("stream ids = %q %q", stream.ThreadID(), stream.TurnID())
@@ -212,10 +214,10 @@ func TestTurnEventsBeforeStartResponse(t *testing.T) {
 		server.respond(req, map[string]any{"turn": map[string]any{"id": "turn_1", "status": "inProgress"}})
 	})
 
-	stream, err := client.StartTurn(context.Background(), threadID, Text("hi"), nil)
+	stream, err := client.Thread(threadID).Send(context.Background(), Text("hi"))
 	<-done
 	if err != nil {
-		t.Fatalf("StartTurn: %v", err)
+		t.Fatalf("Send: %v", err)
 	}
 
 	event, ok := recvEvent(t, stream)
@@ -235,10 +237,10 @@ func TestTurnStartError(t *testing.T) {
 		req := server.expect("turn/start")
 		server.respondError(req, CodeServerOverloaded, "Server overloaded; retry later.")
 	})
-	stream, err := client.StartTurn(context.Background(), threadID, Text("hi"), nil)
+	stream, err := client.Thread(threadID).Send(context.Background(), Text("hi"))
 	<-done
 	if err == nil {
-		t.Fatal("StartTurn succeeded")
+		t.Fatal("Send succeeded")
 	}
 	if !IsOverloaded(err) {
 		t.Fatalf("err = %v, want overload", err)
@@ -255,7 +257,7 @@ func TestTurnInterrupt(t *testing.T) {
 
 	done := serve(t, func() {
 		req := server.expect("turn/interrupt")
-		var params InterruptTurnParams
+		var params interruptTurnParams
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			t.Errorf("params: %v", err)
 		}
@@ -267,8 +269,8 @@ func TestTurnInterrupt(t *testing.T) {
 			"turn": map[string]any{"id": "turn_1", "status": "interrupted"}})
 	})
 
-	if err := client.InterruptTurn(context.Background(), threadID, "turn_1"); err != nil {
-		t.Fatalf("InterruptTurn: %v", err)
+	if err := client.Thread(threadID).Interrupt(context.Background(), "turn_1"); err != nil {
+		t.Fatalf("Interrupt: %v", err)
 	}
 	<-done
 
@@ -314,7 +316,7 @@ func TestTurnFailed(t *testing.T) {
 	}
 }
 
-func TestSteerTurn(t *testing.T) {
+func TestThreadSteer(t *testing.T) {
 	client, server := connect(t, Options{})
 	threadID := startThread(t, client, server, "thr_1")
 
@@ -337,14 +339,11 @@ func TestSteerTurn(t *testing.T) {
 		server.respond(req, map[string]any{"turnId": "turn_1"})
 	})
 
-	turnID, err := client.SteerTurn(context.Background(), threadID, "turn_1",
+	err := client.Thread(threadID).Steer(context.Background(), "turn_1",
 		Text("Actually focus on failing tests first."))
 	<-done
 	if err != nil {
-		t.Fatalf("SteerTurn: %v", err)
-	}
-	if turnID != "turn_1" {
-		t.Fatalf("turnId = %q", turnID)
+		t.Fatalf("Steer: %v", err)
 	}
 }
 
@@ -365,10 +364,10 @@ func TestCompactAndShellCommand(t *testing.T) {
 		server.respond(req, map[string]any{})
 	})
 
-	if err := client.CompactThread(context.Background(), "thr_b"); err != nil {
-		t.Fatalf("CompactThread: %v", err)
+	if err := client.Thread("thr_b").Compact(context.Background()); err != nil {
+		t.Fatalf("Compact: %v", err)
 	}
-	if err := client.RunShellCommand(context.Background(), "thr_b", "git status --short"); err != nil {
+	if err := client.Thread("thr_b").RunShellCommand(context.Background(), "git status --short"); err != nil {
 		t.Fatalf("RunShellCommand: %v", err)
 	}
 	<-done
@@ -591,4 +590,81 @@ func TestAbandonedStreamsDoNotLeakGoroutines(t *testing.T) {
 	if got := runtime.NumGoroutine(); got > before+4 {
 		t.Fatalf("goroutines leaked: before=%d after=%d", before, got)
 	}
+}
+
+func TestTurnStreamText(t *testing.T) {
+	client, server := connect(t, Options{})
+	threadID := startThread(t, client, server, "thr_1")
+	stream := startTurn(t, client, server, threadID, "turn_1", Text("hi"))
+
+	notifyTurn(server, MethodReasoningSummaryTextDelta, map[string]any{"itemId": "r1", "delta": "hmm"})
+	notifyTurn(server, MethodAgentMessageDelta, map[string]any{"itemId": "m1", "delta": "Hel"})
+	notifyTurn(server, MethodCommandExecutionOutputDelta, map[string]any{"itemId": "c1", "delta": "ok\n"})
+	notifyTurn(server, MethodAgentMessageDelta, map[string]any{"itemId": "m1", "delta": "lo"})
+	notifyTurn(server, MethodItemCompleted, completedMessage("m1", "Hello", ""))
+	server.notify(MethodTurnCompleted, map[string]any{"threadId": "thr_1",
+		"turn": map[string]any{"id": "turn_1", "status": "completed"}})
+
+	var text strings.Builder
+	for delta, err := range stream.Text(t.Context()) {
+		if err != nil {
+			t.Fatalf("Text: %v", err)
+		}
+		text.WriteString(delta)
+	}
+	if text.String() != "Hello" {
+		t.Fatalf("text = %q", text.String())
+	}
+	if result, err := stream.Result(context.Background()); err != nil || result.Text() != "Hello" {
+		t.Fatalf("Result after Text = %+v, %v", result, err)
+	}
+}
+
+func TestTurnStreamTextEndsWithError(t *testing.T) {
+	client, server := connect(t, Options{})
+	threadID := startThread(t, client, server, "thr_1")
+
+	stream := startTurn(t, client, server, threadID, "turn_1", Text("hi"))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var got error
+	for delta, err := range stream.Text(ctx) {
+		if err == nil || delta != "" {
+			t.Fatalf("yielded %q, %v", delta, err)
+		}
+		got = err
+	}
+	if !errors.Is(got, context.Canceled) {
+		t.Fatalf("Text after cancel = %v, want context.Canceled", got)
+	}
+
+	_ = stream.Close()
+	got = nil
+	for _, err := range stream.Text(context.Background()) {
+		got = err
+	}
+	if !errors.Is(got, ErrClosed) {
+		t.Fatalf("Text after Close = %v, want ErrClosed", got)
+	}
+}
+
+func TestTurnStreamSteer(t *testing.T) {
+	client, server := connect(t, Options{})
+	threadID := startThread(t, client, server, "thr_1")
+	stream := startTurn(t, client, server, threadID, "turn_7", Text("hi"))
+
+	done := serve(t, func() {
+		req := server.expect("turn/steer")
+		const want = `{"threadId":"thr_1","input":[{"text":"also lint","type":"text"}],"expectedTurnId":"turn_7"}`
+		if string(req.Params) != want {
+			t.Errorf("params = %s\nwant     %s", req.Params, want)
+		}
+		server.respond(req, map[string]any{"turnId": "turn_7"})
+	})
+	err := stream.Steer(context.Background(), Text("also lint"))
+	<-done
+	if err != nil {
+		t.Fatalf("Steer: %v", err)
+	}
+	_ = stream.Close()
 }

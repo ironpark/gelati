@@ -5,6 +5,8 @@ import (
 	"errors"
 	"iter"
 	"sync"
+
+	"github.com/ironpark/gelati/internal/lifecycle"
 )
 
 // DefaultSessionID is the session a client's turns are attributed to when the
@@ -125,14 +127,20 @@ func (c *Client) Send(ctx context.Context, input ...UserInput) (*TurnStream, err
 // Run sends input as a new turn and waits for its ResultMessage, whose Text
 // method returns the final response text: Send followed by
 // TurnStream.Result. Messages before the result are dropped; use Send and
-// TurnStream.Events to observe them. Errors are as for the package-level Run.
+// TurnStream.Events or TurnStream.Text to observe them. Errors are as for
+// the package-level Run.
+//
+// When ctx ends before the result arrives, Run interrupts the turn, as
+// TurnStream.Cancel does, and returns ctx's error; the session stays open.
 func (c *Client) Run(ctx context.Context, input ...UserInput) (*ResultMessage, error) {
 	t, err := c.Send(ctx, input...)
 	if err != nil {
 		return nil, err
 	}
 	defer t.Close()
-	return t.Result(ctx)
+	result, err := t.Result(ctx)
+	lifecycle.CancelIfDone(ctx, err, t.Cancel)
+	return result, err
 }
 
 // ReceiveMessages yields every message the session produces until it ends, as

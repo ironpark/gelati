@@ -73,21 +73,17 @@ func main() {
 	defer agent.Close()
 
 	fmt.Println("  === Custom Tools Demo ===")
-	chat(ctx, agent, "What is the SKU for apples? We need to order more.")
+	ask(ctx, agent, "What is the SKU for apples? We need to order more.")
 
 	fmt.Println("\n  === Stateful Tool (Fruit Counter) Demo ===")
 	for _, prompt := range []string{"I have 5 apples.", "And I just got 3 bananas.", "Oh, and another 2 apples."} {
-		chat(ctx, agent, prompt)
+		ask(ctx, agent, prompt)
 	}
 }
 
-func chat(ctx context.Context, agent *agy.Agent, prompt string) {
+func ask(ctx context.Context, agent *agy.Agent, prompt string) {
 	fmt.Printf("\n  User: %s\n", prompt)
-	stream, err := agent.Chat(ctx, agy.Text(prompt))
-	if err != nil {
-		log.Fatal(err)
-	}
-	res, err := stream.Result(ctx)
+	res, err := agent.Run(ctx, agy.Text(prompt))
 	if err != nil {
 		log.Fatal(err)
 	}

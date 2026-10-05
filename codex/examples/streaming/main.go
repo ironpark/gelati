@@ -37,7 +37,7 @@ func main() {
 
 	prompt := "List the files in the current directory, then describe them in one sentence."
 	fmt.Printf("  User: %s\n\n", prompt)
-	stream, err := client.StartTurn(ctx, thread.ID, codex.Text(prompt), nil)
+	stream, err := thread.Send(ctx, codex.Text(prompt))
 	if err != nil {
 		log.Fatal(err)
 	}

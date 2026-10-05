@@ -53,7 +53,7 @@ func main() {
 
 	fmt.Println("\n  User:", *prompt)
 	fmt.Print("  Agent: ")
-	stream, err := agent.Chat(ctx, agy.Text(*prompt))
+	stream, err := agent.Send(ctx, agy.Text(*prompt))
 	if err != nil {
 		log.Fatal(err)
 	}

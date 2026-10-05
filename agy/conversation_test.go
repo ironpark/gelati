@@ -64,10 +64,10 @@ func TestChunksFromSteps(t *testing.T) {
 	}
 }
 
-func TestConversationChat(t *testing.T) {
+func TestConversationSend(t *testing.T) {
 	conv, tr := newTestConversation(t, connectionOptions{})
 	ctx := t.Context()
-	resp, err := conv.Chat(ctx, Text("question"))
+	resp, err := conv.Send(ctx, Text("question"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestConversationChat(t *testing.T) {
 func TestConversationStructuredOutputAndUsage(t *testing.T) {
 	conv, tr := newTestConversation(t, connectionOptions{})
 	ctx := t.Context()
-	resp, err := conv.Chat(ctx, Text("report"))
+	resp, err := conv.Send(ctx, Text("report"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestConversationStructuredOutputAndUsage(t *testing.T) {
 	}
 
 	// The next turn's usage is the difference.
-	resp, _ = conv.Chat(ctx, Text("again"))
+	resp, _ = conv.Send(ctx, Text("again"))
 	tr.next(t)
 	tr.emit(wire.OutputEvent_builder{UsageUpdate: wire.UsageUpdate_builder{Total: wire.UsageMetadata_builder{PromptTokenCount: new(uint64(450)), TotalTokenCount: new(uint64(560))}.Build()}.Build()}.Build())
 	emitTurn(tr, "traj", modelText("traj", 3, wire.StepUpdate_STATE_DONE, wire.StepUpdate_TARGET_USER, "ok"))
@@ -183,7 +183,7 @@ func TestConversationNoUsageMeansNil(t *testing.T) {
 	if val(conv.TotalUsage().TotalTokenCount) != 360 || conv.LastTurnUsage() != nil {
 		t.Fatal("initial usage")
 	}
-	resp, _ := conv.Chat(t.Context(), Text("q"))
+	resp, _ := conv.Send(t.Context(), Text("q"))
 	tr.next(t)
 	emitTurn(tr, "t", modelText("t", 0, wire.StepUpdate_STATE_DONE, wire.StepUpdate_TARGET_USER, "answer"))
 	res, err := resp.Result(t.Context())
@@ -202,7 +202,7 @@ func TestConversationHistoryAndCompaction(t *testing.T) {
 		t.Fatalf("initial compaction indices %v", got)
 	}
 	ctx := t.Context()
-	if err := conv.Send(ctx, Text("q1")); err != nil {
+	if _, err := conv.Send(ctx, Text("q1")); err != nil {
 		t.Fatal(err)
 	}
 	tr.next(t)
@@ -246,7 +246,7 @@ func TestConversationHistoryAndCompaction(t *testing.T) {
 func TestConversationSendDrainsPreviousTurn(t *testing.T) {
 	conv, tr := newTestConversation(t, connectionOptions{})
 	ctx := t.Context()
-	if err := conv.Send(ctx, Text("first question")); err != nil {
+	if _, err := conv.Send(ctx, Text("first question")); err != nil {
 		t.Fatal(err)
 	}
 	tr.next(t)
@@ -261,7 +261,7 @@ func TestConversationSendDrainsPreviousTurn(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		tr.emit(idleEvent("t", ""))
 	}()
-	if err := conv.Send(ctx, Text("second question")); err != nil {
+	if _, err := conv.Send(ctx, Text("second question")); err != nil {
 		t.Fatal(err)
 	}
 	if h := conv.History(); len(h) != 1 || h[0].Content != "first reply" || conv.TurnCount() != 2 {
@@ -282,7 +282,7 @@ func TestConversationSendDrainsPreviousTurn(t *testing.T) {
 func TestConversationSendDrainsAbandonedResponse(t *testing.T) {
 	conv, tr := newTestConversation(t, connectionOptions{})
 	ctx := t.Context()
-	resp, err := conv.Chat(ctx, Text("one"))
+	resp, err := conv.Send(ctx, Text("one"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,9 +296,9 @@ func TestConversationSendDrainsAbandonedResponse(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		tr.emit(modelText("t", 1, wire.StepUpdate_STATE_DONE, wire.StepUpdate_TARGET_USER, "partial done"), idleEvent("t", "turn failed"))
 	}()
-	resp2, err := conv.Chat(ctx, Text("two"))
+	resp2, err := conv.Send(ctx, Text("two"))
 	if err != nil {
-		t.Fatalf("second Chat: %v", err)
+		t.Fatalf("second Send: %v", err)
 	}
 	// The first turn's error stays with its response.
 	if res, err := resp.Result(ctx); err == nil || res == nil || !strings.HasPrefix(res.Text(), "partial") {
@@ -317,7 +317,7 @@ func TestConversationSendDrainsAbandonedResponse(t *testing.T) {
 func TestConversationSendWaitsForOtherReader(t *testing.T) {
 	conv, tr := newTestConversation(t, connectionOptions{})
 	ctx := t.Context()
-	if err := conv.Send(ctx, Text("first")); err != nil {
+	if _, err := conv.Send(ctx, Text("first")); err != nil {
 		t.Fatal(err)
 	}
 	tr.next(t)
@@ -336,7 +336,7 @@ func TestConversationSendWaitsForOtherReader(t *testing.T) {
 	}()
 	<-reading
 	sent := make(chan error, 1)
-	go func() { sent <- conv.Send(ctx, Text("second")) }()
+	go func() { _, err := conv.Send(ctx, Text("second")); sent <- err }()
 	time.Sleep(50 * time.Millisecond)
 	select {
 	case err := <-sent:
@@ -353,9 +353,9 @@ func TestConversationSendWaitsForOtherReader(t *testing.T) {
 	}
 }
 
-func TestConversationChatChunks(t *testing.T) {
+func TestConversationSendChunks(t *testing.T) {
 	conv, tr := newTestConversation(t, connectionOptions{})
-	resp, err := conv.Chat(t.Context(), Text("q"))
+	resp, err := conv.Send(t.Context(), Text("q"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +555,7 @@ func TestTurnStreamErrorsAndCancellation(t *testing.T) {
 func TestTurnStreamCancelSendsHalt(t *testing.T) {
 	conv, tr := newTestConversation(t, connectionOptions{})
 	ctx := t.Context()
-	resp, err := conv.Chat(ctx, Text("long task"))
+	resp, err := conv.Send(ctx, Text("long task"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -581,10 +581,79 @@ func TestTurnStreamCancelSendsHalt(t *testing.T) {
 	}
 }
 
+func TestConversationRun(t *testing.T) {
+	conv, tr := newTestConversation(t, connectionOptions{})
+	ctx := t.Context()
+	type outcome struct {
+		res *TurnResult
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		res, err := conv.Run(ctx, Text("question"))
+		done <- outcome{res, err}
+	}()
+	if got := tr.next(t).GetUserInput().GetParts()[0].GetText(); got != "question" {
+		t.Fatalf("sent %q", got)
+	}
+	emitTurn(tr, "t", modelText("t", 1, wire.StepUpdate_STATE_DONE, wire.StepUpdate_TARGET_USER, "answer"))
+	if o := <-done; o.err != nil || o.res.Text() != "answer" {
+		t.Fatalf("Run = %+v, %v", o.res, o.err)
+	}
+	if conv.LastResponse() != "answer" || conv.TurnCount() != 1 {
+		t.Fatalf("last %q, turns %d", conv.LastResponse(), conv.TurnCount())
+	}
+
+	// A failed turn returns its partial result together with the error.
+	go func() {
+		res, err := conv.Run(ctx, Text("again"))
+		done <- outcome{res, err}
+	}()
+	tr.next(t)
+	tr.emit(modelText("t", 2, wire.StepUpdate_STATE_DONE, wire.StepUpdate_TARGET_USER, "partial"), idleEvent("t", "turn failed"))
+	if o := <-done; o.err == nil || o.res == nil || o.res.Text() != "partial" {
+		t.Fatalf("failed Run = %+v, %v", o.res, o.err)
+	}
+}
+
+func TestConversationRunCancelsTurnWhenContextEnds(t *testing.T) {
+	conv, tr := newTestConversation(t, connectionOptions{})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	type outcome struct {
+		res *TurnResult
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		res, err := conv.Run(ctx, Text("long task"))
+		done <- outcome{res, err}
+	}()
+	tr.next(t)
+	tr.emit(modelText("t", 1, wire.StepUpdate_STATE_ACTIVE, wire.StepUpdate_TARGET_USER, "working"))
+	waitFor(t, "the first step", func() bool { return len(conv.History()) == 1 })
+	cancel()
+	if !tr.next(t).GetHaltRequest() {
+		t.Fatal("no halt request")
+	}
+	if o := <-done; o.res != nil || !errors.Is(o.err, context.Canceled) {
+		t.Fatalf("Run = %+v, %v", o.res, o.err)
+	}
+	// Run closed the stream, so the next turn drains the rest of this one
+	// into the history.
+	tr.emit(modelText("t", 1, wire.StepUpdate_STATE_DONE, wire.StepUpdate_TARGET_USER, "working, halted"), idleEvent("t", ""))
+	if _, err := conv.Send(t.Context(), Text("next")); err != nil {
+		t.Fatal(err)
+	}
+	if conv.LastResponse() != "working, halted" {
+		t.Fatalf("last response %q", conv.LastResponse())
+	}
+}
+
 func TestTurnStreamClose(t *testing.T) {
 	conv, tr := newTestConversation(t, connectionOptions{})
 	ctx := t.Context()
-	resp, err := conv.Chat(ctx, Text("long task"))
+	resp, err := conv.Send(ctx, Text("long task"))
 	if err != nil {
 		t.Fatal(err)
 	}

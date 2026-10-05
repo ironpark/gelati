@@ -14,7 +14,7 @@ const DefaultMaxHistorySize = 10_000
 
 // Conversation is a stateful session over a Connection: it records the step
 // history (noting where the context was compacted), counts turns, tracks
-// per-turn usage, and offers Chat, which sends a prompt and returns a
+// per-turn usage, and offers Send, which sends a prompt and returns a
 // streaming TurnStream. Agent.Conversation returns the agent's
 // conversation; its methods are safe for concurrent use.
 type Conversation struct {
@@ -82,17 +82,6 @@ func (c *Conversation) enforceMaxLocked() {
 	c.compactions = drop(c.compactions)
 }
 
-// Send starts a turn. If the previous turn is still running, its remaining
-// steps are drained into the history first (through the previous
-// TurnStream when there is one), and Send waits for the agent to go idle;
-// when another goroutine is reading the steps, Send only waits. Errors that
-// end the previous turn belong to that turn and are not returned here
-// (upstream raises them from send).
-func (c *Conversation) Send(ctx context.Context, content ...Content) error {
-	_, err := c.send(ctx, content)
-	return err
-}
-
 func (c *Conversation) send(ctx context.Context, content []Content) (*turn, error) {
 	if !c.conn.IsIdle() {
 		c.mu.Lock()
@@ -128,10 +117,18 @@ func (c *Conversation) ReceiveSteps(ctx context.Context) iter.Seq2[*Step, error]
 	return c.conn.receiveSteps(ctx, c.record)
 }
 
-// Chat sends a prompt and returns the turn's stream at once. It is Send
-// followed by reading the turn as chunks; the steps behind them are
-// recorded in the history as they are read.
-func (c *Conversation) Chat(ctx context.Context, content ...Content) (*TurnStream, error) {
+// Send starts a turn and returns its stream at once. The stream reads the
+// turn as chunks, recording the steps behind them in the history as they
+// are read. To read raw steps instead, leave the stream unread and use
+// ReceiveSteps.
+//
+// If the previous turn is still running, its remaining steps are drained
+// into the history first (through the previous TurnStream when there is
+// one), and Send waits for the agent to go idle; when another goroutine is
+// reading the steps, Send only waits. Errors that end the previous turn
+// belong to that turn and are not returned here (upstream raises them from
+// send).
+func (c *Conversation) Send(ctx context.Context, content ...Content) (*TurnStream, error) {
 	t, err := c.send(ctx, content)
 	if err != nil {
 		return nil, err
@@ -143,6 +140,15 @@ func (c *Conversation) Chat(ctx context.Context, content ...Content) (*TurnStrea
 	c.last = resp
 	c.mu.Unlock()
 	return resp, nil
+}
+
+// Run sends a prompt and waits for the turn's result; see Agent.Run.
+func (c *Conversation) Run(ctx context.Context, content ...Content) (*TurnResult, error) {
+	stream, err := c.Send(ctx, content...)
+	if err != nil {
+		return nil, err
+	}
+	return collect(ctx, stream)
 }
 
 // chunkSource turns the step stream of one turn into chunks.

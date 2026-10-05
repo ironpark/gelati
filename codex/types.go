@@ -263,8 +263,8 @@ func (i MentionInput) MarshalJSON() ([]byte, error) {
 	return jsonx.Marshal(map[string]any{"type": "mention", "name": i.Name, "path": i.Path})
 }
 
-// Text is shorthand for a single text input item.
-func Text(text string) []InputItem { return []InputItem{TextInput{Text: text}} }
+// Text is shorthand for a text input item.
+func Text(text string) InputItem { return TextInput{Text: text} }
 
 // ---------------------------------------------------------------------------
 // Threads and turns
@@ -293,8 +293,9 @@ type GitInfo struct {
 	OriginURL *string `json:"originUrl,omitzero"`
 }
 
-// Thread is a conversation between a user and the Codex agent.
-type Thread struct {
+// ThreadInfo describes a conversation between a user and the Codex agent, as
+// the server reports it.
+type ThreadInfo struct {
 	ID string `json:"id"`
 	// SessionID identifies the live session tree root; forked threads keep the
 	// session id of the root they came from.
@@ -915,7 +916,7 @@ type ResumeThreadParams struct {
 	ThreadID string `json:"threadId"`
 	ThreadSettings
 	Personality string `json:"personality,omitempty"`
-	// ExcludeTurns returns only thread metadata, without Thread.Turns.
+	// ExcludeTurns returns only thread metadata, without ThreadInfo.Turns.
 	ExcludeTurns bool `json:"excludeTurns,omitzero"`
 }
 
@@ -927,7 +928,7 @@ type ForkThreadParams struct {
 	LastTurnID string `json:"lastTurnId,omitempty"`
 	// Ephemeral creates an in-memory fork.
 	Ephemeral bool `json:"ephemeral,omitzero"`
-	// ExcludeTurns returns only thread metadata, without Thread.Turns.
+	// ExcludeTurns returns only thread metadata, without ThreadInfo.Turns.
 	ExcludeTurns bool `json:"excludeTurns,omitzero"`
 	// ThreadSource is a client-supplied source classification.
 	ThreadSource string `json:"threadSource,omitempty"`
@@ -935,7 +936,7 @@ type ForkThreadParams struct {
 
 // ThreadResult is the common `{ "thread": ... }` response body.
 type ThreadResult struct {
-	Thread Thread `json:"thread"`
+	Thread ThreadInfo `json:"thread"`
 }
 
 // ReadThreadParams are the parameters of thread/read.
@@ -973,7 +974,7 @@ type ListThreadsParams struct {
 
 // ListThreadsResult is one page of thread/list results.
 type ListThreadsResult struct {
-	Data []Thread `json:"data"`
+	Data []ThreadInfo `json:"data"`
 	// NextCursor is empty on the final page.
 	NextCursor string `json:"nextCursor,omitempty"`
 }
@@ -1014,8 +1015,8 @@ type TurnOptions struct {
 
 // ExternalMessage is untrusted content delivered by another agent, tool, or
 // application. It has tool-level authority, below user and developer
-// instructions, and never counts as user approval. Pass it to
-// StartExternalTurn.
+// instructions, and never counts as user approval. Send it as
+// TurnRequest.External.
 type ExternalMessage struct {
 	// ToolName identifies the tool delivering the content.
 	ToolName  string `json:"name"`
@@ -1025,8 +1026,19 @@ type ExternalMessage struct {
 	Output any `json:"output"`
 }
 
-// StartTurnParams are the parameters of turn/start.
-type StartTurnParams struct {
+// TurnRequest is a turn for Thread.SendTurn or Thread.RunTurn: its input and
+// the per-turn options.
+type TurnRequest struct {
+	// Input is the user input. Leave it empty when External is set.
+	Input []InputItem
+	// External replaces Input with untrusted external content; its ToolName
+	// is required. See ExternalMessage.
+	External *ExternalMessage
+	TurnOptions
+}
+
+// startTurnParams are the parameters of turn/start.
+type startTurnParams struct {
 	ThreadID string      `json:"threadId"`
 	Input    []InputItem `json:"input"`
 	// ToolOutput replaces Input with external content; see ExternalMessage.
@@ -1039,21 +1051,16 @@ type StartTurnResult struct {
 	Turn Turn `json:"turn"`
 }
 
-// SteerTurnParams are the parameters of turn/steer.
-type SteerTurnParams struct {
+// steerTurnParams are the parameters of turn/steer.
+type steerTurnParams struct {
 	ThreadID string      `json:"threadId"`
 	Input    []InputItem `json:"input"`
 	// ExpectedTurnID must match the active turn id.
 	ExpectedTurnID string `json:"expectedTurnId"`
 }
 
-// SteerTurnResult is the turn/steer response body.
-type SteerTurnResult struct {
-	TurnID string `json:"turnId"`
-}
-
-// InterruptTurnParams are the parameters of turn/interrupt.
-type InterruptTurnParams struct {
+// interruptTurnParams are the parameters of turn/interrupt.
+type interruptTurnParams struct {
 	ThreadID string `json:"threadId"`
 	TurnID   string `json:"turnId"`
 }
@@ -1096,7 +1103,7 @@ const (
 
 // ThreadStartedParams is the payload of thread/started.
 type ThreadStartedParams struct {
-	Thread Thread `json:"thread"`
+	Thread ThreadInfo `json:"thread"`
 }
 
 // ThreadStatusChangedParams is the payload of thread/status/changed.

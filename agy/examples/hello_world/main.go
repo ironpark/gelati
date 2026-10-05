@@ -26,11 +26,7 @@ func main() {
 
 	prompt := "Say 'Hello World!'"
 	fmt.Println("  User:", prompt)
-	stream, err := agent.Chat(ctx, agy.Text(prompt))
-	if err != nil {
-		log.Fatal(err)
-	}
-	res, err := stream.Result(ctx)
+	res, err := agent.Run(ctx, agy.Text(prompt))
 	if err != nil {
 		log.Fatal(err)
 	}

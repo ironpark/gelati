@@ -10,7 +10,8 @@ import (
 
 // TurnStream is one turn of a Client conversation, returned by Client.Send:
 // the messages the CLI produces for it, up to and including its
-// ResultMessage.
+// ResultMessage. Events yields those messages and Text the assistant text
+// they carry; both read the same stream, so use one of them per turn.
 //
 // The client has a single message stream, which its turns share in the order
 // they were sent: reading a turn first reads the rest of any earlier turn,
@@ -22,8 +23,8 @@ import (
 //
 //   - Close stops reading and never interrupts the turn. On a turn that has
 //     already ended it is a no-op: Result still returns the turn's result.
-//     On a turn still running, Events and Result then fail with an error
-//     matching ErrClosed.
+//     On a turn still running, Events, Text and Result then fail with an
+//     error matching ErrClosed.
 //   - Cancel interrupts the turn while it runs, also after Close. Once the
 //     turn has ended it is a no-op returning nil.
 //   - Result returns the turn's result whenever there is one, together with
@@ -39,6 +40,10 @@ type TurnStream struct {
 	result *ResultMessage
 	// closed is set by Close.
 	closed atomic.Bool
+	// streamed holds the IDs of the API messages whose text Text took from
+	// stream events, so that it skips their AssistantMessages. Only the
+	// reader of the turn uses it.
+	streamed map[string]bool
 }
 
 // Events yields the turn's messages up to and including its ResultMessage. A
@@ -56,6 +61,79 @@ func (t *TurnStream) Events(ctx context.Context) iter.Seq2[Message, error] {
 			yield(nil, err)
 		}
 	}
+}
+
+// Text yields the turn's assistant text as it arrives, for the main
+// conversation only: subagent output, the messages with a ParentToolUseID,
+// is skipped. With Options.IncludePartialMessages it yields the text deltas
+// of the StreamEvents, and skips the text of the AssistantMessages that
+// repeat them; an AssistantMessage that was not streamed, such as one the
+// CLI synthesizes, still contributes its text. Otherwise it yields the text
+// of each TextBlock of each AssistantMessage.
+//
+// Text reads the same stream as Events, so use one or the other per turn.
+// When the turn fails, the final item is the error Result returns: a
+// *ResultError for an error result, a *ConnectionError for a stream that
+// ended without one, and otherwise the error Events ends with, such as that
+// of a cancelled ctx or ErrClosed. Breaking out of the loop leaves the rest
+// of the turn unread, as with Events; Result still returns the turn's result
+// afterwards.
+func (t *TurnStream) Text(ctx context.Context) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		stopped := false
+		err := t.read(ctx, func(m Message) bool {
+			if !t.emitText(m, func(text string) bool { return yield(text, nil) }) {
+				stopped = true
+				return false
+			}
+			return true
+		})
+		if stopped {
+			return
+		}
+		if err == nil {
+			// The turn has ended; an error result or a missing one is
+			// reported as Result does.
+			_, err = checkResult(t.result)
+		}
+		if err != nil {
+			yield("", err)
+		}
+	}
+}
+
+// emitText passes the main-conversation text of m to yield, as Text
+// documents, and reports whether yield asked for more.
+func (t *TurnStream) emitText(m Message, yield func(string) bool) bool {
+	switch m := m.(type) {
+	case *StreamEvent:
+		// Stream events arrive only with Options.IncludePartialMessages.
+		if m.ParentToolUseID != "" {
+			return true
+		}
+		if id, ok := m.messageStartID(); ok {
+			// The AssistantMessages of this API message repeat the
+			// deltas that follow.
+			if t.streamed == nil {
+				t.streamed = map[string]bool{}
+			}
+			t.streamed[id] = true
+			return true
+		}
+		if text, ok := m.TextDelta(); ok && text != "" {
+			return yield(text)
+		}
+	case *AssistantMessage:
+		if m.ParentToolUseID != "" || t.streamed[m.MessageID] {
+			return true
+		}
+		for _, block := range m.Content {
+			if b, ok := block.(*TextBlock); ok && b.Text != "" && !yield(b.Text) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // Result waits for the end of the turn, discarding the messages not yet read,
@@ -84,18 +162,19 @@ func (t *TurnStream) Cancel(ctx context.Context) error {
 
 // Close stops reading the turn; it does not interrupt it. The turn's unread
 // messages stay queued on the client and are skipped when the next turn is
-// read. On a turn that has not ended, Events and Result then fail with
-// ErrClosed; on one that has, Close changes nothing. Close is idempotent and
-// always returns nil.
+// read. On a turn that has not ended, Events, Text and Result then fail
+// with ErrClosed; on one that has, Close changes nothing. Close is
+// idempotent and always returns nil.
 func (t *TurnStream) Close() error {
 	t.closed.Store(true)
 	return nil
 }
 
-// read reads the turn as Events and Result do, passing each of its messages
-// to emit, which may be nil to discard them. The client's pending turns are
-// read from the head of its queue, so the turns sent before this one are
-// finished first. read returns when the turn ends or emit returns false.
+// read reads the turn as Events, Text and Result do, passing each of its
+// messages to emit, which may be nil to discard them. The client's pending
+// turns are read from the head of its queue, so the turns sent before this
+// one are finished first. read returns when the turn ends or emit returns
+// false.
 func (t *TurnStream) read(ctx context.Context, emit func(Message) bool) error {
 	for {
 		if t.end.Ended() {

@@ -58,8 +58,8 @@ func TestStartThread(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartThread: %v", err)
 	}
-	if thread.ID != "thr_123" || thread.SessionID != "thr_123" {
-		t.Fatalf("thread = %+v", thread)
+	if info := thread.Info(); thread.ID() != "thr_123" || info.SessionID != "thr_123" {
+		t.Fatalf("thread = %+v", info)
 	}
 	if client.lookup("thr_123") == nil {
 		t.Fatal("thread/start did not subscribe")
@@ -99,8 +99,8 @@ func TestResumeAndForkThread(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResumeThread: %v", err)
 	}
-	if resumed.Name == nil || *resumed.Name != "Bug bash notes" {
-		t.Fatalf("name = %v", resumed.Name)
+	if name := resumed.Info().Name; name == nil || *name != "Bug bash notes" {
+		t.Fatalf("name = %v", name)
 	}
 
 	forked, err := client.ForkThread(context.Background(), ForkThreadParams{
@@ -110,8 +110,8 @@ func TestResumeAndForkThread(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForkThread: %v", err)
 	}
-	if forked.ID != "thr_456" || forked.ForkedFromID != "thr_123" {
-		t.Fatalf("forked = %+v", forked)
+	if forked.ID() != "thr_456" || forked.Info().ForkedFromID != "thr_123" {
+		t.Fatalf("forked = %+v", forked.Info())
 	}
 	if client.lookup("thr_456") == nil {
 		t.Fatal("fork did not subscribe")
@@ -260,7 +260,7 @@ func TestThreadMutations(t *testing.T) {
 			method: "thread/name/set",
 			result: map[string]any{},
 			invoke: func() error {
-				return client.SetThreadName(context.Background(), "thr_b", "Renamed")
+				return client.Thread("thr_b").SetName(context.Background(), "Renamed")
 			},
 			wantParams: `{"threadId":"thr_b","name":"Renamed"}`,
 		},
@@ -296,7 +296,7 @@ func TestThreadMutations(t *testing.T) {
 	}
 }
 
-func TestUnsubscribeThread(t *testing.T) {
+func TestThreadUnsubscribe(t *testing.T) {
 	client, server := connect(t, Options{})
 
 	done := serve(t, func() {
@@ -311,10 +311,10 @@ func TestUnsubscribeThread(t *testing.T) {
 	}
 	events, errs := watchThread(t, client, "thr_1")
 
-	status, err := client.UnsubscribeThread(context.Background(), "thr_1")
+	status, err := client.Thread("thr_1").Unsubscribe(context.Background())
 	<-done
 	if err != nil {
-		t.Fatalf("UnsubscribeThread: %v", err)
+		t.Fatalf("Unsubscribe: %v", err)
 	}
 	if status != "unsubscribed" {
 		t.Fatalf("status = %q", status)
@@ -322,13 +322,13 @@ func TestUnsubscribeThread(t *testing.T) {
 	select {
 	case _, ok := <-events:
 		if ok {
-			t.Fatal("ThreadEvents still running")
+			t.Fatal("Thread.Events still running")
 		}
 		if err := <-errs; err != nil {
-			t.Fatalf("ThreadEvents ended with %v, want a clean end", err)
+			t.Fatalf("Thread.Events ended with %v, want a clean end", err)
 		}
 	case <-time.After(fakeTimeout):
-		t.Fatal("ThreadEvents not ended by unsubscribe")
+		t.Fatal("Thread.Events not ended by unsubscribe")
 	}
 	if client.lookup("thr_1") != nil {
 		t.Fatal("subscription not removed")
@@ -426,19 +426,19 @@ func TestThreadEventsClosedOnShutdown(t *testing.T) {
 	select {
 	case _, ok := <-events:
 		if ok {
-			t.Fatal("ThreadEvents still running after Close")
+			t.Fatal("Thread.Events still running after Close")
 		}
 		if err := <-errs; !errors.Is(err, ErrClosed) {
-			t.Fatalf("ThreadEvents ended with %v, want ErrClosed", err)
+			t.Fatalf("Thread.Events ended with %v, want ErrClosed", err)
 		}
 	case <-time.After(fakeTimeout):
-		t.Fatal("ThreadEvents not ended after Close")
+		t.Fatal("Thread.Events not ended after Close")
 	}
 
 	// A loop started after the shutdown ends at once with the client's error.
-	for _, err := range client.ThreadEvents(context.Background(), "thr_1") {
+	for _, err := range client.Thread("thr_1").Events(context.Background()) {
 		if !errors.Is(err, ErrClosed) {
-			t.Fatalf("late ThreadEvents = %v, want ErrClosed", err)
+			t.Fatalf("late Thread.Events = %v, want ErrClosed", err)
 		}
 	}
 }
@@ -446,11 +446,11 @@ func TestThreadEventsClosedOnShutdown(t *testing.T) {
 func TestThreadEventsNotSubscribed(t *testing.T) {
 	client, _ := connect(t, Options{})
 	var got error
-	for _, err := range client.ThreadEvents(context.Background(), "thr_missing") {
+	for _, err := range client.Thread("thr_missing").Events(context.Background()) {
 		got = err
 	}
 	if got == nil {
-		t.Fatal("ThreadEvents on an unsubscribed thread yielded no error")
+		t.Fatal("Thread.Events on an unsubscribed thread yielded no error")
 	}
 }
 
@@ -467,7 +467,7 @@ func TestThreadEventsContextAndFanOut(t *testing.T) {
 
 	first, _ := watchThread(t, client, "thr_1")
 	ctx, cancel := context.WithCancel(context.Background())
-	second, secondErrs := watchSeq(t, client.lookup("thr_1").events, client.ThreadEvents(ctx, "thr_1"))
+	second, secondErrs := watchSeq(t, client.lookup("thr_1").events, client.Thread("thr_1").Events(ctx))
 
 	server.notify(MethodThreadArchived, map[string]any{"threadId": "thr_1"})
 	if got := recvThreadEvent(t, first); got.Method != MethodThreadArchived {
@@ -486,7 +486,7 @@ func TestThreadEventsContextAndFanOut(t *testing.T) {
 	waitFor(t, func() bool { return client.lookup("thr_1").events.listenerCount() == 1 })
 }
 
-// watchThread ranges over ThreadEvents for threadID on a goroutine until the
+// watchThread ranges over Thread.Events for threadID on a goroutine until the
 // test ends, forwarding events. It returns once the loop is registered.
 func watchThread(t *testing.T, client *Client, threadID string) (<-chan ThreadEvent, <-chan error) {
 	t.Helper()
@@ -494,7 +494,7 @@ func watchThread(t *testing.T, client *Client, threadID string) (<-chan ThreadEv
 	if sub == nil {
 		t.Fatalf("thread %s not subscribed", threadID)
 	}
-	return watchSeq(t, sub.events, client.ThreadEvents(t.Context(), threadID))
+	return watchSeq(t, sub.events, client.Thread(threadID).Events(t.Context()))
 }
 
 // watchSeq ranges over seq on a goroutine, forwarding values until it ends;
@@ -544,4 +544,102 @@ func recvThreadEvent(t *testing.T, ch <-chan ThreadEvent) ThreadEvent {
 		t.Fatal("timed out waiting for a thread event")
 		return ThreadEvent{}
 	}
+}
+
+func TestThreadHandleRun(t *testing.T) {
+	client, server := connect(t, Options{})
+
+	done := serve(t, func() {
+		server.respond(server.expect("thread/start"), map[string]any{"thread": map[string]any{
+			"id": "thr_1", "preview": "hello",
+			"turns": []any{map[string]any{"id": "turn_0", "status": "completed", "items": []any{}}},
+		}})
+		req := server.expect("turn/start")
+		if string(req.Params) != `{"threadId":"thr_1","input":[{"text":"a","type":"text"},{"text":"b","type":"text"}]}` {
+			t.Errorf("params = %s", req.Params)
+		}
+		server.respond(req, map[string]any{"turn": map[string]any{"id": "turn_1", "status": "inProgress"}})
+		notifyTurn(server, MethodItemCompleted, completedMessage("m1", "done", ""))
+		server.notify(MethodTurnCompleted, map[string]any{"threadId": "thr_1",
+			"turn": map[string]any{"id": "turn_1", "status": "completed"}})
+	})
+	thread, err := client.StartThread(context.Background(), StartThreadParams{})
+	if err != nil {
+		t.Fatalf("StartThread: %v", err)
+	}
+	if info := thread.Info(); info.ID != "thr_1" || info.Preview != "hello" || len(info.Turns) != 1 {
+		t.Fatalf("info = %+v", info)
+	}
+	result, err := thread.Run(context.Background(), Text("a"), Text("b"))
+	<-done
+	if err != nil || result.Text() != "done" {
+		t.Fatalf("Run = %+v, %v", result, err)
+	}
+}
+
+func TestClientThreadHandle(t *testing.T) {
+	client, server := connect(t, Options{})
+	thread := client.Thread("thr_9")
+	if thread.ID() != "thr_9" || thread.Info().ID != "thr_9" || thread.Info().Preview != "" {
+		t.Fatalf("handle = %+v", thread.Info())
+	}
+
+	// A turn on a known id needs no thread/start from this client.
+	done := serve(t, func() {
+		req := server.expect("turn/start")
+		if string(req.Params) != `{"threadId":"thr_9","input":[{"text":"hi","type":"text"}]}` {
+			t.Errorf("params = %s", req.Params)
+		}
+		server.respond(req, map[string]any{"turn": map[string]any{"id": "turn_1", "status": "inProgress"}})
+	})
+	stream, err := thread.Send(context.Background(), Text("hi"))
+	<-done
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if stream.ThreadID() != "thr_9" || stream.TurnID() != "turn_1" {
+		t.Fatalf("stream ids = %q %q", stream.ThreadID(), stream.TurnID())
+	}
+	_ = stream.Close()
+
+	if _, err := client.Thread("").Send(context.Background(), Text("hi")); err == nil {
+		t.Fatal("Send on an empty thread id succeeded")
+	}
+}
+
+func TestThreadGoal(t *testing.T) {
+	client, server := connect(t, Options{})
+	thread := client.Thread("thr_1")
+
+	done := serve(t, func() {
+		req := server.expect("thread/goal/set")
+		if string(req.Params) != `{"threadId":"thr_1","objective":"ship it","status":"active"}` {
+			t.Errorf("set params = %s", req.Params)
+		}
+		server.respond(req, map[string]any{"goal": map[string]any{
+			"threadId": "thr_1", "objective": "ship it", "status": GoalActive}})
+
+		req = server.expect("thread/goal/get")
+		if string(req.Params) != `{"threadId":"thr_1"}` {
+			t.Errorf("get params = %s", req.Params)
+		}
+		server.respond(req, map[string]any{"goal": nil})
+
+		req = server.expect("thread/goal/clear")
+		if string(req.Params) != `{"threadId":"thr_1"}` {
+			t.Errorf("clear params = %s", req.Params)
+		}
+		server.respond(req, map[string]any{"cleared": true})
+	})
+	goal, err := thread.SetGoal(context.Background(), SetGoalParams{Objective: "ship it", Status: GoalActive})
+	if err != nil || goal.Objective != "ship it" || goal.Status != GoalActive {
+		t.Fatalf("SetGoal = %+v, %v", goal, err)
+	}
+	if goal, err := thread.Goal(context.Background()); err != nil || goal != nil {
+		t.Fatalf("Goal = %+v, %v", goal, err)
+	}
+	if cleared, err := thread.ClearGoal(context.Background()); err != nil || !cleared {
+		t.Fatalf("ClearGoal = %v, %v", cleared, err)
+	}
+	<-done
 }

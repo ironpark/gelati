@@ -60,7 +60,7 @@ func main() {
 	defer agent.Close()
 
 	fmt.Println("\n=== Scenario 1: programmatic cancellation (TurnStream.Cancel) ===")
-	stream, err := agent.Chat(ctx, agy.Text("Write a very long story about a character named cancellation."))
+	stream, err := agent.Send(ctx, agy.Text("Write a very long story about a character named cancellation."))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func main() {
 	report(<-done)
 
 	fmt.Println("\n=== Scenario 2: context cancellation ===")
-	stream, err = agent.Chat(ctx, agy.Text("Write a very long poem about a character named interruption."))
+	stream, err = agent.Send(ctx, agy.Text("Write a very long poem about a character named interruption."))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -83,7 +83,8 @@ func main() {
 	time.AfterFunc(2*time.Second, cancel)
 	report(render(readCtx, stream))
 	// Cancelling the reader's context stops reading but not the turn; stop
-	// it too before the session closes.
+	// it too before the session closes. (Agent.Run does both when its
+	// context ends.)
 	if err := stream.Cancel(ctx); err != nil {
 		log.Fatal(err)
 	}

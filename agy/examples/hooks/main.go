@@ -108,7 +108,7 @@ func main() {
 		"Tell me 3 interesting facts about Mars.",
 	} {
 		fmt.Printf("\n  --- Prompt %d: %s ---\n", i+1, prompt)
-		stream, err := agent.Chat(ctx, agy.Text(prompt))
+		stream, err := agent.Send(ctx, agy.Text(prompt))
 		if err != nil {
 			log.Fatal(err)
 		}

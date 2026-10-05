@@ -39,10 +39,13 @@ line up around it:
 |---|---|---|---|
 | Start | `New(ctx, Options)` → `*Client` | `New(ctx, Options)` → `*Client` | `New(ctx, Options)` → `*Agent` |
 | Stop | `Client.Close()` | `Client.Close()` | `Agent.Close()` |
-| Start a turn | `Client.Send(ctx, input...)` | `Client.StartTurn(ctx, threadID, input, opts)` | `Agent.Chat(ctx, content...)` |
-| One-shot | `Run` / `Client.Run` → `*ResultMessage` | `Client.Run` → `*TurnResult` | `TurnStream.Result` → `*TurnResult` |
+| Conversation | the `Client` | `Client.StartThread(ctx, params)` → `*Thread` | the `Agent` |
+| Start a turn | `Client.Send(ctx, input...)` | `Thread.Send(ctx, input...)` | `Agent.Send(ctx, content...)` |
+| Run a turn | `Client.Run(ctx, input...)` → `*ResultMessage` | `Thread.Run(ctx, input...)` → `*TurnResult` | `Agent.Run(ctx, content...)` → `*TurnResult` |
+| Text input | `claude.Text(s)` | `codex.Text(s)` | `agy.Text(s)` |
+| One-shot | `claude.Run(ctx, prompt, Options)` | — (threads carry the settings) | `agy.Run(ctx, prompt, Options)` |
 | Final text | `ResultMessage.Text()` | `TurnResult.Text()` | `TurnResult.Text()` |
-| Conversation id | `SessionID` | thread ID | `ConversationID()` |
+| Conversation id | `SessionID` | `Thread.ID()` | `ConversationID()` |
 | Session end | `Done()` / `Err()` | `Done()` / `Err()` | `Done()` / `Err()` |
 | Executable | `Options.CLIPath` | `Options.CLIPath` | `Options.CLIPath` |
 | Extra environment | `Options.Env` | `Options.Env` | `Options.Env` |
@@ -57,11 +60,12 @@ to defer) or when the process exits. A handle is one session; after `Close`,
 calls fail with an error matching `ErrClosed`.
 
 Options are passed by value and their zero value means defaults. A turn is a
-`*TurnStream` in every package, with the same four methods:
+`*TurnStream` in every package, with the same five methods:
 
 | Method | Does |
 |---|---|
 | `Events(ctx)` | `iter.Seq2` over the turn's events: claude `Message`s, codex `Event`s, agy `Chunk`s |
+| `Text(ctx)` | `iter.Seq2` over the assistant's text as it arrives |
 | `Result(ctx)` | waits for the end of the turn, reading what `Events` did not, and returns its result |
 | `Cancel(ctx)` | interrupts the turn |
 | `Close()` | stops reading; the turn is not interrupted |
@@ -70,7 +74,9 @@ The rules are the same everywhere: `Result` returns the turn's result whenever
 there is one, together with the error when the turn failed; `Close` on a turn
 that already ended changes nothing; `Cancel` still interrupts a running turn
 after `Close`, and does nothing once the turn has ended. A CLI killed by a
-signal has a nil `ProcessError.ExitCode`.
+signal has a nil `ProcessError.ExitCode`. `Run` is `Send` followed by
+`Result`, except that when its ctx ends first it interrupts the turn instead of
+leaving it running.
 
 A CLI that exits unexpectedly surfaces as a `*ProcessError` (exit code and
 stderr tail) that `errors.As` finds in the returned error.
@@ -174,11 +180,18 @@ turn, err := client.Send(ctx, claude.Text("Summarize this repository"))
 if err != nil {
 	log.Fatal(err)
 }
-for msg, err := range turn.Events(ctx) {
-	// ... same message handling as above
+for text, err := range turn.Text(ctx) {
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Print(text)
 }
 res, err := turn.Result(ctx)
 ```
+
+`turn.Events(ctx)` yields every message instead; `Text` yields only the main
+conversation's assistant text (text deltas with `IncludePartialMessages`).
+Use one of the two per turn.
 
 `Send` may be called while an earlier turn is still running: the CLI queues
 the input and answers it after the current turn. The client has one message
@@ -191,7 +204,7 @@ mode, rewind files, manage MCP servers, reload plugins and skills, apply
 settings mid-session, and query commands, models, account info and context
 usage. `SendControlRequest` reaches any control request without a wrapper.
 `client.Run(ctx, claude.Text(prompt))` sends a turn and waits for its
-`*ResultMessage`.
+`*ResultMessage`, interrupting the turn if ctx ends first.
 `Done()` is closed when the session ends for any reason (`Close`, CLI exit,
 transport failure) and `Err()` then reports why.
 
@@ -329,37 +342,42 @@ thread, err := client.StartThread(ctx, codex.StartThreadParams{
 if err != nil {
 	log.Fatal(err)
 }
-result, err := client.Run(ctx, thread.ID, codex.Text("Run the tests"), nil)
+result, err := thread.Run(ctx, codex.Text("Run the tests"))
 if err != nil {
 	log.Fatal(err)
 }
 fmt.Println(result.Text())
 ```
 
-To stream instead, `StartTurn` returns a `TurnStream`:
+`StartThread`, `ResumeThread` and `ForkThread` return a `*Thread` handle
+(`Info()` holds the server's `ThreadInfo`); `client.Thread(id)` wraps a known
+id without a round trip. To stream instead, `Send` returns a `TurnStream`:
 
 ```go
-stream, err := client.StartTurn(ctx, thread.ID, codex.Text("Run the tests"), nil)
+turn, err := thread.Send(ctx, codex.Text("Run the tests"))
 if err != nil {
 	log.Fatal(err)
 }
-for event, err := range stream.Events(ctx) {
+for delta, err := range turn.Text(ctx) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if event.Kind == codex.EventAgentMessageDelta {
-		fmt.Print(event.Delta)
-	}
+	fmt.Print(delta)
 }
-result, err := stream.Result(ctx)
+result, err := turn.Result(ctx)
 ```
+
+`SendTurn` / `RunTurn` take a `TurnRequest` with per-turn overrides
+(`TurnOptions`: model, effort, output schema, …) or an `ExternalMessage`.
+`turn.Steer` adds input to a running turn, and a `Thread` also names, compacts,
+sets goals for and streams the events of its thread.
 
 Approval prompts go to `Options.Approvals`; with none, commands and file
 changes are declined (upstream's Python SDK accepts them). Methods the package
 does not wrap are available through `Client.Call`.
 
 [`codex/examples`](./codex/examples): `hello_world` (`Run`), `streaming`
-(`StartTurn` events) and `approvals` (`ApprovalFuncs`).
+(`Send` events) and `approvals` (`ApprovalFuncs`).
 
 ## agy
 
@@ -397,28 +415,31 @@ if err != nil {
 }
 defer agent.Close()
 
-turn, err := agent.Chat(ctx, agy.Text("What is the capital of France?"))
-if err != nil {
-	log.Fatal(err)
-}
-res, err := turn.Result(ctx)
+res, err := agent.Run(ctx, agy.Text("What is the capital of France?"))
 if err != nil {
 	log.Fatal(err)
 }
 fmt.Println(res.Text())
 ```
 
+For a single prompt, `agy.Run(ctx, prompt, opts)` starts the agent, runs the
+turn and closes it.
+
 The zero `Options` runs the default Gemini model with the default builtin tools,
 `run_command` denied, and the current directory as the workspace.
 
 ### Streaming
 
-A `TurnStream` streams one turn. Besides `Events` (every chunk), `Text`,
-`Thoughts` and `ToolCalls` are focused `iter.Seq2` sequences; each is an
-independent cursor, so a turn can be read several times and from several
-goroutines.
+`agent.Send` returns a `TurnStream` for one turn. Besides `Events` (every
+chunk), `Text`, `Thoughts` and `ToolCalls` are focused `iter.Seq2` sequences;
+each is an independent cursor, so a turn can be read several times and from
+several goroutines.
 
 ```go
+turn, err := agent.Send(ctx, agy.Text("Plan a trip to Lisbon."))
+if err != nil {
+	log.Fatal(err)
+}
 for thought, err := range turn.Thoughts(ctx) {
 	if err != nil {
 		log.Fatal(err)

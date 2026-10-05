@@ -349,7 +349,7 @@ func TestDecodeTurnPlanUpdated(t *testing.T) {
 }
 
 func TestEncodeInputItems(t *testing.T) {
-	params := StartTurnParams{
+	params := startTurnParams{
 		ThreadID: "thr_123",
 		Input: []InputItem{
 			TextInput{Text: "$skill-creator Add a new skill"},

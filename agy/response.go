@@ -11,7 +11,7 @@ import (
 )
 
 // TurnStream is the streaming response of one turn, returned by
-// Agent.Chat and Conversation.Chat.
+// Agent.Send and Conversation.Send.
 //
 // The stream is pulled lazily from the connection and buffered: every
 // iterator (Events, Text, Thoughts, ToolCalls) is an independent cursor
@@ -243,8 +243,8 @@ func (r *TurnStream) drain(ctx context.Context) ([]Chunk, error) {
 //
 // When the turn fails (*ExecutionError, *ConnectionError, *CancelledError)
 // Result returns the partial result together with that error. When ctx
-// ends first it returns nil and ctx's error, and the turn keeps running;
-// after Close it returns nil and ErrClosed.
+// ends first it returns nil and ctx's error, and the turn keeps running
+// (Agent.Run cancels it instead); after Close it returns nil and ErrClosed.
 func (r *TurnStream) Result(ctx context.Context) (*TurnResult, error) {
 	chunks, err := r.drain(ctx)
 	if err != nil && (errors.Is(err, ErrClosed) || ctx.Err() != nil && errors.Is(err, ctx.Err())) {
@@ -267,6 +267,16 @@ func (r *TurnStream) Result(ctx context.Context) (*TurnResult, error) {
 	return res, err
 }
 
+// collect waits for stream's result. If ctx ends first, it cancels the
+// turn and closes the stream.
+func collect(ctx context.Context, stream *TurnStream) (*TurnResult, error) {
+	res, err := stream.Result(ctx)
+	if lifecycle.CancelIfDone(ctx, err, stream.Cancel) {
+		_ = stream.Close()
+	}
+	return res, err
+}
+
 // Cancel halts the turn, also after Close. It is a no-op returning nil
 // once the turn has ended.
 func (r *TurnStream) Cancel(ctx context.Context) error {
@@ -281,7 +291,7 @@ func (r *TurnStream) Cancel(ctx context.Context) error {
 
 // Close stops reading the stream without cancelling the turn: it gives up
 // the connection's step reader, so that Conversation.ReceiveSteps (or the
-// next Chat or Send, which drain the rest of the turn into the history)
+// next Send, which drains the rest of the turn into the history)
 // can proceed. Cursors yield the chunks already buffered and then
 // ErrClosed. Close is a no-op once the stream has ended; it always returns
 // nil.

@@ -30,7 +30,7 @@ func Example() {
 		log.Fatal(err)
 	}
 
-	result, err := client.Run(ctx, thread.ID, codex.Text("Summarize this repo."), nil)
+	result, err := thread.Run(ctx, codex.Text("Summarize this repo."))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func ExampleTurnStream() {
 		log.Fatal(err)
 	}
 
-	stream, err := client.StartTurn(ctx, thread.ID, codex.Text("Run the tests."), nil)
+	stream, err := thread.Send(ctx, codex.Text("Run the tests."))
 	if err != nil {
 		log.Fatal(err)
 	}

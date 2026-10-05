@@ -9,13 +9,15 @@
 // # Lifecycle
 //
 // New spawns the subprocess and performs the initialize/initialized handshake.
-// StartThread (or ResumeThread, ForkThread) opens a conversation and subscribes
-// to its events. Run sends user input and waits for the turn's TurnResult, the
-// equivalent of upstream's thread.run; StartTurn returns a TurnStream carrying
-// typed events instead: range over Events, call Result for the collected
-// TurnResult, Cancel to interrupt the turn on the server, or Close to stop
-// reading it. Client.Close stops the subprocess and releases every waiting
-// caller.
+// StartThread (or ResumeThread, ForkThread) opens a conversation, subscribes
+// to its events, and returns a *Thread handle; Client.Thread wraps a known
+// thread id. Thread.Run sends user input and waits for the turn's TurnResult,
+// the equivalent of upstream's thread.run; Thread.Send returns a TurnStream
+// instead: range over Events for typed events or Text for the answer's text
+// deltas, call Result for the collected TurnResult, Cancel to interrupt the
+// turn on the server, or Close to stop reading it. SendTurn and RunTurn take
+// a TurnRequest carrying per-turn options or an ExternalMessage. Client.Close
+// stops the subprocess and releases every waiting caller.
 //
 //	client, err := codex.New(ctx, codex.Options{})
 //	if err != nil {
@@ -29,27 +31,26 @@
 //	if err != nil {
 //		return err
 //	}
-//	result, err := client.Run(ctx, thread.ID, codex.Text("Run the tests"), nil)
+//	result, err := thread.Run(ctx, codex.Text("Run the tests"))
 //	if err != nil {
 //		return err
 //	}
 //	fmt.Println(result.Text())
 //
-// To stream, iterate the events of a TurnStream and then call Result:
+// To stream, iterate a TurnStream (Text, or Events for every event) and then
+// call Result:
 //
-//	stream, err := client.StartTurn(ctx, thread.ID, codex.Text("Run the tests"), nil)
+//	turn, err := thread.Send(ctx, codex.Text("Run the tests"))
 //	if err != nil {
 //		return err
 //	}
-//	for event, err := range stream.Events(ctx) {
+//	for delta, err := range turn.Text(ctx) {
 //		if err != nil {
 //			return err
 //		}
-//		if event.Kind == codex.EventAgentMessageDelta {
-//			fmt.Print(event.Delta)
-//		}
+//		fmt.Print(delta)
 //	}
-//	result, err := stream.Result(ctx)
+//	result, err := turn.Result(ctx)
 //
 // # Upstream mapping
 //
@@ -57,12 +58,12 @@
 // same app-server protocol, and borrows the TypeScript SDK's Run naming:
 //
 //	Codex()                         New
-//	codex.thread_start(...)         Client.StartThread
-//	thread.run(input) -> TurnResult Client.Run, TurnStream.Result
-//	thread.turn(input) -> handle    Client.StartTurn -> *TurnStream
-//	handle.steer                    Client.SteerTurn
-//	handle.interrupt                TurnStream.Cancel, Client.InterruptTurn
-//	ExternalMessage                 Client.StartExternalTurn, RunExternal
+//	codex.thread_start(...)         Client.StartThread -> *Thread
+//	thread.run(input) -> TurnResult Thread.Run, RunTurn, TurnStream.Result
+//	thread.turn(input) -> handle    Thread.Send, SendTurn -> *TurnStream
+//	handle.steer                    TurnStream.Steer, Thread.Steer
+//	handle.interrupt                TurnStream.Cancel, Thread.Interrupt
+//	ExternalMessage                 TurnRequest.External
 //	ApprovalMode, Sandbox           ApprovalMode.Settings, SandboxMode
 //	codex.models()                  Client.ListModels
 //	retry_on_overload               RetryOnOverload, IsOverloaded
@@ -83,7 +84,7 @@
 // token usage, and errors are never dropped, so the completed items and
 // TurnResult stay whole. Closing a TurnStream releases its pump immediately.
 //
-// Client.ThreadEvents and Client.AccountUpdates are iterators: each loop
+// Thread.Events and Client.AccountUpdates are iterators: each loop
 // subscribes when it starts and unsubscribes when it exits, so events that
 // arrive before the loop starts are not seen. Every loop has its own bounded
 // buffer (Options.EventBuffer); while it is full, newer events are dropped
@@ -95,12 +96,12 @@
 // responses surface as *RPCError; IsOverloaded reports the
 // retryable overload errors and RetryOnOverload retries them. A failed turn
 // carries a *TurnError whose Kind reports the codexErrorInfo discriminator;
-// Run and TurnStream.Result return it as their error. Errors the server is
-// still retrying arrive as EventError events. If the subprocess exits, the
-// channel from Done closes, Err reports the cause (wrapping a *ProcessError
-// with the exit status and stderr tail), active turn streams fail
-// with ErrClosed, ThreadEvents and AccountUpdates loops end with Err, and
-// later calls return ErrClosed.
+// Thread.Run and TurnStream.Result return it as their error. Errors the
+// server is still retrying arrive as EventError events. If the subprocess
+// exits, the channel from Done closes, Err reports the cause (wrapping a
+// *ProcessError with the exit status and stderr tail), active turn streams
+// fail with ErrClosed, Thread.Events and AccountUpdates loops end with Err,
+// and later calls return ErrClosed.
 //
 // Unknown item types decode into UnknownItem and unmodeled turn-scoped
 // notifications arrive as EventNotification events, so a newer app-server

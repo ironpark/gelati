@@ -26,45 +26,48 @@ type ThreadGoal struct {
 	UpdatedAt       int64  `json:"updatedAt"`
 }
 
-// SetThreadGoalParams are the parameters of thread/goal/set. Zero fields keep
-// the stored value.
-type SetThreadGoalParams struct {
-	ThreadID    string `json:"threadId"`
+// SetGoalParams are the parameters of Thread.SetGoal (thread/goal/set). Zero
+// fields keep the stored value.
+type SetGoalParams struct {
 	Objective   string `json:"objective,omitempty"`
 	Status      string `json:"status,omitempty"`
 	TokenBudget *int64 `json:"tokenBudget,omitzero"`
 }
 
-// SetThreadGoal creates or updates a thread's goal and returns it. Setting
-// an active goal on an idle thread makes the server start turns toward it;
-// their events arrive as turn notifications the client did not start.
-func (c *Client) SetThreadGoal(ctx context.Context, params SetThreadGoalParams) (*ThreadGoal, error) {
+// SetGoal creates or updates the thread's goal and returns it. Setting an
+// active goal on an idle thread makes the server start turns toward it; their
+// events arrive as turn notifications the client did not start.
+func (t *Thread) SetGoal(ctx context.Context, params SetGoalParams) (*ThreadGoal, error) {
+	wire := struct {
+		ThreadID string `json:"threadId"`
+		SetGoalParams
+	}{ThreadID: t.ID(), SetGoalParams: params}
 	var result struct {
 		Goal ThreadGoal `json:"goal"`
 	}
-	if err := c.tr.Call(ctx, "thread/goal/set", params, &result); err != nil {
+	if err := t.client.tr.Call(ctx, "thread/goal/set", wire, &result); err != nil {
 		return nil, err
 	}
 	return &result.Goal, nil
 }
 
-// ReadThreadGoal returns a thread's goal, or nil when it has none.
-func (c *Client) ReadThreadGoal(ctx context.Context, threadID string) (*ThreadGoal, error) {
+// Goal returns the thread's goal, or nil when it has none.
+func (t *Thread) Goal(ctx context.Context) (*ThreadGoal, error) {
 	var result struct {
 		Goal *ThreadGoal `json:"goal"`
 	}
-	if err := c.tr.Call(ctx, "thread/goal/get", ThreadIDParams{ThreadID: threadID}, &result); err != nil {
+	if err := t.client.tr.Call(ctx, "thread/goal/get", t.idParams(), &result); err != nil {
 		return nil, err
 	}
 	return result.Goal, nil
 }
 
-// ClearThreadGoal removes a thread's goal and reports whether one existed.
-func (c *Client) ClearThreadGoal(ctx context.Context, threadID string) (bool, error) {
+// ClearGoal removes the thread's goal and reports whether one existed.
+func (t *Thread) ClearGoal(ctx context.Context) (bool, error) {
 	var result struct {
 		Cleared bool `json:"cleared"`
 	}
-	if err := c.tr.Call(ctx, "thread/goal/clear", ThreadIDParams{ThreadID: threadID}, &result); err != nil {
+	if err := t.client.tr.Call(ctx, "thread/goal/clear", t.idParams(), &result); err != nil {
 		return false, err
 	}
 	return result.Cleared, nil

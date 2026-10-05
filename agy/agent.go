@@ -6,14 +6,14 @@ import (
 )
 
 // Agent is the high-level API: it runs a harness session started from
-// Options and chats with it.
+// Options and sends it prompts.
 //
 //	agent, err := agy.New(ctx, agy.Options{})
 //	if err != nil {
 //		return err
 //	}
 //	defer agent.Close()
-//	stream, err := agent.Chat(ctx, agy.Text("Hello"))
+//	stream, err := agent.Send(ctx, agy.Text("Hello"))
 //	if err != nil {
 //		return err
 //	}
@@ -62,6 +62,23 @@ func New(ctx context.Context, opts Options) (*Agent, error) {
 	return &Agent{conv: conv, triggers: triggers}, nil
 }
 
+// Run runs a single prompt in a fresh session: New, Agent.Run and Close.
+// Unlike New's, ctx bounds the whole call: if it ends before the turn
+// does, the turn is cancelled and Run returns ctx's error. A failed turn
+// returns the partial result together with its error; a Close error is
+// returned only when the turn succeeded.
+func Run(ctx context.Context, prompt string, opts Options) (*TurnResult, error) {
+	agent, err := New(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	res, err := agent.Run(ctx, Text(prompt))
+	if cerr := agent.Close(); err == nil && cerr != nil {
+		return res, cerr
+	}
+	return res, err
+}
+
 // Close stops the triggers and ends the session (see Connection.Close).
 // It is idempotent, so `defer agent.Close()` is safe.
 func (a *Agent) Close() error {
@@ -82,12 +99,12 @@ func (a *Agent) Err() error {
 	return a.conv.Err()
 }
 
-// Chat sends a prompt and returns the turn's stream; see
-// Conversation.Chat. The prompt must not be empty: at least one part, and
+// Send sends a prompt and returns the turn's stream; see
+// Conversation.Send. The prompt must not be empty: at least one part, and
 // not only blank text.
-func (a *Agent) Chat(ctx context.Context, content ...Content) (*TurnStream, error) {
+func (a *Agent) Send(ctx context.Context, content ...Content) (*TurnStream, error) {
 	if len(content) == 0 {
-		return nil, validationErrorf("Chat requires non-empty message content.")
+		return nil, validationErrorf("Send requires non-empty message content.")
 	}
 	blank := true
 	for _, c := range content {
@@ -99,11 +116,23 @@ func (a *Agent) Chat(ctx context.Context, content ...Content) (*TurnStream, erro
 	}
 	if blank {
 		if len(content) == 1 {
-			return nil, validationErrorf("Chat requires a non-empty message string.")
+			return nil, validationErrorf("Send requires a non-empty message string.")
 		}
-		return nil, validationErrorf("Chat requires non-empty message content.")
+		return nil, validationErrorf("Send requires non-empty message content.")
 	}
-	return a.conv.Chat(ctx, content...)
+	return a.conv.Send(ctx, content...)
+}
+
+// Run sends a prompt and waits for the turn's result: Send followed by
+// TurnStream.Result. A failed turn returns the partial result together
+// with its error. If ctx ends before the turn does, Run cancels the turn,
+// closes its stream and returns ctx's error.
+func (a *Agent) Run(ctx context.Context, content ...Content) (*TurnResult, error) {
+	stream, err := a.Send(ctx, content...)
+	if err != nil {
+		return nil, err
+	}
+	return collect(ctx, stream)
 }
 
 // Conversation returns the session's conversation, for history, turn

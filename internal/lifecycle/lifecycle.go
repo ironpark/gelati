@@ -1,12 +1,38 @@
 // Package lifecycle records how a session ended, for the Done and Err
 // methods the SDK packages expose: a channel closed once it ends and the
-// reason it ended, set together and only once.
+// reason it ended, set together and only once. It also holds the cleanup
+// helpers for work a caller stopped waiting for.
 package lifecycle
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"time"
 )
+
+// DetachedTimeout bounds best-effort cleanup that runs after the caller's
+// context has ended.
+const DetachedTimeout = 5 * time.Second
+
+// Detached returns a context that keeps ctx's values but not its
+// cancellation, bounded by DetachedTimeout.
+func Detached(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), DetachedTimeout)
+}
+
+// CancelIfDone calls cancel, best effort and under a Detached context, when
+// err is ctx's error: the caller stopped waiting for an operation that should
+// not keep running. It reports whether it called cancel.
+func CancelIfDone(ctx context.Context, err error, cancel func(context.Context) error) bool {
+	if ctx.Err() == nil || !errors.Is(err, ctx.Err()) {
+		return false
+	}
+	dctx, stop := Detached(ctx)
+	defer stop()
+	_ = cancel(dctx)
+	return true
+}
 
 // Done records the end of a session. The zero value is a session that has
 // not ended. It is safe for concurrent use.

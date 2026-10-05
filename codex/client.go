@@ -72,7 +72,7 @@ type Options struct {
 	OnNotification func(method string, params jsontext.Value)
 
 	// EventBuffer is the event buffer capacity of each TurnStream and of each
-	// ThreadEvents or AccountUpdates loop. It defaults to 64.
+	// Thread.Events or AccountUpdates loop. It defaults to 64.
 	EventBuffer int
 
 	// Logger receives debug messages about dropped or unroutable events. Nil

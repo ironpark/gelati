@@ -74,7 +74,8 @@ type Event struct {
 }
 
 // TurnStream delivers a turn's events in arrival order. Iterate them with
-// Events, or call Result to wait for the turn and collect what it produced.
+// Events, or only the answer's text with Text, or call Result to wait for the
+// turn and collect what it produced.
 //
 // The stream ends once the turn reaches a terminal status, the caller calls
 // Close, or the client shuts down. The rules shared by every gelati SDK:
@@ -153,6 +154,24 @@ func (s *TurnStream) Events(ctx context.Context) iter.Seq2[Event, error] {
 	}
 }
 
+// Text iterates the agent message text deltas (EventAgentMessageDelta) of the
+// turn as they arrive, ending as Events does: the last pair carries the
+// error, if any, with an empty string. Text reads the same queue as Events,
+// so range over one of them per stream; Result still works afterwards.
+func (s *TurnStream) Text(ctx context.Context) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		for event, err := range s.Events(ctx) {
+			if err != nil {
+				yield("", err)
+				return
+			}
+			if event.Kind == EventAgentMessageDelta && !yield(event.Delta, nil) {
+				return
+			}
+		}
+	}
+}
+
 // isClosed reports whether Close ended the stream.
 func (s *TurnStream) isClosed() bool {
 	s.mu.Lock()
@@ -191,7 +210,12 @@ func (s *TurnStream) Cancel(ctx context.Context) error {
 	if ended || s.client.Err() != nil {
 		return nil // a shut-down client has no turn left to interrupt
 	}
-	return s.client.InterruptTurn(ctx, s.threadID, turnID)
+	return s.client.Thread(s.threadID).Interrupt(ctx, turnID)
+}
+
+// Steer appends user input to this turn while it runs; see Thread.Steer.
+func (s *TurnStream) Steer(ctx context.Context, input ...InputItem) error {
+	return s.client.Thread(s.threadID).Steer(ctx, s.TurnID(), input...)
 }
 
 // Close stops reading the stream without interrupting the turn, which keeps
@@ -581,23 +605,37 @@ func (c *Client) soleSubscription() *threadSubscription {
 	return nil
 }
 
-// StartTurn adds user input to a thread, begins Codex generation, and returns
-// a stream of the turn's events. Read the stream to completion (Events or
-// Result) or Close it.
-func (c *Client) StartTurn(ctx context.Context, threadID string, input []InputItem, opts *TurnOptions) (*TurnStream, error) {
-	return c.startTurn(ctx, StartTurnParams{ThreadID: threadID, Input: input}, opts)
+// Send adds user input to the thread, begins Codex generation, and returns a
+// stream of the turn's events, like upstream's thread.turn. Read the stream to
+// completion (Events, Text, or Result) or Close it.
+func (t *Thread) Send(ctx context.Context, input ...InputItem) (*TurnStream, error) {
+	return t.SendTurn(ctx, TurnRequest{Input: input})
 }
 
-// startTurn sends turn/start, with opts applied to params, after registering
-// a stream so events that race ahead of the response are not lost.
-func (c *Client) startTurn(ctx context.Context, params StartTurnParams, opts *TurnOptions) (*TurnStream, error) {
-	if opts != nil {
-		params.TurnOptions = *opts
+// SendTurn is Send with per-turn options, or with an ExternalMessage in place
+// of user input. External content has tool-level authority and never counts
+// as user approval.
+func (t *Thread) SendTurn(ctx context.Context, req TurnRequest) (*TurnStream, error) {
+	params := startTurnParams{ThreadID: t.ID(), Input: req.Input, TurnOptions: req.TurnOptions}
+	if req.External != nil {
+		if req.External.ToolName == "" {
+			return nil, errors.New("codex: ExternalMessage.ToolName is required")
+		}
+		if len(req.Input) > 0 {
+			return nil, errors.New("codex: TurnRequest has both Input and External")
+		}
+		params.Input, params.ToolOutput = []InputItem{}, req.External
 	}
+	return t.client.startTurn(ctx, params)
+}
+
+// startTurn sends turn/start after registering a stream, so events that race
+// ahead of the response are not lost.
+func (c *Client) startTurn(ctx context.Context, params startTurnParams) (*TurnStream, error) {
 	threadID := params.ThreadID
 	sub := c.subscribe(threadID)
 	if sub == nil {
-		return nil, errors.New("codex: StartTurn requires a thread id")
+		return nil, errors.New("codex: starting a turn requires a thread id")
 	}
 	stream := sub.newStream(c, threadID)
 
@@ -613,35 +651,15 @@ func (c *Client) startTurn(ctx context.Context, params StartTurnParams, opts *Tu
 	return stream, nil
 }
 
-// SteerTurn appends user input to the active in-flight turn without starting a
+// Steer appends user input to the thread's in-flight turn without starting a
 // new one. expectedTurnID must match the active turn id.
-func (c *Client) SteerTurn(ctx context.Context, threadID, expectedTurnID string, input []InputItem) (string, error) {
-	params := SteerTurnParams{ThreadID: threadID, Input: input, ExpectedTurnID: expectedTurnID}
-	var result SteerTurnResult
-	if err := c.tr.Call(ctx, "turn/steer", params, &result); err != nil {
-		return "", err
-	}
-	return result.TurnID, nil
+func (t *Thread) Steer(ctx context.Context, expectedTurnID string, input ...InputItem) error {
+	params := steerTurnParams{ThreadID: t.ID(), Input: input, ExpectedTurnID: expectedTurnID}
+	return t.client.tr.Call(ctx, "turn/steer", params, nil)
 }
 
-// InterruptTurn requests cancellation of an in-flight turn. On success the
-// turn ends with status "interrupted".
-func (c *Client) InterruptTurn(ctx context.Context, threadID, turnID string) error {
-	return c.tr.Call(ctx, "turn/interrupt", InterruptTurnParams{ThreadID: threadID, TurnID: turnID}, nil)
-}
-
-// CompactThread triggers manual history compaction. Progress streams as
-// ordinary turn and item notifications.
-func (c *Client) CompactThread(ctx context.Context, threadID string) error {
-	return c.tr.Call(ctx, "thread/compact/start", ThreadIDParams{ThreadID: threadID}, nil)
-}
-
-// RunShellCommand runs a user-initiated shell command against a thread. It
-// runs outside the sandbox with full access.
-func (c *Client) RunShellCommand(ctx context.Context, threadID, command string) error {
-	params := struct {
-		ThreadID string `json:"threadId"`
-		Command  string `json:"command"`
-	}{ThreadID: threadID, Command: command}
-	return c.tr.Call(ctx, "thread/shellCommand", params, nil)
+// Interrupt requests cancellation of an in-flight turn. On success the turn
+// ends with status "interrupted".
+func (t *Thread) Interrupt(ctx context.Context, turnID string) error {
+	return t.client.tr.Call(ctx, "turn/interrupt", interruptTurnParams{ThreadID: t.ID(), TurnID: turnID}, nil)
 }

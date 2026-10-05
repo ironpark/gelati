@@ -62,7 +62,7 @@ func realHarnessAgent(t *testing.T, ctx context.Context, hooks ...agy.Hook) (*ag
 // error rather than succeeding or hanging.
 func wantTurnError(t *testing.T, ctx context.Context, agent *agy.Agent, prompt string) {
 	t.Helper()
-	resp, err := agent.Chat(ctx, agy.Text(prompt))
+	resp, err := agent.Send(ctx, agy.Text(prompt))
 	if err == nil {
 		_, err = resp.Result(ctx)
 	}
@@ -75,7 +75,7 @@ func wantTurnError(t *testing.T, ctx context.Context, agent *agy.Agent, prompt s
 }
 
 // TestRealHarnessWithoutCredentials checks that a session starts and that a
-// chat without valid credentials ends with an error instead of hanging.
+// turn without valid credentials ends with an error instead of hanging.
 func TestRealHarnessWithoutCredentials(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()

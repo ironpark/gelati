@@ -70,22 +70,19 @@ func readLog(path string) []string {
 	return strings.Fields(string(b))
 }
 
-func chat(t *testing.T, agent *Agent, prompt string) (string, error) {
+// run runs one turn through Agent.Run and returns its text.
+func run(t *testing.T, agent *Agent, prompt string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	resp, err := agent.Chat(ctx, Text(prompt))
-	if err != nil {
-		return "", err
-	}
-	res, err := resp.Result(ctx)
+	res, err := agent.Run(ctx, Text(prompt))
 	if res == nil {
 		return "", err
 	}
 	return res.Text(), err
 }
 
-func TestAgentChat(t *testing.T) {
+func TestAgentSend(t *testing.T) {
 	cfg, record, _ := fakeAgentConfig(t)
 	cfg.SystemInstructions = TextSystemInstructions("Be brief.")
 	agent := startAgent(t, cfg)
@@ -98,7 +95,7 @@ func TestAgentChat(t *testing.T) {
 	}
 
 	ctx := t.Context()
-	resp, err := agent.Chat(ctx, Text("hello"))
+	resp, err := agent.Send(ctx, Text("hello"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,8 +154,8 @@ func TestAgentChat(t *testing.T) {
 	if err := agent.Close(); err != nil {
 		t.Fatal("second Close:", err)
 	}
-	if _, err := agent.Chat(ctx, Text("hello")); !errors.Is(err, ErrClosed) {
-		t.Fatalf("Chat after Close = %v", err)
+	if _, err := agent.Send(ctx, Text("hello")); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Send after Close = %v", err)
 	}
 }
 
@@ -216,21 +213,21 @@ func TestAgentCustomToolAndHooks(t *testing.T) {
 	}
 	agent := startAgent(t, cfg)
 
-	text, err := chat(t, agent, `tool echo {"message": "hi"}`)
+	text, err := run(t, agent, `tool echo {"message": "hi"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(text, `"echo":"sanitized"`) || !strings.Contains(text, `"calls":1`) {
 		t.Fatalf("tool turn text %q", text)
 	}
-	text, err = chat(t, agent, `tool failing {}`)
+	text, err = run(t, agent, `tool failing {}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if text != "tool said: error please retry later" {
 		t.Fatalf("failing tool turn %q", text)
 	}
-	text, err = chat(t, agent, `tool echo {"message": "forbidden"}`)
+	text, err = run(t, agent, `tool echo {"message": "forbidden"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +241,7 @@ func TestAgentCustomToolAndHooks(t *testing.T) {
 	mu.Unlock()
 
 	// The tool call is reported in the turn's chunks too.
-	resp, err := agent.Chat(t.Context(), Text(`tool echo {"message": "again"}`))
+	resp, err := agent.Send(t.Context(), Text(`tool echo {"message": "again"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,16 +291,16 @@ func TestAgentTurnErrors(t *testing.T) {
 	})}
 	agent := startAgent(t, cfg)
 
-	_, err := chat(t, agent, "fail")
+	_, err := run(t, agent, "fail")
 	if ce, ok := errors.AsType[*ConnectionError](err); !ok || ce.Message != "API key not valid." {
 		t.Fatalf("fatal error turn: %v", err)
 	}
-	_, err = chat(t, agent, "blocked")
+	_, err = run(t, agent, "blocked")
 	if ee, ok := errors.AsType[*ExecutionError](err); !ok || ee.Message != "Denied by hook" {
 		t.Fatalf("denied turn: %v", err)
 	}
 	// The session keeps working.
-	if text, err := chat(t, agent, "hello"); err != nil || text != "Hello there!" {
+	if text, err := run(t, agent, "hello"); err != nil || text != "Hello there!" {
 		t.Fatalf("turn after errors %q %v", text, err)
 	}
 }
@@ -312,7 +309,7 @@ func TestAgentCancel(t *testing.T) {
 	cfg, _, _ := fakeAgentConfig(t)
 	agent := startAgent(t, cfg)
 	ctx := t.Context()
-	resp, err := agent.Chat(ctx, Text("slow"))
+	resp, err := agent.Send(ctx, Text("slow"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,8 +327,59 @@ func TestAgentCancel(t *testing.T) {
 	if _, err := resp.Result(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled turn: %v", err)
 	}
-	if text, err := chat(t, agent, "hello"); err != nil || text != "Hello there!" {
+	if text, err := run(t, agent, "hello"); err != nil || text != "Hello there!" {
 		t.Fatalf("turn after cancel %q %v", text, err)
+	}
+}
+
+func TestAgentRunCancelsTurnWhenContextEnds(t *testing.T) {
+	cfg, _, _ := fakeAgentConfig(t)
+	agent := startAgent(t, cfg)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		res, err := agent.Run(ctx, Text("slow"))
+		if res != nil {
+			err = errors.New("Run returned a result")
+		}
+		done <- err
+	}()
+	// The restored history step, the prompt, then "working".
+	waitFor(t, "the turn to start working", func() bool { return len(agent.Conversation().History()) == 3 })
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run = %v", err)
+	}
+	// The fake works on "slow" until halted, so the next turn runs only if
+	// Run cancelled this one.
+	if text, err := run(t, agent, "hello"); err != nil || text != "Hello there!" {
+		t.Fatalf("turn after Run's ctx ended: %q %v", text, err)
+	}
+}
+
+func TestRun(t *testing.T) {
+	cfg, _, _ := fakeAgentConfig(t)
+	var ended atomic.Bool
+	cfg.Hooks = []Hook{OnSessionEndHook(func(context.Context, *HookContext) error { ended.Store(true); return nil })}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	res, err := Run(ctx, "hello", cfg)
+	if err != nil || res.Text() != "Hello there!" {
+		t.Fatalf("Run = %+v, %v", res, err)
+	}
+	if !ended.Load() {
+		t.Fatal("Run did not close the session")
+	}
+
+	// A failed turn returns its result together with the error.
+	res, err = Run(ctx, "fail", cfg)
+	if _, ok := errors.AsType[*ConnectionError](err); !ok || res == nil {
+		t.Fatalf("failed Run = %+v, %v", res, err)
+	}
+
+	if _, err := Run(ctx, "hello", Options{ConversationID: "short"}); err == nil {
+		t.Fatal("invalid options accepted")
 	}
 }
 
@@ -343,7 +391,7 @@ func TestAgentStructuredOutput(t *testing.T) {
 	cfg, record, _ := fakeAgentConfig(t)
 	cfg.ResponseSchema = report{}
 	agent := startAgent(t, cfg)
-	resp, err := agent.Chat(t.Context(), Text(`structured {"total_revenue": 386.0, "top_selling_product": "Widget A"}`))
+	resp, err := agent.Send(t.Context(), Text(`structured {"total_revenue": 386.0, "top_selling_product": "Widget A"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,11 +422,11 @@ func TestAgentDynamicPolicy(t *testing.T) {
 		AllowAllPolicy(),
 	}
 	agent := startAgent(t, cfg)
-	text, err := chat(t, agent, "policy rule_0")
+	text, err := run(t, agent, "policy rule_0")
 	if err != nil || text != "policy POLICY_EVALUATION_OUTCOME_DENY Denied by policy 'no-rm'." {
 		t.Fatalf("rule_0 %q %v", text, err)
 	}
-	text, err = chat(t, agent, "policy rule_1")
+	text, err = run(t, agent, "policy rule_1")
 	if err != nil || text != "policy POLICY_EVALUATION_OUTCOME_ALLOW " || asked.Load() != 1 {
 		t.Fatalf("rule_1 %q %v asked=%d", text, err, asked.Load())
 	}
@@ -436,8 +484,8 @@ func TestAgentOutlivesLaunchContext(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = agent.Close() })
 	cancel()
-	if text, err := chat(t, agent, "hello"); err != nil || text != "Hello there!" {
-		t.Fatalf("chat after cancelling New's ctx: %q %v", text, err)
+	if text, err := run(t, agent, "hello"); err != nil || text != "Hello there!" {
+		t.Fatalf("turn after cancelling New's ctx: %q %v", text, err)
 	}
 }
 
@@ -491,8 +539,8 @@ func TestAgentValidation(t *testing.T) {
 	cfg, _, _ := fakeAgentConfig(t)
 	agent := startAgent(t, cfg)
 	for _, content := range [][]Content{nil, {Text("")}, {Text("   ")}, {Text(""), Text("  ")}} {
-		if _, err := agent.Chat(t.Context(), content...); err == nil || !strings.Contains(err.Error(), "non-empty message") {
-			t.Errorf("Chat(%q) = %v", content, err)
+		if _, err := agent.Send(t.Context(), content...); err == nil || !strings.Contains(err.Error(), "non-empty message") {
+			t.Errorf("Send(%q) = %v", content, err)
 		}
 	}
 	if _, err := New(t.Context(), Options{ConversationID: "short"}); err == nil {
@@ -550,9 +598,9 @@ func TestAgentDoneAndErr(t *testing.T) {
 	// The harness process exits: Done closes and Err carries its stderr.
 	agent = startAgent(t, cfg)
 	done = agent.Done()
-	text, err := chat(t, agent, "crash")
+	text, err := run(t, agent, "crash")
 	if _, ok := errors.AsType[*ConnectionError](err); !ok {
-		t.Fatalf("chat with a crashing harness: %q, %v", text, err)
+		t.Fatalf("turn with a crashing harness: %q, %v", text, err)
 	}
 	if pe, ok := errors.AsType[*ProcessError](err); !ok || pe.ExitCode == nil || *pe.ExitCode != 3 {
 		t.Fatalf("turn error of a crashing harness %v, want a *ProcessError with status 3", err)

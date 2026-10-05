@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -584,5 +585,216 @@ func TestClientHooksAndPermissionsRoundTrip(t *testing.T) {
 	case <-hookRan:
 	case <-time.After(5 * time.Second):
 		t.Fatal("hook was not invoked")
+	}
+}
+
+// collectText ranges over turn.Text and returns the texts and the error it
+// ended with.
+func collectText(ctx context.Context, turn *TurnStream) ([]string, error) {
+	var texts []string
+	for text, err := range turn.Text(ctx) {
+		if err != nil {
+			return texts, err
+		}
+		texts = append(texts, text)
+	}
+	return texts, nil
+}
+
+// streamFrame is a stream_event frame carrying event, from the subagent
+// parent names when it is not empty.
+func streamFrame(event map[string]any, parent string) map[string]any {
+	frame := map[string]any{"type": "stream_event", "uuid": "u", "session_id": "s1", "event": event}
+	if parent != "" {
+		frame["parent_tool_use_id"] = parent
+	}
+	return frame
+}
+
+// deltaFrame is a stream_event frame carrying a text delta.
+func deltaFrame(text, parent string) map[string]any {
+	return streamFrame(map[string]any{"type": "content_block_delta", "index": 0,
+		"delta": map[string]any{"type": "text_delta", "text": text}}, parent)
+}
+
+// messageStartFrame is a stream_event frame starting the API message id.
+func messageStartFrame(id, parent string) map[string]any {
+	return streamFrame(map[string]any{"type": "message_start",
+		"message": map[string]any{"id": id, "type": "message", "role": "assistant"}}, parent)
+}
+
+// assistantBlocksFrame is an assistant frame of the API message id with the
+// given content blocks, from the subagent parent names when it is not empty.
+func assistantBlocksFrame(id, parent string, blocks ...any) map[string]any {
+	frame := map[string]any{"type": "assistant", "session_id": "s1", "message": map[string]any{
+		"id": id, "model": "claude-opus-4-5", "content": blocks}}
+	if parent != "" {
+		frame["parent_tool_use_id"] = parent
+	}
+	return frame
+}
+
+func textBlock(text string) map[string]any {
+	return map[string]any{"type": "text", "text": text}
+}
+
+func TestTurnTextFromAssistantMessages(t *testing.T) {
+	t.Parallel()
+	client, ft := testClient(t, nil, nil)
+	turn, err := client.Send(t.Context(), Text("hi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Without partial messages the text comes from the TextBlocks, tool
+	// calls and subagent output left out.
+	ft.push(assistantBlocksFrame("m1", "", textBlock("Hello"),
+		map[string]any{"type": "tool_use", "id": "tu1", "name": "Agent", "input": map[string]any{}}))
+	ft.push(assistantBlocksFrame("m2", "tu1", textBlock("from the subagent")))
+	ft.push(assistantBlocksFrame("m3", "", textBlock(" world"), textBlock("!")))
+	ft.push(resultFrame())
+
+	texts, err := collectText(t.Context(), turn)
+	if err != nil || strings.Join(texts, "|") != "Hello| world|!" {
+		t.Fatalf("text = %q, %v", texts, err)
+	}
+	// The result stays available, and an ended turn yields no more text.
+	if res, err := turn.Result(t.Context()); err != nil || res.SessionID != "s1" {
+		t.Fatalf("result = %+v, %v", res, err)
+	}
+	if texts, err := collectText(t.Context(), turn); texts != nil || err != nil {
+		t.Fatalf("text again = %q, %v", texts, err)
+	}
+}
+
+func TestTurnTextFromPartialMessages(t *testing.T) {
+	t.Parallel()
+	client, ft := testClient(t, &Options{IncludePartialMessages: true}, nil)
+	turn, err := client.Send(t.Context(), Text("hi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ft.push(messageStartFrame("m1", ""))
+	ft.push(deltaFrame("Hel", ""))
+	ft.push(streamFrame(map[string]any{"type": "content_block_delta", "index": 1,
+		"delta": map[string]any{"type": "input_json_delta", "partial_json": "{}"}}, ""))
+	ft.push(deltaFrame("lo", ""))
+	// The complete message repeats the deltas and is skipped.
+	ft.push(assistantBlocksFrame("m1", "", textBlock("Hello")))
+	// Subagent deltas and messages are skipped.
+	ft.push(messageStartFrame("m2", "tu1"))
+	ft.push(deltaFrame("sub", "tu1"))
+	ft.push(assistantBlocksFrame("m2", "tu1", textBlock("sub")))
+	ft.push(messageStartFrame("m3", ""))
+	ft.push(deltaFrame(" world", ""))
+	ft.push(assistantBlocksFrame("m3", "", textBlock(" world")))
+	// A message that was never streamed, such as a synthetic one, keeps
+	// its text.
+	ft.push(assistantBlocksFrame("m4", "", textBlock("!")))
+	ft.push(resultFrame())
+
+	// Breaking out and ranging again resumes where the loop stopped.
+	var texts []string
+	for text, err := range turn.Text(t.Context()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		texts = append(texts, text)
+		break
+	}
+	rest, err := collectText(t.Context(), turn)
+	texts = append(texts, rest...)
+	if err != nil || strings.Join(texts, "|") != "Hel|lo| world|!" {
+		t.Fatalf("text = %q, %v", texts, err)
+	}
+}
+
+func TestTurnTextErrors(t *testing.T) {
+	t.Parallel()
+	client, ft := testClient(t, nil, nil)
+
+	// An error result ends Text with the *ResultError Result returns, and
+	// Result still returns the result.
+	failed, err := client.Send(t.Context(), Text("fail"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ft.push(assistantFrame("partial"))
+	ft.push(map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true, "session_id": "s1"})
+	texts, err := collectText(t.Context(), failed)
+	var resErr *ResultError
+	if len(texts) != 1 || texts[0] != "partial" || !errors.As(err, &resErr) {
+		t.Fatalf("text = %q, %v", texts, err)
+	}
+	if res, err := failed.Result(t.Context()); res == nil || !errors.As(err, &resErr) {
+		t.Fatalf("result = %+v, %v", res, err)
+	}
+
+	// A cancelled ctx ends Text with its error without ending the turn.
+	turn, err := client.Send(t.Context(), Text("again"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := collectText(ctx, turn); !errors.Is(err, context.Canceled) {
+		t.Fatalf("text with cancelled ctx = %v", err)
+	}
+	// After Close on a running turn Text fails with ErrClosed.
+	_ = turn.Close()
+	if _, err := collectText(t.Context(), turn); !errors.Is(err, ErrClosed) {
+		t.Fatalf("text after close = %v", err)
+	}
+
+	// A fatal stream error is the final item.
+	last, err := client.Send(t.Context(), Text("last"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ft.push(resultFrame()) // ends the closed turn
+	ft.push(assistantFrame("before"))
+	ft.finish(errors.New("boom"))
+	texts, err = collectText(t.Context(), last)
+	if len(texts) != 1 || texts[0] != "before" || err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("text = %q, %v", texts, err)
+	}
+}
+
+func TestClientRunInterruptsOnContextEnd(t *testing.T) {
+	t.Parallel()
+	client, ft := testClient(t, nil, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.Run(ctx, Text("long"))
+		done <- err
+	}()
+	// Cancel once the turn has been written.
+	for {
+		if frame := ft.nextWrite(t); frame["type"] == "user" {
+			break
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("run = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after its ctx ended")
+	}
+	if n := interrupts(t, ft); n != 1 {
+		t.Fatalf("run sent %d interrupts, want 1", n)
+	}
+
+	// The session stays usable: the interrupted turn's result is skipped by
+	// the next one.
+	ft.push(map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true, "session_id": "s1"})
+	ft.push(map[string]any{"type": "result", "subtype": "success", "is_error": false, "session_id": "s1", "result": "next"})
+	if res, err := client.Run(t.Context(), Text("next")); err != nil || res.Text() != "next" {
+		t.Fatalf("next run = %+v, %v", res, err)
+	}
+	if n := interrupts(t, ft); n != 1 {
+		t.Fatalf("a completed run sent an interrupt (%d total)", n)
 	}
 }

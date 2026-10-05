@@ -2,12 +2,9 @@ package codex
 
 import (
 	"context"
-	"errors"
-	"time"
-)
 
-// interruptTimeout bounds the turn/interrupt Run sends after its context ends.
-const interruptTimeout = 5 * time.Second
+	"github.com/ironpark/gelati/internal/lifecycle"
+)
 
 // TurnResult is a finished turn collected from its stream, mirroring
 // upstream's TurnResult.
@@ -116,17 +113,13 @@ func finalResponse(items []ThreadItem) string {
 // Run starts a turn and waits for its result, like upstream's thread.run. If
 // ctx ends before the turn does, Run asks the server to interrupt the turn
 // and returns the context's error.
-func (c *Client) Run(ctx context.Context, threadID string, input []InputItem, opts *TurnOptions) (*TurnResult, error) {
-	stream, err := c.StartTurn(ctx, threadID, input, opts)
-	if err != nil {
-		return nil, err
-	}
-	return collect(ctx, stream)
+func (t *Thread) Run(ctx context.Context, input ...InputItem) (*TurnResult, error) {
+	return t.RunTurn(ctx, TurnRequest{Input: input})
 }
 
-// RunExternal is Run for an ExternalMessage; see StartExternalTurn.
-func (c *Client) RunExternal(ctx context.Context, threadID string, msg ExternalMessage, opts *TurnOptions) (*TurnResult, error) {
-	stream, err := c.StartExternalTurn(ctx, threadID, msg, opts)
+// RunTurn is Run with per-turn options or an ExternalMessage; see SendTurn.
+func (t *Thread) RunTurn(ctx context.Context, req TurnRequest) (*TurnResult, error) {
+	stream, err := t.SendTurn(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -136,21 +129,8 @@ func (c *Client) RunExternal(ctx context.Context, threadID string, msg ExternalM
 // collect waits for a stream's result, cancelling the turn when ctx ends.
 func collect(ctx context.Context, stream *TurnStream) (*TurnResult, error) {
 	result, err := stream.Result(ctx)
-	if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
-		cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), interruptTimeout)
-		_ = stream.Cancel(cancelCtx)
-		cancel()
+	if lifecycle.CancelIfDone(ctx, err, stream.Cancel) {
 		_ = stream.Close()
 	}
 	return result, err
-}
-
-// StartExternalTurn starts a turn whose input is untrusted external content
-// rather than user input. The content has tool-level authority and never
-// counts as user approval.
-func (c *Client) StartExternalTurn(ctx context.Context, threadID string, msg ExternalMessage, opts *TurnOptions) (*TurnStream, error) {
-	if msg.ToolName == "" {
-		return nil, errors.New("codex: ExternalMessage.ToolName is required")
-	}
-	return c.startTurn(ctx, StartTurnParams{ThreadID: threadID, Input: []InputItem{}, ToolOutput: &msg}, opts)
 }

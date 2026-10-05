@@ -38,11 +38,7 @@ func session(ctx context.Context, opts agy.Options, prompt string) string {
 	defer agent.Close()
 
 	fmt.Println("  User:", prompt)
-	stream, err := agent.Chat(ctx, agy.Text(prompt))
-	if err != nil {
-		log.Fatal(err)
-	}
-	res, err := stream.Result(ctx)
+	res, err := agent.Run(ctx, agy.Text(prompt))
 	if err != nil {
 		log.Fatal(err)
 	}

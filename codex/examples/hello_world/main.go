@@ -31,7 +31,7 @@ func main() {
 
 	prompt := "Say 'Hello World!'"
 	fmt.Println("  User:", prompt)
-	result, err := client.Run(ctx, thread.ID, codex.Text(prompt), nil)
+	result, err := thread.Run(ctx, codex.Text(prompt))
 	if err != nil {
 		log.Fatal(err)
 	}

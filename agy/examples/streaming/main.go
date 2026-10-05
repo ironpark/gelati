@@ -21,7 +21,7 @@ func main() {
 	prompt := "Solve this riddle: I speak without a mouth and hear without ears. " +
 		"I have no body, but I come alive with wind. What am I? Explain your reasoning."
 	fmt.Printf("  User: %s\n\n", prompt)
-	stream, err := agent.Chat(ctx, agy.Text(prompt))
+	stream, err := agent.Send(ctx, agy.Text(prompt))
 	if err != nil {
 		log.Fatal(err)
 	}

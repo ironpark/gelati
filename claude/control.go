@@ -522,7 +522,7 @@ func (e *engine) cancelOutbound(ctx context.Context, id string) {
 	if e.isClosed() {
 		return
 	}
-	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	writeCtx, cancel := lifecycle.Detached(ctx)
 	defer cancel()
 	_ = e.writeFrame(writeCtx, controlCancelFrame(id))
 }

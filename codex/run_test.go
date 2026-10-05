@@ -93,7 +93,7 @@ func TestRunFailedTurn(t *testing.T) {
 			"id": "turn_1", "status": "failed", "items": []any{},
 			"error": map[string]any{"message": "usage limit", "codexErrorInfo": ErrorInfoUsageLimitExceeded}}})
 	})
-	result, err := client.Run(context.Background(), threadID, Text("hi"), nil)
+	result, err := client.Thread(threadID).Run(context.Background(), Text("hi"))
 	<-done
 	turnErr, ok := errors.AsType[*TurnError](err)
 	if !ok || turnErr.Kind() != ErrorInfoUsageLimitExceeded {
@@ -141,13 +141,13 @@ func TestRunInterruptsOnCancel(t *testing.T) {
 		server.respond(req, nil)
 	})
 	cancel()
-	// Run is StartTurn followed by collect; drive collect on the started turn.
+	// Run is Send followed by collect; drive collect on the started turn.
 	_, err := collect(ctx, stream)
 	<-done
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
 	}
-	var params InterruptTurnParams
+	var params interruptTurnParams
 	if raw := <-interrupted; json.Unmarshal(raw, &params) != nil || params.TurnID != "turn_1" || params.ThreadID != "thr_1" {
 		t.Fatalf("interrupt params = %+v", params)
 	}
@@ -165,7 +165,7 @@ func TestTurnStreamCancel(t *testing.T) {
 
 	done := serve(t, func() {
 		req := server.expect("turn/interrupt")
-		var params InterruptTurnParams
+		var params interruptTurnParams
 		if json.Unmarshal(req.Params, &params) != nil || params.TurnID != "turn_1" || params.ThreadID != "thr_1" {
 			t.Errorf("interrupt params = %s", req.Params)
 		}
@@ -193,12 +193,18 @@ func TestTurnStreamCancel(t *testing.T) {
 	}
 }
 
-func TestStartExternalTurn(t *testing.T) {
+func TestSendTurnExternal(t *testing.T) {
 	client, server := connect(t, Options{})
-	threadID := startThread(t, client, server, "thr_1")
+	thread := client.Thread(startThread(t, client, server, "thr_1"))
 
-	if _, err := client.StartExternalTurn(context.Background(), threadID, ExternalMessage{}, nil); err == nil {
+	if _, err := thread.SendTurn(context.Background(), TurnRequest{External: &ExternalMessage{}}); err == nil {
 		t.Fatal("empty ToolName accepted")
+	}
+	if _, err := thread.SendTurn(context.Background(), TurnRequest{
+		Input:    []InputItem{Text("hi")},
+		External: &ExternalMessage{ToolName: "inbox"},
+	}); err == nil {
+		t.Fatal("Input and External accepted together")
 	}
 	done := serve(t, func() {
 		req := server.expect("turn/start")
@@ -208,11 +214,13 @@ func TestStartExternalTurn(t *testing.T) {
 		}
 		server.respond(req, map[string]any{"turn": map[string]any{"id": "turn_1", "status": "inProgress", "items": []any{}}})
 	})
-	stream, err := client.StartExternalTurn(context.Background(), threadID,
-		ExternalMessage{ToolName: "inbox", Output: "mail body"}, &TurnOptions{TurnTrigger: "cron"})
+	stream, err := thread.SendTurn(context.Background(), TurnRequest{
+		External:    &ExternalMessage{ToolName: "inbox", Output: "mail body"},
+		TurnOptions: TurnOptions{TurnTrigger: "cron"},
+	})
 	<-done
 	if err != nil {
-		t.Fatalf("StartExternalTurn: %v", err)
+		t.Fatalf("SendTurn: %v", err)
 	}
 	stream.Close()
 }
@@ -225,8 +233,8 @@ func TestUnsubscribeFinishesStream(t *testing.T) {
 	done := serve(t, func() {
 		server.respond(server.expect("thread/unsubscribe"), map[string]any{"status": "unsubscribed"})
 	})
-	if _, err := client.UnsubscribeThread(context.Background(), threadID); err != nil {
-		t.Fatalf("UnsubscribeThread: %v", err)
+	if _, err := client.Thread(threadID).Unsubscribe(context.Background()); err != nil {
+		t.Fatalf("Unsubscribe: %v", err)
 	}
 	<-done
 	ctx, cancel := context.WithTimeout(context.Background(), fakeTimeout)

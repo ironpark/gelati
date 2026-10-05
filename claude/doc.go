@@ -46,9 +46,19 @@
 //	}
 //
 // [Client.Send] returns a [TurnStream]: its Events yield the turn's messages
-// up to its ResultMessage, Result waits for that, Cancel interrupts the turn
-// and Close stops reading it. [Client.Run] is the shorthand of Send plus
-// Result.
+// up to its ResultMessage, Text yields just the assistant text of the main
+// conversation as it arrives, Result waits for the ResultMessage, Cancel
+// interrupts the turn and Close stops reading it:
+//
+//	for text, err := range turn.Text(ctx) {
+//		if err != nil {
+//			return err
+//		}
+//		fmt.Print(text)
+//	}
+//
+// [Client.Run] is the shorthand of Send plus Result; it interrupts the turn
+// when its ctx ends first.
 // [Client.Done] is closed when the session ends for any reason, and
 // [Client.Err] then reports why.
 //

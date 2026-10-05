@@ -100,11 +100,7 @@ func run(ctx context.Context, opts agy.Options, prompt ...agy.Content) {
 	}
 	defer agent.Close()
 	fmt.Println("  User:", prompt[0])
-	stream, err := agent.Chat(ctx, prompt...)
-	if err != nil {
-		log.Fatal(err)
-	}
-	res, err := stream.Result(ctx)
+	res, err := agent.Run(ctx, prompt...)
 	if err != nil {
 		log.Fatal(err)
 	}

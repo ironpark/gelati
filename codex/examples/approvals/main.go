@@ -46,8 +46,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	result, err := client.Run(ctx, thread.ID,
-		codex.Text("Run `ls -la` and summarize the output in one sentence."), nil)
+	result, err := thread.Run(ctx,
+		codex.Text("Run `ls -la` and summarize the output in one sentence."))
 	if err != nil {
 		log.Fatal(err)
 	}

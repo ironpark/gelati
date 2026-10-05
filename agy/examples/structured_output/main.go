@@ -47,13 +47,9 @@ func main() {
 	}
 	defer agent.Close()
 
-	stream, err := agent.Chat(ctx, agy.Text("Use the fetch_unstructured_meeting_notes tool to retrieve notes for "+
+	res, err := agent.Run(ctx, agy.Text("Use the fetch_unstructured_meeting_notes tool to retrieve notes for "+
 		"'meeting-2026-05' and return the meeting summary with the appropriate action item list. "+
 		"Ensure each action item includes 'assignee', 'task', and 'deadline'."))
-	if err != nil {
-		log.Fatal(err)
-	}
-	res, err := stream.Result(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}

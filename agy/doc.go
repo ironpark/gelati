@@ -18,7 +18,7 @@
 //	}
 //	defer agent.Close()
 //
-//	stream, err := agent.Chat(ctx, agy.Text("What is the capital of France?"))
+//	stream, err := agent.Send(ctx, agy.Text("What is the capital of France?"))
 //	if err != nil {
 //		return err
 //	}
@@ -28,6 +28,15 @@
 //		}
 //		fmt.Print(delta)
 //	}
+//
+// Agent.Run sends a prompt and waits for the whole turn instead, and the
+// package-level Run does the same in a one-off session:
+//
+//	res, err := agy.Run(ctx, "What is the capital of France?", agy.Options{})
+//	if err != nil {
+//		return err
+//	}
+//	fmt.Println(res.Text())
 //
 // The zero Options runs DefaultModel on the Gemini API with the key from
 // GEMINI_API_KEY (or Options.APIKey), with the default builtin tools enabled
@@ -46,7 +55,8 @@
 // # Layers
 //
 // Agent is the high-level API: New starts a session and Close ends it
-// (Python's "async with"), and Chat sends a prompt. Agent.Conversation
+// (Python's "async with"), Send sends a prompt and returns its TurnStream,
+// and Run sends a prompt and waits for its TurnResult. Agent.Conversation
 // exposes the Conversation underneath, which keeps the step history, turn
 // count, compaction indices and per-turn usage; Conversation.Connection
 // exposes the Connection to the harness for direct step access. Each layer has Done,
@@ -60,8 +70,8 @@
 // the chunks, the full text (TurnResult.Text), the structured output, the
 // stop reason and the token usage. Cancel halts the turn; Close stops
 // reading it and gives up the connection's step reader without cancelling
-// it. Conversation.Send and ReceiveSteps are the lower-level, step-based
-// alternative to Chat.
+// it. Conversation.ReceiveSteps is the lower-level, step-based alternative
+// to the stream: it reads a turn started by Send as raw steps.
 //
 // # Tools, hooks, policies and triggers
 //
@@ -97,7 +107,7 @@
 // The Go names differ from the Python ones where Go conventions differ:
 //
 //	Agent(config), async with          -> New, Agent.Close
-//	agent.chat(prompt)                 -> Agent.Chat(ctx, content...)
+//	agent.chat(prompt)                 -> Agent.Send(ctx, content...)
 //	LocalAgentConfig, AgentConfig      -> Options
 //	LocalOpenAIAgentConfig(model, base_url) -> Options{Model: model, OpenAI: &OpenAIEndpoint{BaseURL: base_url}}
 //	config.lightweight(), .eval()      -> Options.Lightweight, Options.Eval
@@ -118,7 +128,8 @@
 //	ChatResponse.structured_output()   -> TurnResult.StructuredOutput, TurnResult.DecodeStructuredOutput
 //	ChatResponse.usage_metadata, .stop_reason -> TurnResult.Usage, TurnResult.StopReason
 //	ChatResponse.cancel()              -> TurnStream.Cancel
-//	Conversation.receive_chunks()      -> Conversation.Chat, then TurnStream.Events
+//	Conversation.send(prompt)          -> Conversation.Send (which also returns the TurnStream)
+//	Conversation.receive_chunks()      -> Conversation.Send, then TurnStream.Events
 //	Text, Thought (stream chunks)      -> TextChunk, ThoughtChunk
 //	UsageMetadata +, -, *, sum()       -> UsageMetadata.Add, Sub, Scale, SumUsage
 //	HookResult(allow=False)            -> HookResult{Deny: true}

@@ -24,7 +24,7 @@ func ExampleAgent() {
 	}
 	defer agent.Close()
 
-	stream, err := agent.Chat(ctx, agy.Text("Why is the sky blue?"))
+	stream, err := agent.Send(ctx, agy.Text("Why is the sky blue?"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -42,6 +42,18 @@ func ExampleAgent() {
 	if u := res.Usage; u != nil && u.TotalTokenCount != nil {
 		fmt.Println("tokens:", *u.TotalTokenCount)
 	}
+}
+
+func ExampleRun() {
+	// ctx bounds the whole call: the session starts, runs one turn and
+	// closes within it.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	res, err := agy.Run(ctx, "What is the capital of France?", agy.Options{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(res.Text())
 }
 
 func ExampleNewTool() {
@@ -66,7 +78,7 @@ func ExampleNewTool() {
 	}
 	defer agent.Close()
 
-	stream, err := agent.Chat(ctx, agy.Text("What's the weather in Seoul?"))
+	stream, err := agent.Send(ctx, agy.Text("What's the weather in Seoul?"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -141,11 +153,7 @@ func ExampleTurnResult_DecodeStructuredOutput() {
 		log.Fatal(err)
 	}
 	defer agent.Close()
-	stream, err := agent.Chat(ctx, agy.Text("Capital and population of France?"))
-	if err != nil {
-		log.Fatal(err)
-	}
-	res, err := stream.Result(ctx)
+	res, err := agent.Run(ctx, agy.Text("Capital and population of France?"))
 	if err != nil {
 		log.Fatal(err)
 	}

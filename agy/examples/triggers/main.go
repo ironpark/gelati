@@ -93,21 +93,17 @@ func session(ctx context.Context, opts agy.Options, arm *atomic.Bool, first, sec
 	}
 	defer agent.Close()
 
-	chat(ctx, agent, first)
+	ask(ctx, agent, first)
 	arm.Store(true)
 	fmt.Println("\n  Sleeping for 5 seconds; an event will be simulated in the background...")
 	time.Sleep(5 * time.Second)
-	chat(ctx, agent, second)
+	ask(ctx, agent, second)
 	fmt.Println("\n  Ending session; triggers stop automatically.")
 }
 
-func chat(ctx context.Context, agent *agy.Agent, prompt string) {
+func ask(ctx context.Context, agent *agy.Agent, prompt string) {
 	fmt.Printf("\n  User: %s\n", prompt)
-	stream, err := agent.Chat(ctx, agy.Text(prompt))
-	if err != nil {
-		log.Fatal(err)
-	}
-	res, err := stream.Result(ctx)
+	res, err := agent.Run(ctx, agy.Text(prompt))
 	if err != nil {
 		log.Fatal(err)
 	}
