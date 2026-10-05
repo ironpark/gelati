@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/ironpark/gelati/internal/jsonx"
 	"github.com/ironpark/gelati/internal/safecall"
 )
 
@@ -21,7 +22,7 @@ var errSuppressReply = errors.New("claude: control request left unanswered")
 // goroutine, so a slow callback cannot stall the read loop. A request whose ID
 // is already being answered (a duplicate delivery) is skipped.
 func (e *engine) spawnControlHandler(ctx context.Context, frame map[string]any) {
-	requestID := str(frame["request_id"])
+	requestID := jsonx.Str(frame["request_id"])
 	handlerCtx, cancel := context.WithCancel(ctx)
 	h := &inflightHandler{cancel: cancel}
 	e.mu.Lock()
@@ -76,7 +77,7 @@ func (e *engine) handleControlRequest(ctx context.Context, requestID string, fra
 	reply := controlSuccessFrame(requestID, data)
 	if err != nil {
 		e.cfg.logger.Warn("claude: control request failed",
-			"subtype", str(request["subtype"]), "request_id", requestID, "error", err)
+			"subtype", jsonx.Str(request["subtype"]), "request_id", requestID, "error", err)
 		reply = controlErrorFrame(requestID, err.Error())
 	}
 	if err := e.writeFrame(ctx, reply); err != nil {
@@ -88,7 +89,7 @@ func (e *engine) handleControlRequest(ctx context.Context, requestID string, fra
 // panicking callback becomes an error reply naming the subtype rather than
 // taking the process down.
 func (e *engine) dispatchControlRequest(ctx context.Context, requestID string, request map[string]any) (data map[string]any, err error) {
-	subtype := str(request["subtype"])
+	subtype := jsonx.Str(request["subtype"])
 	defer safecall.Recover(&err, subtype+" callback")
 	switch subtype {
 	case "remote_tool_call", "remote_plumbing_call", "remote_tools_probe", "remote_tools_reannounce":
@@ -135,7 +136,7 @@ func (e *engine) handleCanUseTool(ctx context.Context, requestID string, request
 	}
 	input, _ := request["input"].(map[string]any)
 	permCtx := toolPermissionContext(requestID, request)
-	result, err := e.cfg.canUseTool(ctx, str(request["tool_name"]), input, permCtx)
+	result, err := e.cfg.canUseTool(ctx, jsonx.Str(request["tool_name"]), input, permCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -147,14 +148,14 @@ func (e *engine) handleCanUseTool(ctx context.Context, requestID string, request
 }
 
 func (e *engine) handleHookCallback(ctx context.Context, request map[string]any) (map[string]any, error) {
-	id := str(request["callback_id"])
+	id := jsonx.Str(request["callback_id"])
 	callback, ok := e.cfg.hookCallbacks[id]
 	if !ok {
 		//lint:ignore ST1005 sent to the CLI verbatim, as the Python SDK does
 		return nil, fmt.Errorf("No hook callback found for ID: %s", id)
 	}
 	input, _ := request["input"].(map[string]any)
-	out, err := callback(ctx, input, str(request["tool_use_id"]), HookContext{Raw: input})
+	out, err := callback(ctx, input, jsonx.Str(request["tool_use_id"]), HookContext{Raw: input})
 	if err != nil {
 		return nil, err
 	}
@@ -166,14 +167,14 @@ func (e *engine) handleElicitation(ctx context.Context, requestID string, reques
 		return map[string]any{"action": ElicitationDecline}, nil
 	}
 	req := ElicitationRequest{
-		ServerName:    str(request["mcp_server_name"]),
-		Message:       str(request["message"]),
-		Mode:          str(request["mode"]),
-		URL:           str(request["url"]),
-		ElicitationID: str(request["elicitation_id"]),
-		Title:         str(request["title"]),
-		DisplayName:   str(request["display_name"]),
-		Description:   str(request["description"]),
+		ServerName:    jsonx.Str(request["mcp_server_name"]),
+		Message:       jsonx.Str(request["message"]),
+		Mode:          jsonx.Str(request["mode"]),
+		URL:           jsonx.Str(request["url"]),
+		ElicitationID: jsonx.Str(request["elicitation_id"]),
+		Title:         jsonx.Str(request["title"]),
+		DisplayName:   jsonx.Str(request["display_name"]),
+		Description:   jsonx.Str(request["description"]),
 		RequestID:     requestID,
 		Raw:           request,
 	}
@@ -183,7 +184,7 @@ func (e *engine) handleElicitation(ctx context.Context, requestID string, reques
 }
 
 func (e *engine) handleUserDialog(ctx context.Context, requestID string, request map[string]any) (map[string]any, error) {
-	kind := str(request["dialog_kind"])
+	kind := jsonx.Str(request["dialog_kind"])
 	// Without a handler, or for a kind this host did not declare, stay
 	// silent: an error reply would be discarded and a "cancelled" one is a
 	// real settlement, so silence lets a capable client or the CLI's
@@ -196,7 +197,7 @@ func (e *engine) handleUserDialog(ctx context.Context, requestID string, request
 	}
 	req := UserDialogRequest{
 		DialogKind: kind,
-		ToolUseID:  str(request["tool_use_id"]),
+		ToolUseID:  jsonx.Str(request["tool_use_id"]),
 		RequestID:  requestID,
 		Raw:        request,
 	}

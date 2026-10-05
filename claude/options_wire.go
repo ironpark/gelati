@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ironpark/gelati/claude/internal/compat"
 	"github.com/ironpark/gelati/internal/jsonx"
 )
 
@@ -543,7 +544,7 @@ func buildEnv(opts *Options) []string {
 	// the CLI's runtime, and DEBUG (used by many Node libraries) is only
 	// passed on as DEBUG=1 when SDK debugging is requested.
 	delete(env, "NODE_OPTIONS")
-	if envTruthy(env["DEBUG_CLAUDE_AGENT_SDK"]) {
+	if compat.EnvTruthy(env["DEBUG_CLAUDE_AGENT_SDK"]) {
 		env["DEBUG"] = "1"
 	} else {
 		delete(env, "DEBUG")

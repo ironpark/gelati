@@ -24,6 +24,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 )
@@ -203,4 +204,42 @@ func ReadValue(dec *jsontext.Decoder) (any, error) {
 		return arr, err
 	}
 	return nil, fmt.Errorf("jsonx: unexpected JSON token %v", tok)
+}
+
+// LiteralNumber is a JSON number kept as its literal text: a Number read by
+// ReadValue, or an encoding/json (v1) Number a caller put in a generic value.
+type LiteralNumber interface {
+	Int64() (int64, error)
+	Float64() (float64, error)
+	String() string
+}
+
+// Str returns v when it is a string, and "" otherwise.
+func Str(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+// ToInt64 reads a decoded JSON number, truncating a fractional one. NaN and
+// the infinities are not numbers here.
+func ToInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int64:
+		return n, true
+	case float64:
+		if math.IsNaN(n) || math.IsInf(n, 0) {
+			return 0, false
+		}
+		return int64(n), true
+	case LiteralNumber:
+		if i, err := n.Int64(); err == nil {
+			return i, true
+		}
+		if f, err := n.Float64(); err == nil {
+			return int64(f), true
+		}
+	}
+	return 0, false
 }

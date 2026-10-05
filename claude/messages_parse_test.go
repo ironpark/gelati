@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/ironpark/gelati/claude/sessions"
 	"github.com/ironpark/gelati/internal/jsonx"
 )
 
@@ -364,7 +365,7 @@ func TestParseSystemSubtypes(t *testing.T) {
 		{"mirror_error", `"error":"boom","key":{"projectKey":"p","sessionId":"s","subpath":"subagents/a"}`,
 			func(t *testing.T, m Message) {
 				me := m.(*MirrorErrorMessage)
-				if me.Error != "boom" || me.Key == nil || *me.Key != (SessionKey{ProjectKey: "p", SessionID: "s", Subpath: "subagents/a"}) {
+				if me.Error != "boom" || me.Key == nil || *me.Key != (sessions.Key{ProjectKey: "p", SessionID: "s", Subpath: "subagents/a"}) {
 					t.Fatalf("got %+v", me)
 				}
 			}},

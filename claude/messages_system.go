@@ -2,6 +2,8 @@ package claude
 
 import (
 	"slices"
+
+	"github.com/ironpark/gelati/claude/sessions"
 )
 
 // SystemMessage is a metadata message. Data holds the full raw payload,
@@ -529,7 +531,7 @@ type TaskPatch struct {
 type MirrorErrorMessage struct {
 	SystemMessage
 	// Key identifies the transcript whose batch was dropped. It may be nil.
-	Key *SessionKey `json:"key"`
+	Key *sessions.Key `json:"key"`
 	// Error describes the last failure.
 	Error string `json:"error"`
 }

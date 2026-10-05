@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"math"
 	"reflect"
 	"slices"
 	"strings"
@@ -25,12 +24,6 @@ import (
 // Reading decoded JSON values
 // ---------------------------------------------------------------------------
 
-// str returns v when it is a string, and "" otherwise.
-func str(v any) string {
-	s, _ := v.(string)
-	return s
-}
-
 // firstString returns the first non-empty string among m's keys.
 func firstString(m map[string]any, keys ...string) string {
 	for _, k := range keys {
@@ -41,43 +34,10 @@ func firstString(m map[string]any, keys ...string) string {
 	return ""
 }
 
-// toInt is toInt64 converted to int.
+// toInt is jsonx.ToInt64 converted to int.
 func toInt(v any) (int, bool) {
-	n, ok := toInt64(v)
+	n, ok := jsonx.ToInt64(v)
 	return int(n), ok
-}
-
-// toInt64 reads a JSON number, truncating a fractional one. NaN and the
-// infinities are not numbers here.
-func toInt64(v any) (int64, bool) {
-	switch n := v.(type) {
-	case int:
-		return int64(n), true
-	case int64:
-		return n, true
-	case float64:
-		if math.IsNaN(n) || math.IsInf(n, 0) {
-			return 0, false
-		}
-		return int64(n), true
-	case numberText:
-		if i, err := n.Int64(); err == nil {
-			return i, true
-		}
-		if f, err := n.Float64(); err == nil {
-			return int64(f), true
-		}
-	}
-	return 0, false
-}
-
-// numberText is a JSON number kept as its literal text: an encoding/json
-// (v1) Number a caller put in a generic value, or a jsonx.Number read by
-// jsonx.ReadValue.
-type numberText interface {
-	Int64() (int64, error)
-	Float64() (float64, error)
-	String() string
 }
 
 // stringItems keeps the string elements of a JSON array.
@@ -325,7 +285,7 @@ func jsonKindOf(v any) jsonKind {
 	switch v.(type) {
 	case string:
 		return kindString
-	case float64, numberText, int, int64:
+	case float64, jsonx.LiteralNumber, int, int64:
 		return kindNumber
 	case bool:
 		return kindBool
@@ -350,7 +310,7 @@ func wantedKind(t reflect.Type) jsonKind {
 	switch {
 	case t.Implements(jsonUnmarshalerType) || pt.Implements(jsonUnmarshalerType),
 		t.Implements(jsonUnmarshalerFromType) || pt.Implements(jsonUnmarshalerFromType),
-		t.Kind() == reflect.String && t.Implements(reflect.TypeFor[numberText]()):
+		t.Kind() == reflect.String && t.Implements(reflect.TypeFor[jsonx.LiteralNumber]()):
 		return kindAny
 	case t.Implements(textUnmarshalerType) || pt.Implements(textUnmarshalerType):
 		return kindString

@@ -4,6 +4,8 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"reflect"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // Message is one item of the stream produced by Query or Client. The set of
@@ -100,14 +102,14 @@ func parseOrigin(data map[string]any) *MessageOrigin {
 // kind, if any, is kept in Extra.
 func originFromMap(raw map[string]any) MessageOrigin {
 	o := MessageOrigin{
-		Kind:         str(raw["kind"]),
-		Server:       str(raw["server"]),
-		From:         str(raw["from"]),
-		Name:         str(raw["name"]),
-		FromSession:  str(raw["fromSession"]),
-		SenderTaskID: str(raw["senderTaskId"]),
-		Body:         str(raw["body"]),
-		Subkind:      str(raw["subkind"]),
+		Kind:         jsonx.Str(raw["kind"]),
+		Server:       jsonx.Str(raw["server"]),
+		From:         jsonx.Str(raw["from"]),
+		Name:         jsonx.Str(raw["name"]),
+		FromSession:  jsonx.Str(raw["fromSession"]),
+		SenderTaskID: jsonx.Str(raw["senderTaskId"]),
+		Body:         jsonx.Str(raw["body"]),
+		Subkind:      jsonx.Str(raw["subkind"]),
 	}
 	// A fractional PID is truncated rather than dropped.
 	o.VerifiedPeerPID, _ = toInt(raw["verifiedPeerPid"])
@@ -367,7 +369,7 @@ func usageFromMap(raw map[string]any) Usage {
 	u.OutputTokens, _ = toInt(raw["output_tokens"])
 	u.CacheCreationInputTokens, _ = toInt(raw["cache_creation_input_tokens"])
 	u.CacheReadInputTokens, _ = toInt(raw["cache_read_input_tokens"])
-	u.ServiceTier = str(raw["service_tier"])
+	u.ServiceTier = jsonx.Str(raw["service_tier"])
 	if stu, ok := raw["server_tool_use"].(map[string]any); ok {
 		u.ServerToolUse = &ServerToolUse{}
 		u.ServerToolUse.WebSearchRequests, _ = toInt(stu["web_search_requests"])

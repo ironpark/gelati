@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"github.com/ironpark/gelati/claude/sessions"
 )
 
 // ---------------------------------------------------------------------------
@@ -556,9 +558,9 @@ type Options struct {
 	// session from the store into a temporary CLAUDE_CONFIG_DIR that is
 	// removed when the session ends (skipped with a custom Transport, which
 	// never sees the rewritten options). ContinueConversation without
-	// Resume requires the store to implement SessionLister. It cannot be
+	// Resume requires the store to implement sessions.Lister. It cannot be
 	// combined with EnableFileCheckpointing.
-	SessionStore SessionStore
+	SessionStore sessions.Store
 
 	// SessionStoreFlush controls when mirrored entries reach SessionStore.
 	// Empty means SessionStoreFlushBatched. Ignored without SessionStore.

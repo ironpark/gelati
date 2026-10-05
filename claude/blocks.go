@@ -419,7 +419,7 @@ func (b *UnknownBlock) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw, lenient); fatalDecodeErr(err) {
 		return err
 	}
-	*b = UnknownBlock{Type: str(raw["type"]), Raw: raw}
+	*b = UnknownBlock{Type: jsonx.Str(raw["type"]), Raw: raw}
 	return nil
 }
 

@@ -7,6 +7,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/ironpark/gelati/claude/sessions"
 )
 
 // A FIFO where settings.json is expected would block a plain read forever;
@@ -19,7 +21,7 @@ func TestMaterializeResumeFIFOSeedFileSkipped(t *testing.T) {
 		t.Skipf("mkfifo: %v", err)
 	}
 	store := newResumeListingStore()
-	store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user"})
+	store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
 
 	done := make(chan *materializedResume, 1)
 	go func() {

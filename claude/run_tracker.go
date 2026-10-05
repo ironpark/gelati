@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // defaultRunEndCeiling is how long the run stays open after a result while
@@ -121,22 +123,22 @@ func (r *runTracker) onMainThreadActivity() {
 // onTaskFrame keeps the set of delegated tasks that are still running, from a
 // system frame's task lifecycle fields.
 func (r *runTracker) onTaskFrame(frame map[string]any) {
-	taskID := str(frame["task_id"])
+	taskID := jsonx.Str(frame["task_id"])
 	if taskID == "" {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	switch str(frame["subtype"]) {
+	switch jsonx.Str(frame["subtype"]) {
 	case "task_started":
-		if deferringTaskTypes[str(frame["task_type"])] {
+		if deferringTaskTypes[jsonx.Str(frame["task_type"])] {
 			r.tasks[taskID] = true
 		}
 	case "task_notification":
 		delete(r.tasks, taskID)
 	case "task_updated":
 		patch, _ := frame["patch"].(map[string]any)
-		if IsTerminalTaskStatus(str(patch["status"])) {
+		if IsTerminalTaskStatus(jsonx.Str(patch["status"])) {
 			delete(r.tasks, taskID)
 		}
 	}
@@ -296,7 +298,7 @@ func (t *errorResultTracker) onResult(frame map[string]any) {
 	}
 	// A model-less turn (a local command, say) keeps the error that came
 	// before it, should the CLI exit non-zero after it.
-	t.modelLessTurnEnded = str(frame["subtype"]) == "success" && !isErr &&
+	t.modelLessTurnEnded = jsonx.Str(frame["subtype"]) == "success" && !isErr &&
 		numTurns == 0 && hasResult && result == ""
 	if !t.modelLessTurnEnded {
 		t.beforeModelLess = t.last
@@ -352,10 +354,10 @@ func errorResultText(frame map[string]any) string {
 	if errs := normalizeResultErrors(frame["errors"]); len(errs) > 0 {
 		return strings.Join(errs, "; ")
 	}
-	if result := strings.TrimSpace(str(frame["result"])); result != "" {
+	if result := strings.TrimSpace(jsonx.Str(frame["result"])); result != "" {
 		return result
 	}
-	if subtype := str(frame["subtype"]); subtype != "" && subtype != "success" {
+	if subtype := jsonx.Str(frame["subtype"]); subtype != "" && subtype != "success" {
 		return subtype
 	}
 	if status, ok := toInt(frame["api_error_status"]); ok {

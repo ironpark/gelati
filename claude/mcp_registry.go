@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/ironpark/gelati/claude/internal/ids"
 	"github.com/ironpark/gelati/internal/jsonx"
 	"github.com/ironpark/gelati/internal/safecall"
 )
@@ -310,7 +311,7 @@ func (r *sdkMCPRegistry) sendToCLI(ctx context.Context, entry *sdkMCPEntry, mess
 	if !message.IsValid(jsonx.Foreign) {
 		return fmt.Errorf("claude: MCP server '%s' sent invalid JSON", name)
 	}
-	return r.send(ctx, controlRequestFrame(randomUUID(), map[string]any{
+	return r.send(ctx, controlRequestFrame(ids.NewUUID(), map[string]any{
 		"subtype":     "mcp_message",
 		"server_name": name,
 		"message":     message,
@@ -321,7 +322,7 @@ func (r *sdkMCPRegistry) sendToCLI(ctx context.Context, entry *sdkMCPEntry, mess
 // JSON-RPC message is routed to the named server, and its reply, or a
 // JSON-RPC error, is carried back as mcp_response.
 func (r *sdkMCPRegistry) handleControl(ctx context.Context, request map[string]any) (map[string]any, error) {
-	serverName := str(request["server_name"])
+	serverName := jsonx.Str(request["server_name"])
 	message, ok := request["message"]
 	if serverName == "" || !ok || message == nil {
 		//lint:ignore ST1005 sent to the CLI verbatim, as the Python SDK does

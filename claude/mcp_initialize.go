@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ironpark/gelati/claude/internal/compat"
 	"github.com/ironpark/gelati/internal/jsonx"
 )
 
@@ -53,7 +54,7 @@ func sdkMCPInitializeFields(servers map[string]*MCPSDKServerConfig) map[string]a
 		fields["sdkMcpServerConfigs"] = configs
 	}
 
-	if !envTruthy(os.Getenv("CLAUDE_AGENT_SDK_DISABLE_MCP_MANIFESTS")) {
+	if !compat.EnvTruthy(os.Getenv("CLAUDE_AGENT_SDK_DISABLE_MCP_MANIFESTS")) {
 		if manifests := captureSDKMCPManifests(servers); len(manifests) > 0 {
 			fields["sdkMcpServerManifests"] = manifests
 		}

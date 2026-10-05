@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/ironpark/gelati/claude/sessions"
 )
 
 const (
@@ -32,22 +34,22 @@ const (
 // order is first-append order; mtimes default to the append sequence number.
 // loadHook, when set, replaces Load.
 type resumeStoreFake struct {
-	loadHook func(ctx context.Context, key SessionKey) ([]SessionStoreEntry, error)
+	loadHook func(ctx context.Context, key sessions.Key) ([]sessions.Entry, error)
 
 	mu     sync.Mutex
-	data   map[SessionKey][]SessionStoreEntry
-	order  []SessionKey
-	mtimes map[SessionKey]int64
-	loads  []SessionKey
+	data   map[sessions.Key][]sessions.Entry
+	order  []sessions.Key
+	mtimes map[sessions.Key]int64
+	loads  []sessions.Key
 	seq    int64
 }
 
-func (s *resumeStoreFake) Append(_ context.Context, key SessionKey, entries []SessionStoreEntry) error {
+func (s *resumeStoreFake) Append(_ context.Context, key sessions.Key, entries []sessions.Entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.data == nil {
-		s.data = map[SessionKey][]SessionStoreEntry{}
-		s.mtimes = map[SessionKey]int64{}
+		s.data = map[sessions.Key][]sessions.Entry{}
+		s.mtimes = map[sessions.Key]int64{}
 	}
 	if _, ok := s.data[key]; !ok {
 		s.order = append(s.order, key)
@@ -55,13 +57,13 @@ func (s *resumeStoreFake) Append(_ context.Context, key SessionKey, entries []Se
 	s.seq++
 	s.data[key] = append(s.data[key], entries...)
 	if s.data[key] == nil {
-		s.data[key] = []SessionStoreEntry{}
+		s.data[key] = []sessions.Entry{}
 	}
 	s.mtimes[key] = s.seq
 	return nil
 }
 
-func (s *resumeStoreFake) Load(ctx context.Context, key SessionKey) ([]SessionStoreEntry, error) {
+func (s *resumeStoreFake) Load(ctx context.Context, key sessions.Key) ([]sessions.Entry, error) {
 	s.mu.Lock()
 	s.loads = append(s.loads, key)
 	hook := s.loadHook
@@ -74,14 +76,14 @@ func (s *resumeStoreFake) Load(ctx context.Context, key SessionKey) ([]SessionSt
 	return slices.Clone(s.data[key]), nil
 }
 
-func (s *resumeStoreFake) put(t *testing.T, key SessionKey, entries ...SessionStoreEntry) {
+func (s *resumeStoreFake) put(t *testing.T, key sessions.Key, entries ...sessions.Entry) {
 	t.Helper()
 	if err := s.Append(t.Context(), key, entries); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func (s *resumeStoreFake) setMTime(key SessionKey, mtime int64) {
+func (s *resumeStoreFake) setMTime(key sessions.Key, mtime int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mtimes[key] = mtime
@@ -93,25 +95,25 @@ func (s *resumeStoreFake) loadCount() int {
 	return len(s.loads)
 }
 
-func (s *resumeStoreFake) entries(key SessionKey) []SessionStoreEntry {
+func (s *resumeStoreFake) entries(key sessions.Key) []sessions.Entry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return slices.Clone(s.data[key])
 }
 
-func (s *resumeStoreFake) listSessions(projectKey string) []SessionStoreListEntry {
+func (s *resumeStoreFake) listSessions(projectKey string) []sessions.ListEntry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var out []SessionStoreListEntry
+	var out []sessions.ListEntry
 	for _, k := range s.order {
 		if k.ProjectKey == projectKey && k.Subpath == "" {
-			out = append(out, SessionStoreListEntry{SessionID: k.SessionID, MTime: s.mtimes[k]})
+			out = append(out, sessions.ListEntry{SessionID: k.SessionID, MTime: s.mtimes[k]})
 		}
 	}
 	return out
 }
 
-func (s *resumeStoreFake) listSubkeys(key SessionListSubkeysKey) []string {
+func (s *resumeStoreFake) listSubkeys(key sessions.ListSubkeysKey) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []string
@@ -123,32 +125,32 @@ func (s *resumeStoreFake) listSubkeys(key SessionListSubkeysKey) []string {
 	return out
 }
 
-// resumeListingStore adds SessionLister and SessionSubkeyLister. The hooks,
+// resumeListingStore adds sessions.Lister and sessions.SubkeyLister. The hooks,
 // when set, replace the defaults.
 type resumeListingStore struct {
 	*resumeStoreFake
-	listHook    func(ctx context.Context, projectKey string) ([]SessionStoreListEntry, error)
-	subkeysHook func(ctx context.Context, key SessionListSubkeysKey) ([]string, error)
+	listHook    func(ctx context.Context, projectKey string) ([]sessions.ListEntry, error)
+	subkeysHook func(ctx context.Context, key sessions.ListSubkeysKey) ([]string, error)
 }
 
-func (s *resumeListingStore) ListSessions(ctx context.Context, projectKey string) ([]SessionStoreListEntry, error) {
+func (s *resumeListingStore) ListSessions(ctx context.Context, projectKey string) ([]sessions.ListEntry, error) {
 	if s.listHook != nil {
 		return s.listHook(ctx, projectKey)
 	}
 	return s.listSessions(projectKey), nil
 }
 
-func (s *resumeListingStore) ListSubkeys(ctx context.Context, key SessionListSubkeysKey) ([]string, error) {
+func (s *resumeListingStore) ListSubkeys(ctx context.Context, key sessions.ListSubkeysKey) ([]string, error) {
 	if s.subkeysHook != nil {
 		return s.subkeysHook(ctx, key)
 	}
 	return s.listSubkeys(key), nil
 }
 
-// resumeListOnlyStore implements SessionLister but not SessionSubkeyLister.
+// resumeListOnlyStore implements sessions.Lister but not sessions.SubkeyLister.
 type resumeListOnlyStore struct{ *resumeStoreFake }
 
-func (s resumeListOnlyStore) ListSessions(_ context.Context, projectKey string) ([]SessionStoreListEntry, error) {
+func (s resumeListOnlyStore) ListSessions(_ context.Context, projectKey string) ([]sessions.ListEntry, error) {
 	return s.listSessions(projectKey), nil
 }
 
@@ -185,7 +187,7 @@ func newResumeFixture(t *testing.T) *resumeFixture {
 			t.Fatal(err)
 		}
 	}
-	f.projectKey = ProjectKeyForDirectory(f.cwd)
+	f.projectKey = sessions.ProjectKey(f.cwd)
 	f.env = resumeEnv{
 		lookupEnv: func(key string) (string, bool) {
 			f.mu.Lock()
@@ -206,8 +208,8 @@ func newResumeFixture(t *testing.T) *resumeFixture {
 	return f
 }
 
-func (f *resumeFixture) key(sid string) SessionKey {
-	return SessionKey{ProjectKey: f.projectKey, SessionID: sid}
+func (f *resumeFixture) key(sid string) sessions.Key {
+	return sessions.Key{ProjectKey: f.projectKey, SessionID: sid}
 }
 
 func (f *resumeFixture) materialize(t *testing.T, opts *Options) *materializedResume {
@@ -341,7 +343,7 @@ func TestMaterializeResumeWritesTranscriptAndCleanupRemovesDir(t *testing.T) {
 	t.Parallel()
 	f := newResumeFixture(t)
 	store := newResumeListingStore()
-	entries := []SessionStoreEntry{
+	entries := []sessions.Entry{
 		{"type": "user", "uuid": "u1", "message": map[string]any{"role": "user", "content": "hi <b>&"}},
 		{"type": "assistant", "uuid": "a1"},
 	}
@@ -383,7 +385,7 @@ func TestMaterializeResumeCredentialsRedacted(t *testing.T) {
 		`{"claudeAiOauth":{"accessToken":"at","refreshToken":"SECRET","expiresAt":17000000000000000001},"other":1}`)
 	f.writeFile(t, filepath.Join(f.home, ".claude.json"), `{"theme":"dark"}`)
 	store := newResumeListingStore()
-	store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user", "uuid": "u1"})
+	store.put(t, f.key(resumeSID), sessions.Entry{"type": "user", "uuid": "u1"})
 
 	m := f.materialize(t, &Options{SessionStore: store, Resume: resumeSID})
 	credsPath := filepath.Join(m.configDir, ".credentials.json")
@@ -425,7 +427,7 @@ func TestMaterializeResumeCallerConfigDir(t *testing.T) {
 			f.writeFile(t, filepath.Join(f.home, ".claude.json"), `{"from":"home"}`)
 			f.keychain = `{"claudeAiOauth":{"accessToken":"kc"}}`
 			store := newResumeListingStore()
-			store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user"})
+			store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
 			opts := &Options{SessionStore: store, Resume: resumeSID}
 			if via == "options env" {
 				opts.Env = map[string]string{"CLAUDE_CONFIG_DIR": custom}
@@ -458,7 +460,7 @@ func TestMaterializeResumeKeychainFallback(t *testing.T) {
 	// The Keychain wins over a credentials file.
 	f.writeFile(t, filepath.Join(f.home, ".claude", ".credentials.json"), `{"claudeAiOauth":{"accessToken":"file"}}`)
 	store := newResumeListingStore()
-	store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user"})
+	store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
 
 	m := f.materialize(t, &Options{SessionStore: store, Resume: resumeSID})
 	oauth := readJSONFile(t, filepath.Join(m.configDir, ".credentials.json"))["claudeAiOauth"].(map[string]any)
@@ -508,7 +510,7 @@ func TestMaterializeResumeUserSettings(t *testing.T) {
 	t.Parallel()
 	f := newResumeFixture(t)
 	store := newResumeListingStore()
-	store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user"})
+	store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
 	cfg := filepath.Join(f.home, ".claude")
 	materialize := func() *materializedResume {
 		return f.materialize(t, &Options{SessionStore: store, Resume: resumeSID})
@@ -621,7 +623,7 @@ func TestMaterializeResumeUnreadableSeedFilesSkipped(t *testing.T) {
 		}
 	}
 	store := newResumeListingStore()
-	store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user"})
+	store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
 	m := f.materialize(t, &Options{SessionStore: store, Resume: resumeSID})
 	for _, name := range []string{"settings.json", ".credentials.json", ".claude.json"} {
 		assertNotExist(t, filepath.Join(m.configDir, name))
@@ -636,7 +638,7 @@ func TestMaterializeResumeHomeUnavailable(t *testing.T) {
 	f := newResumeFixture(t)
 	f.env.homeDir = func() (string, error) { return "", errors.New("no home") }
 	store := newResumeListingStore()
-	store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user"})
+	store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
 	if m := f.materialize(t, &Options{SessionStore: store, Resume: resumeSID}); m == nil {
 		t.Fatal("not materialized")
 	}
@@ -653,8 +655,8 @@ func TestMaterializeResumeContinue(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
 		store := newResumeListingStore()
-		store.put(t, f.key(resumeSID2), SessionStoreEntry{"type": "user", "uuid": "new"})
-		store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user", "uuid": "old"})
+		store.put(t, f.key(resumeSID2), sessions.Entry{"type": "user", "uuid": "new"})
+		store.put(t, f.key(resumeSID), sessions.Entry{"type": "user", "uuid": "old"})
 		store.setMTime(f.key(resumeSID2), 2000)
 		store.setMTime(f.key(resumeSID), 1000)
 		m := f.materialize(t, &Options{SessionStore: store, ContinueConversation: true})
@@ -667,9 +669,9 @@ func TestMaterializeResumeContinue(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
 		store := newResumeListingStore()
-		store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user", "uuid": "main"})
-		store.put(t, f.key(resumeSID2), SessionStoreEntry{"type": "user", "uuid": "sc", "isSidechain": true})
-		store.put(t, f.key("not-a-uuid"), SessionStoreEntry{"type": "user"})
+		store.put(t, f.key(resumeSID), sessions.Entry{"type": "user", "uuid": "main"})
+		store.put(t, f.key(resumeSID2), sessions.Entry{"type": "user", "uuid": "sc", "isSidechain": true})
+		store.put(t, f.key("not-a-uuid"), sessions.Entry{"type": "user"})
 		store.put(t, f.key(resumeSID3)) // empty
 		store.setMTime(f.key(resumeSID), 1000)
 		store.setMTime(f.key(resumeSID2), 2000)
@@ -690,7 +692,7 @@ func TestMaterializeResumeContinue(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
 		store := newResumeListingStore()
-		store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user", "isSidechain": true})
+		store.put(t, f.key(resumeSID), sessions.Entry{"type": "user", "isSidechain": true})
 		if m := f.materialize(t, &Options{SessionStore: store, ContinueConversation: true}); m != nil {
 			t.Fatalf("materialized = %+v", m)
 		}
@@ -703,8 +705,8 @@ func TestMaterializeResumeContinue(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
 		store := newResumeListingStore()
-		store.put(t, f.key(resumeSID2), SessionStoreEntry{"type": "user"})
-		store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user"})
+		store.put(t, f.key(resumeSID2), sessions.Entry{"type": "user"})
+		store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
 		store.setMTime(f.key(resumeSID), 5000)
 		store.setMTime(f.key(resumeSID2), 5000)
 		for range 3 {
@@ -718,8 +720,8 @@ func TestMaterializeResumeContinue(t *testing.T) {
 	t.Run("resume wins over continue", func(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
-		store := &resumeStoreFake{} // no SessionLister needed
-		store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user"})
+		store := &resumeStoreFake{} // no sessions.Lister needed
+		store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
 		m := f.materialize(t, &Options{SessionStore: store, Resume: resumeSID, ContinueConversation: true})
 		if m == nil || m.resumeSessionID != resumeSID {
 			t.Fatalf("materialized = %+v", m)
@@ -744,19 +746,19 @@ func TestMaterializeResumeSubagents(t *testing.T) {
 	t.Parallel()
 	f := newResumeFixture(t)
 	store := newResumeListingStore()
-	store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user", "uuid": "u1"})
-	sub := SessionKey{ProjectKey: f.projectKey, SessionID: resumeSID, Subpath: "subagents/agent-abc"}
+	store.put(t, f.key(resumeSID), sessions.Entry{"type": "user", "uuid": "u1"})
+	sub := sessions.Key{ProjectKey: f.projectKey, SessionID: resumeSID, Subpath: "subagents/agent-abc"}
 	store.put(t, sub,
-		SessionStoreEntry{"type": "user", "uuid": "su1"},
-		SessionStoreEntry{"type": "agent_metadata", "agentType": "old"},
-		SessionStoreEntry{"type": "assistant", "uuid": "sa1"},
-		SessionStoreEntry{"type": "agent_metadata", "agentType": "general", "ver": 1.0},
+		sessions.Entry{"type": "user", "uuid": "su1"},
+		sessions.Entry{"type": "agent_metadata", "agentType": "old"},
+		sessions.Entry{"type": "assistant", "uuid": "sa1"},
+		sessions.Entry{"type": "agent_metadata", "agentType": "general", "ver": 1.0},
 	)
 	// Metadata only: no transcript file.
-	store.put(t, SessionKey{ProjectKey: f.projectKey, SessionID: resumeSID, Subpath: "subagents/agent-meta"},
-		SessionStoreEntry{"type": "agent_metadata", "agentType": "x"})
+	store.put(t, sessions.Key{ProjectKey: f.projectKey, SessionID: resumeSID, Subpath: "subagents/agent-meta"},
+		sessions.Entry{"type": "agent_metadata", "agentType": "x"})
 	// Empty: skipped.
-	store.put(t, SessionKey{ProjectKey: f.projectKey, SessionID: resumeSID, Subpath: "subagents/agent-empty"})
+	store.put(t, sessions.Key{ProjectKey: f.projectKey, SessionID: resumeSID, Subpath: "subagents/agent-empty"})
 
 	m := f.materialize(t, &Options{SessionStore: store, Resume: resumeSID})
 	sessionDir := filepath.Join(m.configDir, "projects", f.projectKey, resumeSID)
@@ -781,18 +783,18 @@ func TestMaterializeResumeSubpathTraversalGuards(t *testing.T) {
 	t.Parallel()
 	f := newResumeFixture(t)
 	store := newResumeListingStore()
-	store.subkeysHook = func(context.Context, SessionListSubkeysKey) ([]string, error) {
+	store.subkeysHook = func(context.Context, sessions.ListSubkeysKey) ([]string, error) {
 		return []string{
 			"", ".", "./", "a/.", "subagents/.", "/etc/passwd", `\etc\passwd`, "../escape", "a/../b",
 			`a\..\b`, "C:escape", `C:\abs`, "é:x", "subagents/agent\x00x", "subagents/agent-ok",
 		}, nil
 	}
-	store.loadHook = func(_ context.Context, key SessionKey) ([]SessionStoreEntry, error) {
+	store.loadHook = func(_ context.Context, key sessions.Key) ([]sessions.Entry, error) {
 		switch key.Subpath {
 		case "":
-			return []SessionStoreEntry{{"type": "user", "uuid": "main"}}, nil
+			return []sessions.Entry{{"type": "user", "uuid": "main"}}, nil
 		case "subagents/agent-ok":
-			return []SessionStoreEntry{{"type": "user", "uuid": "ok"}}, nil
+			return []sessions.Entry{{"type": "user", "uuid": "ok"}}, nil
 		}
 		return nil, fmt.Errorf("loaded unsafe subpath %q", key.Subpath)
 	}
@@ -843,8 +845,8 @@ func TestMaterializeResumeWithoutSubkeyLister(t *testing.T) {
 	t.Parallel()
 	f := newResumeFixture(t)
 	store := resumeListOnlyStore{&resumeStoreFake{}}
-	store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user"})
-	store.put(t, SessionKey{ProjectKey: f.projectKey, SessionID: resumeSID, Subpath: "subagents/agent-a"}, SessionStoreEntry{"type": "user"})
+	store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
+	store.put(t, sessions.Key{ProjectKey: f.projectKey, SessionID: resumeSID, Subpath: "subagents/agent-a"}, sessions.Entry{"type": "user"})
 	m := f.materialize(t, &Options{SessionStore: store, Resume: resumeSID})
 	projectDir := filepath.Join(m.configDir, "projects", f.projectKey)
 	if _, err := os.Stat(filepath.Join(projectDir, resumeSID+".jsonl")); err != nil {
@@ -867,7 +869,7 @@ func TestMaterializeResumeTimeouts(t *testing.T) {
 	t.Run("load", func(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
-		store := &resumeStoreFake{loadHook: func(ctx context.Context, _ SessionKey) ([]SessionStoreEntry, error) {
+		store := &resumeStoreFake{loadHook: func(ctx context.Context, _ sessions.Key) ([]sessions.Entry, error) {
 			hang(ctx)
 			return nil, nil
 		}}
@@ -882,7 +884,7 @@ func TestMaterializeResumeTimeouts(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
 		store := newResumeListingStore()
-		store.listHook = func(ctx context.Context, _ string) ([]SessionStoreListEntry, error) {
+		store.listHook = func(ctx context.Context, _ string) ([]sessions.ListEntry, error) {
 			<-ctx.Done()
 			return nil, ctx.Err()
 		}
@@ -897,8 +899,8 @@ func TestMaterializeResumeTimeouts(t *testing.T) {
 		f := newResumeFixture(t)
 		f.writeFile(t, filepath.Join(f.home, ".claude", ".credentials.json"), `{}`)
 		store := newResumeListingStore()
-		store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user"})
-		store.subkeysHook = func(ctx context.Context, _ SessionListSubkeysKey) ([]string, error) {
+		store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
+		store.subkeysHook = func(ctx context.Context, _ sessions.ListSubkeysKey) ([]string, error) {
 			hang(ctx)
 			return nil, nil
 		}
@@ -915,7 +917,7 @@ func TestMaterializeResumeTimeouts(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
 		var deadline time.Duration
-		store := &resumeStoreFake{loadHook: func(ctx context.Context, _ SessionKey) ([]SessionStoreEntry, error) {
+		store := &resumeStoreFake{loadHook: func(ctx context.Context, _ sessions.Key) ([]sessions.Entry, error) {
 			d, _ := ctx.Deadline()
 			deadline = time.Until(d)
 			return nil, nil
@@ -934,7 +936,7 @@ func TestMaterializeResumeErrors(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
 		down := errors.New("network down")
-		store := &resumeStoreFake{loadHook: func(context.Context, SessionKey) ([]SessionStoreEntry, error) { return nil, down }}
+		store := &resumeStoreFake{loadHook: func(context.Context, sessions.Key) ([]sessions.Entry, error) { return nil, down }}
 		_, err := materializeResumeSession(t.Context(), &Options{Cwd: f.cwd, SessionStore: store, Resume: resumeSID}, f.env)
 		if !errors.Is(err, down) || !strings.Contains(err.Error(), "failed during resume materialization: network down") {
 			t.Fatalf("error = %v", err)
@@ -944,7 +946,7 @@ func TestMaterializeResumeErrors(t *testing.T) {
 	t.Run("load panic", func(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
-		store := &resumeStoreFake{loadHook: func(context.Context, SessionKey) ([]SessionStoreEntry, error) { panic("boom") }}
+		store := &resumeStoreFake{loadHook: func(context.Context, sessions.Key) ([]sessions.Entry, error) { panic("boom") }}
 		_, err := materializeResumeSession(t.Context(), &Options{Cwd: f.cwd, SessionStore: store, Resume: resumeSID}, f.env)
 		if err == nil || !strings.Contains(err.Error(), "SessionStore panicked: boom") {
 			t.Fatalf("error = %v", err)
@@ -955,8 +957,8 @@ func TestMaterializeResumeErrors(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
 		store := newResumeListingStore()
-		store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user"})
-		store.subkeysHook = func(context.Context, SessionListSubkeysKey) ([]string, error) { return nil, errors.New("boom") }
+		store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
+		store.subkeysHook = func(context.Context, sessions.ListSubkeysKey) ([]string, error) { return nil, errors.New("boom") }
 		_, err := materializeResumeSession(t.Context(), &Options{Cwd: f.cwd, SessionStore: store, Resume: resumeSID}, f.env)
 		if err == nil || !strings.Contains(err.Error(), "boom") {
 			t.Fatalf("error = %v", err)
@@ -969,8 +971,8 @@ func TestMaterializeResumeErrors(t *testing.T) {
 	t.Run("unencodable entry cleans up", func(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
-		store := &resumeStoreFake{loadHook: func(context.Context, SessionKey) ([]SessionStoreEntry, error) {
-			return []SessionStoreEntry{{"type": "user", "blob": make(chan int)}}, nil
+		store := &resumeStoreFake{loadHook: func(context.Context, sessions.Key) ([]sessions.Entry, error) {
+			return []sessions.Entry{{"type": "user", "blob": make(chan int)}}, nil
 		}}
 		_, err := materializeResumeSession(t.Context(), &Options{Cwd: f.cwd, SessionStore: store, Resume: resumeSID}, f.env)
 		if err == nil || !strings.Contains(err.Error(), `"blob"`) {
@@ -985,9 +987,9 @@ func TestMaterializeResumeErrors(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
 		store := newResumeListingStore()
-		store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user"})
+		store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
 		ctx, cancel := context.WithCancel(t.Context())
-		store.subkeysHook = func(ctx context.Context, _ SessionListSubkeysKey) ([]string, error) {
+		store.subkeysHook = func(ctx context.Context, _ sessions.ListSubkeysKey) ([]string, error) {
 			cancel()
 			<-ctx.Done()
 			return nil, ctx.Err()
@@ -1005,7 +1007,7 @@ func TestMaterializeResumeErrors(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
 		store := newResumeListingStore()
-		store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user"})
+		store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		_, err := materializeResumeSession(ctx, &Options{Cwd: f.cwd, SessionStore: store, Resume: resumeSID}, f.env)
@@ -1013,38 +1015,6 @@ func TestMaterializeResumeErrors(t *testing.T) {
 			t.Fatalf("error = %v, loads = %d", err, store.loadCount())
 		}
 	})
-}
-
-func TestWriteEntriesJSONLRoundTrip(t *testing.T) {
-	t.Parallel()
-	var entries []SessionStoreEntry
-	for i := range 100 {
-		entries = append(entries, SessionStoreEntry{
-			"uuid":    fmt.Sprintf("uuid-%d", i),
-			"type":    []string{"user", "assistant"}[i%2],
-			"message": map[string]any{"role": "user", "content": fmt.Sprintf("line %d \"q\" \n nl", i)},
-			"nested":  map[string]any{"a": []any{float64(i), float64(i + 1)}, "b": nil},
-		})
-	}
-	entries = append(entries, SessionStoreEntry{"no_type": true})
-	path := filepath.Join(t.TempDir(), "deep", "stream.jsonl")
-	if err := writeEntriesJSONL(path, entries); err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := os.ReadFile(path)
-	lines := strings.Split(string(raw), "\n")
-	if lines[len(lines)-1] != "" || len(lines) != len(entries)+1 {
-		t.Fatalf("lines = %d", len(lines))
-	}
-	for i, line := range lines[:len(entries)-1] {
-		if !strings.HasPrefix(line, `{"type":`) {
-			t.Fatalf("line %d does not start with type: %s", i, line)
-		}
-	}
-	if got := readJSONLFile(t, path); !reflect.DeepEqual(got, entries) {
-		t.Fatal("round trip mismatch")
-	}
-	assertMode(t, path, 0o600)
 }
 
 // ---------------------------------------------------------------------------
@@ -1132,8 +1102,8 @@ func TestRmtreeWithRetry(t *testing.T) {
 			return os.RemoveAll(p)
 		}
 		store := newResumeListingStore()
-		store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user"})
-		store.subkeysHook = func(context.Context, SessionListSubkeysKey) ([]string, error) { return nil, errors.New("boom") }
+		store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
+		store.subkeysHook = func(context.Context, sessions.ListSubkeysKey) ([]string, error) { return nil, errors.New("boom") }
 		if _, err := materializeResumeSession(t.Context(), &Options{Cwd: f.cwd, SessionStore: store, Resume: resumeSID}, f.env); err == nil {
 			t.Fatal("no error")
 		}
@@ -1185,7 +1155,7 @@ func TestValidateSessionStoreOptions(t *testing.T) {
 		}
 	}
 	bad := map[string]*Options{
-		"requires the store to implement SessionLister":           {SessionStore: minimal, ContinueConversation: true},
+		"requires the store to implement sessions.Lister":         {SessionStore: minimal, ContinueConversation: true},
 		"cannot be combined with Options.EnableFileCheckpointing": {SessionStore: listing, EnableFileCheckpointing: true},
 	}
 	for want, opts := range bad {
@@ -1270,7 +1240,7 @@ func TestClientConnectMaterializesResumeAndMirrors(t *testing.T) {
 	t.Parallel()
 	f := newResumeFixture(t)
 	store := newResumeListingStore()
-	store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user", "uuid": "u1"})
+	store.put(t, f.key(resumeSID), sessions.Entry{"type": "user", "uuid": "u1"})
 
 	ft := newFakeTransport()
 	initResponder(ft, map[string]any{})
@@ -1358,7 +1328,7 @@ func TestClientConnectFailureRemovesResumeDir(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
 		store := newResumeListingStore()
-		store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user"})
+		store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
 		spawnErr := errors.New("spawn failed")
 		deps, _ := capturingDeps(f, &hookedTransport{fakeTransport: newFakeTransport(), connectErr: spawnErr})
 		client := NewClient(Options{Cwd: f.cwd, SessionStore: store, Resume: resumeSID})
@@ -1379,7 +1349,7 @@ func TestClientConnectFailureRemovesResumeDir(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
 		store := newResumeListingStore()
-		store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user"})
+		store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
 		ft := newFakeTransport()
 		ft.mu.Lock()
 		ft.onWrite = func(frame map[string]any) {
@@ -1408,7 +1378,7 @@ func TestClientConnectFailureRemovesResumeDir(t *testing.T) {
 		t.Parallel()
 		f := newResumeFixture(t)
 		ctx, cancel := context.WithCancel(t.Context())
-		store := &resumeStoreFake{loadHook: func(ctx context.Context, _ SessionKey) ([]SessionStoreEntry, error) {
+		store := &resumeStoreFake{loadHook: func(ctx context.Context, _ sessions.Key) ([]sessions.Entry, error) {
 			cancel()
 			<-ctx.Done()
 			return nil, ctx.Err()
@@ -1436,7 +1406,7 @@ func TestCustomTransportSkipsMaterializationButMirrors(t *testing.T) {
 	f := newResumeFixture(t)
 	configDir := t.TempDir()
 	store := newResumeListingStore()
-	store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user", "uuid": "u1"})
+	store.put(t, f.key(resumeSID), sessions.Entry{"type": "user", "uuid": "u1"})
 	path := filepath.Join(configDir, "projects", f.projectKey, resumeSID+".jsonl")
 
 	// Client.
@@ -1493,7 +1463,7 @@ func TestQueryMaterializesResume(t *testing.T) {
 	t.Parallel()
 	f := newResumeFixture(t)
 	store := newResumeListingStore()
-	store.put(t, f.key(resumeSID), SessionStoreEntry{"type": "user", "uuid": "u1"})
+	store.put(t, f.key(resumeSID), sessions.Entry{"type": "user", "uuid": "u1"})
 
 	var transcript string
 	var dirAtClose []string

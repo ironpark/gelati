@@ -1,6 +1,11 @@
 package claude
 
-import "encoding/json/jsontext"
+import (
+	"encoding/json/jsontext"
+
+	"github.com/ironpark/gelati/claude/sessions"
+	"github.com/ironpark/gelati/internal/jsonx"
+)
 
 // parseMessageMap turns one decoded CLI output frame into a typed Message.
 // src is the original, non-nil payload, from which typed fields are decoded;
@@ -16,7 +21,7 @@ func parseMessageMap(data map[string]any, src jsontext.Value) (Message, error) {
 	if data == nil {
 		return nil, newMessageParseError("Invalid message data (expected object)", src)
 	}
-	typ := str(data["type"])
+	typ := jsonx.Str(data["type"])
 	parse, ok := messageParsers[typ]
 	if !ok {
 		return &UnknownMessage{Type: typ, Raw: data}, nil
@@ -230,7 +235,7 @@ var systemParsers = map[string]systemParser{
 }
 
 func parseSystemMessage(data map[string]any, src []byte) Message {
-	subtype := str(data["subtype"])
+	subtype := jsonx.Str(data["subtype"])
 	base := SystemMessage{Subtype: subtype, Data: data}
 	if parse, ok := systemParsers[subtype]; ok {
 		return parse(data, src, base)
@@ -278,15 +283,15 @@ func parseMirrorError(data map[string]any, src []byte, base SystemMessage) Messa
 // one. Both the Go snake_case shape {"project_key", "session_id", "subpath"}
 // and the TypeScript camelCase shape {"projectKey", "sessionId", "subpath"}
 // are accepted.
-func parseSessionKey(v any) *SessionKey {
+func parseSessionKey(v any) *sessions.Key {
 	k, ok := v.(map[string]any)
 	if !ok {
 		return nil
 	}
-	return &SessionKey{
+	return &sessions.Key{
 		ProjectKey: firstString(k, "project_key", "projectKey"),
 		SessionID:  firstString(k, "session_id", "sessionId"),
-		Subpath:    str(k["subpath"]),
+		Subpath:    jsonx.Str(k["subpath"]),
 	}
 }
 
@@ -342,7 +347,7 @@ func parseStreamEvent(data map[string]any, src []byte) Message {
 
 // int64Ptr returns v as an integer, or nil when it is not a JSON number.
 func int64Ptr(v any) *int64 {
-	if n, ok := toInt64(v); ok {
+	if n, ok := jsonx.ToInt64(v); ok {
 		return &n
 	}
 	return nil

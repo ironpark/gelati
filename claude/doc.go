@@ -124,13 +124,13 @@
 //
 // # Sessions
 //
-// The CLI's local session transcripts can be read and edited without
-// starting a session: [ListSessions], [GetSessionInfo], [GetSessionMessages],
-// [ListSubagents] and [GetSubagentMessages] read them, and [RenameSession],
-// [TagSession], [DeleteSession] and [ForkSession] change them.
+// Package [github.com/ironpark/gelati/claude/sessions] reads and edits
+// session transcripts without starting a session: the CLI's local ones
+// ([sessions.List], [sessions.GetMessages], [sessions.Fork] and friends)
+// and copies held in a [sessions.Store] (the *InStore variants).
 //
 // [Options.SessionStore] mirrors every transcript line the CLI writes to
-// external storage through a [SessionStore] (Append and Load), flushed per
+// external storage through a [sessions.Store] (Append and Load), flushed per
 // turn or eagerly as [Options.SessionStoreFlush] says; a batch the store
 // keeps rejecting is reported as a [MirrorErrorMessage] while the session
 // carries on. With a store, [Options.Resume] and
@@ -138,16 +138,9 @@
 // materialized into a temporary CLAUDE_CONFIG_DIR (together with the
 // caller's credentials, refresh token removed, and user settings) that is
 // removed when the session ends. A custom [Options.Transport] skips that
-// step but still mirrors. ContinueConversation needs a [SessionLister];
-// [SessionSubkeyLister], [SessionSummaryLister] and [SessionDeleter] are
-// optional extensions probed with type assertions, and a call that needs a
-// missing one fails with an error wrapping [errors.ErrUnsupported].
-//
-// The *FromStore readers ([ListSessionsFromStore] and friends) and *ViaStore
-// mutations ([RenameSessionViaStore] and friends) work on a store directly,
-// [ImportSessionToStore] copies a local session into one, and
-// [InMemorySessionStore] is a reference implementation for tests. The
-// sessionstoretest package holds a conformance suite for store adapters.
+// step but still mirrors. ContinueConversation needs a [sessions.Lister];
+// [sessions.SubkeyLister] is used, when present, to materialize subagent
+// transcripts too.
 //
 // # Name mapping
 //
@@ -167,17 +160,26 @@
 //	ClaudeSDKError                 -> Error
 //	CLIJSONDecodeError             -> JSONDecodeError
 //	CLIConnectionError             -> ConnectionError
-//	SDKSessionInfo                 -> SessionInfo
-//	get_session_messages()         -> GetSessionMessages
-//	list_sessions_from_store()     -> ListSessionsFromStore (likewise *_from_store)
-//	rename_session_via_store()     -> RenameSessionViaStore (likewise *_via_store)
-//	fold_session_summary()         -> FoldSessionSummary
-//	project_key_for_directory()    -> ProjectKeyForDirectory
-//	import_session_to_store()      -> ImportSessionToStore
-//	InMemorySessionStore()         -> NewInMemorySessionStore
-//	SessionStore optional methods  -> SessionLister, SessionSummaryLister,
-//	                                  SessionDeleter, SessionSubkeyLister
-//	run_session_store_conformance  -> package sessionstoretest
+//	list_sessions()                -> sessions.List
+//	get_session_info()             -> sessions.GetInfo
+//	get_session_messages()         -> sessions.GetMessages
+//	list_subagents()               -> sessions.ListSubagents
+//	get_subagent_messages()        -> sessions.GetSubagentMessages
+//	rename_session(), tag_session() -> sessions.Rename, sessions.Tag
+//	delete_session(), fork_session() -> sessions.Delete, sessions.Fork
+//	*_from_store(), *_via_store()  -> sessions.*InStore (e.g. ListInStore,
+//	                                  RenameInStore)
+//	SDKSessionInfo                 -> sessions.Info
+//	SessionMessage                 -> sessions.Message
+//	SessionKey                     -> sessions.Key
+//	SessionStore                   -> sessions.Store
+//	SessionStore optional methods  -> sessions.Lister, SummaryLister,
+//	                                  Deleter, SubkeyLister
+//	fold_session_summary()         -> sessions.FoldSummary
+//	project_key_for_directory()    -> sessions.ProjectKey
+//	import_session_to_store()      -> sessions.ImportToStore
+//	InMemorySessionStore()         -> sessions.NewInMemoryStore
+//	run_session_store_conformance  -> package sessions/sessionstoretest
 //	load_timeout_ms                -> Options.LoadTimeout (a time.Duration)
 //	startup() (TS)                 -> Startup, WarmQuery
 //	prewarm() (TS)                 -> Prewarm, SpareProcess
@@ -188,7 +190,7 @@
 //	spawnClaudeCodeProcess (TS)    -> Options.Spawn
 //	HOOK_EVENTS (TS)               -> HookEvents
 //	EXIT_REASONS (TS)              -> ExitReasons
-//	includeProgrammatic (TS)       -> ListSessionsOptions.ExcludeProgrammatic
+//	includeProgrammatic (TS)       -> sessions.ListOptions.ExcludeProgrammatic
 //	SYSTEM_PROMPT_DYNAMIC_BOUNDARY -> SystemPromptDynamicBoundary
 //
 // Python's hook output fields async_ and continue_ are [HookOutput.Async] and

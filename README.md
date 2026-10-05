@@ -6,7 +6,8 @@ Go SDKs for driving coding agents from Go programs.
 |---|---|
 | [`claude`](./claude) | Claude Agent SDK for Go: drives the Claude Code CLI over its stream-json control protocol |
 | [`claude/tools`](./claude/tools) | Typed inputs and outputs for Claude Code's built-in tools (Bash, Read, Edit, Agent, …) |
-| [`claude/sessionstoretest`](./claude/sessionstoretest) | Conformance suite for custom `claude.SessionStore` adapters |
+| [`claude/sessions`](./claude/sessions) | Read and edit session transcripts, locally or in a `sessions.Store` |
+| [`claude/sessions/sessionstoretest`](./claude/sessions/sessionstoretest) | Conformance suite for custom `sessions.Store` adapters |
 | [`codex`](./codex) | Client for the Codex agent over the `codex app-server` JSON-RPC protocol |
 | [`agy`](./agy) | Port of Google's Antigravity Python SDK: drives the `localharness` agent runtime over WebSocket |
 | [`agy/policy`](./agy/policy) | Tool-call policy builders (allow/deny/ask-user, workspace-only, safe defaults) |
@@ -237,20 +238,22 @@ All 33 hook events are supported (`claude.HookEvents`), with typed inputs via
 
 ### Sessions
 
-Read and edit the CLI's local transcripts without starting a session:
+Package `claude/sessions` reads and edits the CLI's local transcripts without
+starting a session:
 
 ```go
-sessions, err := claude.ListSessions(&claude.ListSessionsOptions{Directory: "/path/to/repo", Limit: 10})
-msgs, err := claude.GetSessionMessages(sessions[0].SessionID, nil)
-err = claude.RenameSession(sessions[0].SessionID, "Refactor auth", "")
-fork, err := claude.ForkSession(sessions[0].SessionID, nil)
+infos, err := sessions.List(&sessions.ListOptions{Directory: "/path/to/repo", Limit: 10})
+msgs, err := sessions.GetMessages(infos[0].SessionID, nil)
+err = sessions.Rename(infos[0].SessionID, "Refactor auth", "")
+fork, err := sessions.Fork(infos[0].SessionID, nil)
 ```
 
 `Options.SessionStore` mirrors every transcript line to external storage
-(implement `claude.SessionStore`; `claude.InMemorySessionStore` is a reference
+(implement `sessions.Store`; `sessions.InMemoryStore` is a reference
 implementation) and lets `Resume` / `ContinueConversation` restore sessions
-from it. `*FromStore` / `*ViaStore` functions read and edit sessions in a
-store directly, and `ImportSessionToStore` uploads a local session.
+from it. The `*InStore` variants (`sessions.ListInStore`,
+`sessions.RenameInStore`, …) read and edit sessions in a store directly, and
+`sessions.ImportToStore` uploads a local session.
 
 ### Warm start
 

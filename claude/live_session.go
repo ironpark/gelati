@@ -3,6 +3,8 @@ package claude
 import (
 	"context"
 	"maps"
+
+	"github.com/ironpark/gelati/claude/internal/transcript"
 )
 
 // sessionDeps are the process-level dependencies of opening a session.
@@ -73,7 +75,7 @@ func openSession(ctx context.Context, raw *Options, entry string, deps *sessionD
 			return nil, err
 		}
 	}
-	mirrorDir := projectsDir(opts.Env)
+	mirrorDir := transcript.ProjectsDir(opts.Env)
 	if materialized != nil {
 		// The rewrite touches only single-channel flags and the
 		// environment, which the subprocess transport renders from opts,

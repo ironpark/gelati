@@ -189,7 +189,7 @@ func controlCancelFrame(id string) map[string]any {
 func encodeFrame(frame map[string]any) ([]byte, error) {
 	payload, err := json.Marshal(frame, jsonx.LegacyEncode)
 	if err != nil {
-		return nil, fmt.Errorf("claude: encoding %s frame: %w", cmp.Or(str(frame["type"]), "stream-json"), err)
+		return nil, fmt.Errorf("claude: encoding %s frame: %w", cmp.Or(jsonx.Str(frame["type"]), "stream-json"), err)
 	}
 	return payload, nil
 }
@@ -255,7 +255,7 @@ func (e *engine) readLoop(ctx context.Context) {
 
 // route handles one decoded frame, reporting whether the read loop should stop.
 func (e *engine) route(ctx context.Context, frame map[string]any, raw jsontext.Value) bool {
-	typ := str(frame["type"])
+	typ := jsonx.Str(frame["type"])
 	switch typ {
 	case "control_response":
 		response, _ := frame["response"].(map[string]any)
@@ -267,7 +267,7 @@ func (e *engine) route(ctx context.Context, frame map[string]any, raw jsontext.V
 		}
 		return false
 	case "control_cancel_request":
-		if id := str(frame["request_id"]); id != "" {
+		if id := jsonx.Str(frame["request_id"]); id != "" {
 			e.cancelInbound(id)
 		}
 		return false
@@ -280,7 +280,7 @@ func (e *engine) route(ctx context.Context, frame map[string]any, raw jsontext.V
 		return false
 	}
 
-	subtype := str(frame["subtype"])
+	subtype := jsonx.Str(frame["subtype"])
 	if typ == "system" {
 		e.run.onTaskFrame(frame)
 		if subtype == "commands_changed" {
@@ -299,7 +299,7 @@ func (e *engine) route(ctx context.Context, frame map[string]any, raw jsontext.V
 		e.errResults.onResult(frame)
 		e.run.onResult(e.holdsInput())
 	case typ == "system" && subtype == "session_state_changed":
-		e.run.onSessionState(str(frame["state"]))
+		e.run.onSessionState(jsonx.Str(frame["state"]))
 		if hostOnly, _ := frame["sdk_host_only"].(bool); hostOnly {
 			// Sent only because the SDK asked for session state; the
 			// caller did not opt in.
@@ -387,7 +387,7 @@ func (e *engine) deliverControlResponse(response map[string]any) {
 	if response == nil {
 		return
 	}
-	id := str(response["request_id"])
+	id := jsonx.Str(response["request_id"])
 	e.mu.Lock()
 	p, ok := e.pending[id]
 	delete(e.pending, id)
@@ -403,8 +403,8 @@ func (e *engine) deliverControlResponse(response map[string]any) {
 		e.redeliverPending(response["pending_permission_requests"], "can_use_tool")
 		e.redeliverPending(response["pending_user_dialog_requests"], "request_user_dialog")
 	}
-	if str(response["subtype"]) == "error" {
-		msg := str(response["error"])
+	if jsonx.Str(response["subtype"]) == "error" {
+		msg := jsonx.Str(response["error"])
 		if msg == "" {
 			msg = "Unknown error"
 		}
@@ -432,7 +432,7 @@ func (e *engine) redeliverPending(list any, subtype string) {
 			continue
 		}
 		request, _ := frame["request"].(map[string]any)
-		if str(request["subtype"]) != subtype {
+		if jsonx.Str(request["subtype"]) != subtype {
 			continue
 		}
 		e.spawnControlHandler(ctx, frame)
@@ -479,7 +479,7 @@ func (e *engine) beginControlRequest(ctx context.Context, request map[string]any
 	e.mu.Lock()
 	e.counter++
 	id := "req_" + strconv.Itoa(e.counter) + "_" + randomHex(4)
-	p := &pendingRequest{ch: make(chan controlResult, 1), subtype: str(request["subtype"])}
+	p := &pendingRequest{ch: make(chan controlResult, 1), subtype: jsonx.Str(request["subtype"])}
 	e.pending[id] = p
 	e.mu.Unlock()
 

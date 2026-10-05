@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ironpark/gelati/claude/internal/transcript"
+	"github.com/ironpark/gelati/claude/sessions"
 	"github.com/ironpark/gelati/internal/jsonx"
 )
 
@@ -18,19 +20,19 @@ import (
 // value is ready to use. appendHook, when set before use, runs first and may
 // block or fail the call.
 type mirrorStoreFake struct {
-	appendHook func(ctx context.Context, key SessionKey, entries []SessionStoreEntry) error
+	appendHook func(ctx context.Context, key sessions.Key, entries []sessions.Entry) error
 
 	mu    sync.Mutex
 	calls []mirrorAppendCall
-	data  map[SessionKey][]SessionStoreEntry
+	data  map[sessions.Key][]sessions.Entry
 }
 
 type mirrorAppendCall struct {
-	key     SessionKey
-	entries []SessionStoreEntry
+	key     sessions.Key
+	entries []sessions.Entry
 }
 
-func (s *mirrorStoreFake) Append(ctx context.Context, key SessionKey, entries []SessionStoreEntry) error {
+func (s *mirrorStoreFake) Append(ctx context.Context, key sessions.Key, entries []sessions.Entry) error {
 	if s.appendHook != nil {
 		if err := s.appendHook(ctx, key, entries); err != nil {
 			return err
@@ -40,13 +42,13 @@ func (s *mirrorStoreFake) Append(ctx context.Context, key SessionKey, entries []
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, mirrorAppendCall{key: key, entries: slices.Clone(entries)})
 	if s.data == nil {
-		s.data = map[SessionKey][]SessionStoreEntry{}
+		s.data = map[sessions.Key][]sessions.Entry{}
 	}
 	s.data[key] = append(s.data[key], entries...)
 	return nil
 }
 
-func (s *mirrorStoreFake) Load(_ context.Context, key SessionKey) ([]SessionStoreEntry, error) {
+func (s *mirrorStoreFake) Load(_ context.Context, key sessions.Key) ([]sessions.Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return slices.Clone(s.data[key]), nil
@@ -86,7 +88,7 @@ type mirrorErrors struct {
 	list []mirrorFailure
 }
 
-func (m *mirrorErrors) record(key *SessionKey, err string) {
+func (m *mirrorErrors) record(key *sessions.Key, err string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.list = append(m.list, mirrorFailure{key: key, msg: err})
@@ -117,9 +119,9 @@ func (s *sleepRecorder) get() []time.Duration {
 	return slices.Clone(s.waits)
 }
 
-func newTestMirrorBatcher(t *testing.T, store SessionStore, errs *mirrorErrors, maxEntries, maxBytes int) (*transcriptMirrorBatcher, *sleepRecorder) {
+func newTestMirrorBatcher(t *testing.T, store sessions.Store, errs *mirrorErrors, maxEntries, maxBytes int) (*transcriptMirrorBatcher, *sleepRecorder) {
 	t.Helper()
-	var onError func(*SessionKey, string)
+	var onError func(*sessions.Key, string)
 	if errs != nil {
 		onError = errs.record
 	}
@@ -155,31 +157,31 @@ func TestFilePathToSessionKey(t *testing.T) {
 		name string
 		path string
 		dir  string
-		want SessionKey
+		want sessions.Key
 		ok   bool
 	}{
 		{"main", mirrorPath("-home-user-repo", "abc-123.jsonl"), mirrorProjectsDir,
-			SessionKey{ProjectKey: "-home-user-repo", SessionID: "abc-123"}, true},
+			sessions.Key{ProjectKey: "-home-user-repo", SessionID: "abc-123"}, true},
 		{"subagent", mirrorPath("-home-user-repo", "abc-123", "subagents", "agent-xyz.jsonl"), mirrorProjectsDir,
-			SessionKey{ProjectKey: "-home-user-repo", SessionID: "abc-123", Subpath: "subagents/agent-xyz"}, true},
+			sessions.Key{ProjectKey: "-home-user-repo", SessionID: "abc-123", Subpath: "subagents/agent-xyz"}, true},
 		{"nestedSubagent", mirrorPath("proj", "sess", "subagents", "nested", "agent-1.jsonl"), mirrorProjectsDir,
-			SessionKey{ProjectKey: "proj", SessionID: "sess", Subpath: "subagents/nested/agent-1"}, true},
+			sessions.Key{ProjectKey: "proj", SessionID: "sess", Subpath: "subagents/nested/agent-1"}, true},
 		{"subagentWithoutSuffix", mirrorPath("proj", "sess", "subagents", "agent-1.meta"), mirrorProjectsDir,
-			SessionKey{ProjectKey: "proj", SessionID: "sess", Subpath: "subagents/agent-1.meta"}, true},
+			sessions.Key{ProjectKey: "proj", SessionID: "sess", Subpath: "subagents/agent-1.meta"}, true},
 		{"trailingSeparator", mirrorPath("-home-user-repo", "abc-123.jsonl"), mirrorProjectsDir + string(filepath.Separator),
-			SessionKey{ProjectKey: "-home-user-repo", SessionID: "abc-123"}, true},
+			sessions.Key{ProjectKey: "-home-user-repo", SessionID: "abc-123"}, true},
 		{"trailingSeparatorSubagent", mirrorPath("p", "s", "subagents", "agent-x.jsonl"), mirrorProjectsDir + string(filepath.Separator),
-			SessionKey{ProjectKey: "p", SessionID: "s", Subpath: "subagents/agent-x"}, true},
+			sessions.Key{ProjectKey: "p", SessionID: "s", Subpath: "subagents/agent-x"}, true},
 		{"uncleanPath", mirrorProjectsDir + string(filepath.Separator) + filepath.Join("p", "x", "..", "s.jsonl"), mirrorProjectsDir,
-			SessionKey{ProjectKey: "p", SessionID: "s"}, true},
-		{"outside", filepath.Join(string(filepath.Separator), "elsewhere", "proj", "sess.jsonl"), mirrorProjectsDir, SessionKey{}, false},
-		{"sibling", filepath.Join(mirrorProjectsDir+"-other", "proj", "sess.jsonl"), mirrorProjectsDir, SessionKey{}, false},
-		{"escapes", mirrorPath("..", "proj", "sess.jsonl"), mirrorProjectsDir, SessionKey{}, false},
-		{"tooFewParts", mirrorPath("proj-only.jsonl"), mirrorProjectsDir, SessionKey{}, false},
-		{"projectsDirItself", mirrorProjectsDir, mirrorProjectsDir, SessionKey{}, false},
-		{"threeParts", mirrorPath("proj", "sess", "weird.jsonl"), mirrorProjectsDir, SessionKey{}, false},
-		{"mainWithoutSuffix", mirrorPath("proj", "sess.txt"), mirrorProjectsDir, SessionKey{}, false},
-		{"empty", "", mirrorProjectsDir, SessionKey{}, false},
+			sessions.Key{ProjectKey: "p", SessionID: "s"}, true},
+		{"outside", filepath.Join(string(filepath.Separator), "elsewhere", "proj", "sess.jsonl"), mirrorProjectsDir, sessions.Key{}, false},
+		{"sibling", filepath.Join(mirrorProjectsDir+"-other", "proj", "sess.jsonl"), mirrorProjectsDir, sessions.Key{}, false},
+		{"escapes", mirrorPath("..", "proj", "sess.jsonl"), mirrorProjectsDir, sessions.Key{}, false},
+		{"tooFewParts", mirrorPath("proj-only.jsonl"), mirrorProjectsDir, sessions.Key{}, false},
+		{"projectsDirItself", mirrorProjectsDir, mirrorProjectsDir, sessions.Key{}, false},
+		{"threeParts", mirrorPath("proj", "sess", "weird.jsonl"), mirrorProjectsDir, sessions.Key{}, false},
+		{"mainWithoutSuffix", mirrorPath("proj", "sess.txt"), mirrorProjectsDir, sessions.Key{}, false},
+		{"empty", "", mirrorProjectsDir, sessions.Key{}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -198,9 +200,9 @@ func TestFilePathToSessionKey(t *testing.T) {
 func TestMirrorBatcherEnqueueThenFlush(t *testing.T) {
 	t.Parallel()
 	store := &mirrorStoreFake{}
-	b, _ := newTestMirrorBatcher(t, store, nil, storeAppendBatchEntries, storeAppendBatchBytes)
-	b.enqueue(mirrorMainPath("proj", "sess"), []SessionStoreEntry{{"type": "user", "n": 1}})
-	b.enqueue(mirrorMainPath("proj", "sess"), []SessionStoreEntry{{"type": "assistant", "n": 2}})
+	b, _ := newTestMirrorBatcher(t, store, nil, transcript.AppendBatchEntries, transcript.AppendBatchBytes)
+	b.enqueue(mirrorMainPath("proj", "sess"), []sessions.Entry{{"type": "user", "n": 1}})
+	b.enqueue(mirrorMainPath("proj", "sess"), []sessions.Entry{{"type": "assistant", "n": 2}})
 	time.Sleep(10 * time.Millisecond)
 	if calls := store.appendCalls(); len(calls) != 0 {
 		t.Fatalf("appended before flush: %+v", calls)
@@ -212,10 +214,10 @@ func TestMirrorBatcherEnqueueThenFlush(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("calls = %d, want 1 coalesced append", len(calls))
 	}
-	if want := (SessionKey{ProjectKey: "proj", SessionID: "sess"}); calls[0].key != want {
+	if want := (sessions.Key{ProjectKey: "proj", SessionID: "sess"}); calls[0].key != want {
 		t.Fatalf("key = %+v, want %+v", calls[0].key, want)
 	}
-	want := []SessionStoreEntry{{"type": "user", "n": 1}, {"type": "assistant", "n": 2}}
+	want := []sessions.Entry{{"type": "user", "n": 1}, {"type": "assistant", "n": 2}}
 	if !reflect.DeepEqual(calls[0].entries, want) {
 		t.Fatalf("entries = %v, want %v", calls[0].entries, want)
 	}
@@ -224,9 +226,9 @@ func TestMirrorBatcherEnqueueThenFlush(t *testing.T) {
 func TestMirrorBatcherFlushWithNothingPending(t *testing.T) {
 	t.Parallel()
 	store := &mirrorStoreFake{}
-	b, _ := newTestMirrorBatcher(t, store, nil, storeAppendBatchEntries, storeAppendBatchBytes)
+	b, _ := newTestMirrorBatcher(t, store, nil, transcript.AppendBatchEntries, transcript.AppendBatchBytes)
 	b.flush(t.Context())
-	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{})
+	b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{})
 	b.flush(t.Context())
 	// An empty batch must not reach the store: some adapters would create a
 	// phantom key.
@@ -238,10 +240,10 @@ func TestMirrorBatcherFlushWithNothingPending(t *testing.T) {
 func TestMirrorBatcherCoalescesPerPathInOrder(t *testing.T) {
 	t.Parallel()
 	store := &mirrorStoreFake{}
-	b, _ := newTestMirrorBatcher(t, store, nil, storeAppendBatchEntries, storeAppendBatchBytes)
-	b.enqueue(mirrorMainPath("p", "a"), []SessionStoreEntry{{"n": 1}})
-	b.enqueue(mirrorMainPath("p", "b"), []SessionStoreEntry{{"n": 2}})
-	b.enqueue(mirrorMainPath("p", "a"), []SessionStoreEntry{{"n": 3}})
+	b, _ := newTestMirrorBatcher(t, store, nil, transcript.AppendBatchEntries, transcript.AppendBatchBytes)
+	b.enqueue(mirrorMainPath("p", "a"), []sessions.Entry{{"n": 1}})
+	b.enqueue(mirrorMainPath("p", "b"), []sessions.Entry{{"n": 2}})
+	b.enqueue(mirrorMainPath("p", "a"), []sessions.Entry{{"n": 3}})
 	b.flush(t.Context())
 
 	calls := store.appendCalls()
@@ -261,13 +263,13 @@ func TestMirrorBatcherThresholds(t *testing.T) {
 	t.Run("entries", func(t *testing.T) {
 		t.Parallel()
 		store := &mirrorStoreFake{}
-		b, _ := newTestMirrorBatcher(t, store, nil, 5, storeAppendBatchBytes)
-		b.enqueue(mirrorMainPath("p", "s"), make([]SessionStoreEntry, 5))
+		b, _ := newTestMirrorBatcher(t, store, nil, 5, transcript.AppendBatchBytes)
+		b.enqueue(mirrorMainPath("p", "s"), make([]sessions.Entry, 5))
 		time.Sleep(10 * time.Millisecond)
 		if n := len(store.appendCalls()); n != 0 {
 			t.Fatalf("flushed at the threshold: %d calls", n)
 		}
-		b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"type": "x"}})
+		b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{{"type": "x"}})
 		waitUntil(t, "eager flush", func() bool { return len(store.appendCalls()) == 1 })
 		if n := len(store.appendCalls()[0].entries); n != 6 {
 			t.Fatalf("flushed %d entries, want 6", n)
@@ -276,8 +278,8 @@ func TestMirrorBatcherThresholds(t *testing.T) {
 	t.Run("bytes", func(t *testing.T) {
 		t.Parallel()
 		store := &mirrorStoreFake{}
-		b, _ := newTestMirrorBatcher(t, store, nil, storeAppendBatchEntries, 100)
-		b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"type": "x", "blob": strings.Repeat("a", 200)}})
+		b, _ := newTestMirrorBatcher(t, store, nil, transcript.AppendBatchEntries, 100)
+		b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{{"type": "x", "blob": strings.Repeat("a", 200)}})
 		waitUntil(t, "eager flush", func() bool { return len(store.appendCalls()) == 1 })
 	})
 }
@@ -294,8 +296,8 @@ func TestNewMirrorBatcherForOptions(t *testing.T) {
 		mode               SessionStoreFlushMode
 		wantEntries, bytes int
 	}{
-		{"", storeAppendBatchEntries, storeAppendBatchBytes},
-		{SessionStoreFlushBatched, storeAppendBatchEntries, storeAppendBatchBytes},
+		{"", transcript.AppendBatchEntries, transcript.AppendBatchBytes},
+		{SessionStoreFlushBatched, transcript.AppendBatchEntries, transcript.AppendBatchBytes},
 		{SessionStoreFlushEager, 0, 0},
 	}
 	for _, tc := range cases {
@@ -308,7 +310,7 @@ func TestNewMirrorBatcherForOptions(t *testing.T) {
 		}
 		b.close(t.Context())
 	}
-	if storeAppendBatchEntries != 500 || storeAppendBatchBytes != 1<<20 || mirrorAppendMaxAttempts != 3 ||
+	if transcript.AppendBatchEntries != 500 || transcript.AppendBatchBytes != 1<<20 || mirrorAppendMaxAttempts != 3 ||
 		!slices.Equal(mirrorAppendBackoff, []time.Duration{200 * time.Millisecond, 800 * time.Millisecond}) {
 		t.Fatal("mirror constants drifted from the Python SDK")
 	}
@@ -318,9 +320,9 @@ func TestMirrorBatcherEagerFlushesPerFrame(t *testing.T) {
 	t.Parallel()
 	store := &mirrorStoreFake{}
 	b, _ := newTestMirrorBatcher(t, store, nil, 0, 0)
-	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"type": "user", "n": 1}})
+	b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{{"type": "user", "n": 1}})
 	waitUntil(t, "first append", func() bool { return len(store.appendCalls()) == 1 })
-	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"type": "assistant", "n": 2}})
+	b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{{"type": "assistant", "n": 2}})
 	waitUntil(t, "second append", func() bool { return len(store.appendCalls()) == 2 })
 	if got := mirrorNs(store.appendCalls()); !slices.Equal(got, []int{1, 2}) {
 		t.Fatalf("order = %v", got)
@@ -331,15 +333,15 @@ func TestMirrorBatcherAppendFailureReportedOnce(t *testing.T) {
 	t.Parallel()
 	var attempts int
 	var mu sync.Mutex
-	store := &mirrorStoreFake{appendHook: func(context.Context, SessionKey, []SessionStoreEntry) error {
+	store := &mirrorStoreFake{appendHook: func(context.Context, sessions.Key, []sessions.Entry) error {
 		mu.Lock()
 		attempts++
 		mu.Unlock()
 		return errors.New("boom")
 	}}
 	errs := &mirrorErrors{}
-	b, sleeps := newTestMirrorBatcher(t, store, errs, storeAppendBatchEntries, storeAppendBatchBytes)
-	b.enqueue(mirrorMainPath("proj", "sess"), []SessionStoreEntry{{"type": "x"}})
+	b, sleeps := newTestMirrorBatcher(t, store, errs, transcript.AppendBatchEntries, transcript.AppendBatchBytes)
+	b.enqueue(mirrorMainPath("proj", "sess"), []sessions.Entry{{"type": "x"}})
 	b.flush(t.Context())
 
 	mu.Lock()
@@ -351,7 +353,7 @@ func TestMirrorBatcherAppendFailureReportedOnce(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("errors = %+v, want exactly one", got)
 	}
-	if got[0].key == nil || *got[0].key != (SessionKey{ProjectKey: "proj", SessionID: "sess"}) {
+	if got[0].key == nil || *got[0].key != (sessions.Key{ProjectKey: "proj", SessionID: "sess"}) {
 		t.Fatalf("error key = %+v", got[0].key)
 	}
 	if !strings.Contains(got[0].msg, "boom") {
@@ -366,7 +368,7 @@ func TestMirrorBatcherRetryThenSucceed(t *testing.T) {
 	t.Parallel()
 	var attempts int
 	var mu sync.Mutex
-	store := &mirrorStoreFake{appendHook: func(context.Context, SessionKey, []SessionStoreEntry) error {
+	store := &mirrorStoreFake{appendHook: func(context.Context, sessions.Key, []sessions.Entry) error {
 		mu.Lock()
 		defer mu.Unlock()
 		attempts++
@@ -376,15 +378,15 @@ func TestMirrorBatcherRetryThenSucceed(t *testing.T) {
 		return nil
 	}}
 	errs := &mirrorErrors{}
-	b, sleeps := newTestMirrorBatcher(t, store, errs, storeAppendBatchEntries, storeAppendBatchBytes)
-	b.enqueue(mirrorMainPath("proj", "sess"), []SessionStoreEntry{{"type": "x"}})
+	b, sleeps := newTestMirrorBatcher(t, store, errs, transcript.AppendBatchEntries, transcript.AppendBatchBytes)
+	b.enqueue(mirrorMainPath("proj", "sess"), []sessions.Entry{{"type": "x"}})
 	b.flush(t.Context())
 
 	if len(errs.get()) != 0 {
 		t.Fatalf("errors reported after a successful retry: %+v", errs.get())
 	}
-	loaded, _ := store.Load(t.Context(), SessionKey{ProjectKey: "proj", SessionID: "sess"})
-	if !reflect.DeepEqual(loaded, []SessionStoreEntry{{"type": "x"}}) {
+	loaded, _ := store.Load(t.Context(), sessions.Key{ProjectKey: "proj", SessionID: "sess"})
+	if !reflect.DeepEqual(loaded, []sessions.Entry{{"type": "x"}}) {
 		t.Fatalf("stored = %v", loaded)
 	}
 	if w := sleeps.get(); !slices.Equal(w, []time.Duration{200 * time.Millisecond, 800 * time.Millisecond}) {
@@ -394,12 +396,12 @@ func TestMirrorBatcherRetryThenSucceed(t *testing.T) {
 
 func TestMirrorBatcherPanickingStoreIsAFailure(t *testing.T) {
 	t.Parallel()
-	store := &mirrorStoreFake{appendHook: func(context.Context, SessionKey, []SessionStoreEntry) error {
+	store := &mirrorStoreFake{appendHook: func(context.Context, sessions.Key, []sessions.Entry) error {
 		panic("kaboom")
 	}}
 	errs := &mirrorErrors{}
-	b, _ := newTestMirrorBatcher(t, store, errs, storeAppendBatchEntries, storeAppendBatchBytes)
-	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"type": "x"}})
+	b, _ := newTestMirrorBatcher(t, store, errs, transcript.AppendBatchEntries, transcript.AppendBatchBytes)
+	b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{{"type": "x"}})
 	b.flush(t.Context())
 	if got := errs.get(); len(got) != 1 || !strings.Contains(got[0].msg, "kaboom") {
 		t.Fatalf("errors = %+v", got)
@@ -419,7 +421,7 @@ func TestMirrorBatcherTimeoutNotRetried(t *testing.T) {
 			defer close(release)
 			var mu sync.Mutex
 			calls, inFlight, maxInFlight := 0, 0, 0
-			store := &mirrorStoreFake{appendHook: func(ctx context.Context, _ SessionKey, _ []SessionStoreEntry) error {
+			store := &mirrorStoreFake{appendHook: func(ctx context.Context, _ sessions.Key, _ []sessions.Entry) error {
 				mu.Lock()
 				calls++
 				inFlight++
@@ -438,9 +440,9 @@ func TestMirrorBatcherTimeoutNotRetried(t *testing.T) {
 				return nil
 			}}
 			errs := &mirrorErrors{}
-			b, sleeps := newTestMirrorBatcher(t, store, errs, storeAppendBatchEntries, storeAppendBatchBytes)
+			b, sleeps := newTestMirrorBatcher(t, store, errs, transcript.AppendBatchEntries, transcript.AppendBatchBytes)
 			b.sendTimeout = 20 * time.Millisecond
-			b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"type": "x"}})
+			b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{{"type": "x"}})
 			b.flush(t.Context())
 
 			mu.Lock()
@@ -462,9 +464,9 @@ func TestMirrorBatcherUnmappedPathDropped(t *testing.T) {
 	t.Parallel()
 	store := &mirrorStoreFake{}
 	errs := &mirrorErrors{}
-	b, _ := newTestMirrorBatcher(t, store, errs, storeAppendBatchEntries, storeAppendBatchBytes)
-	b.enqueue(filepath.Join(string(filepath.Separator), "elsewhere", "x.jsonl"), []SessionStoreEntry{{"type": "x"}})
-	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"type": "y"}})
+	b, _ := newTestMirrorBatcher(t, store, errs, transcript.AppendBatchEntries, transcript.AppendBatchBytes)
+	b.enqueue(filepath.Join(string(filepath.Separator), "elsewhere", "x.jsonl"), []sessions.Entry{{"type": "x"}})
+	b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{{"type": "y"}})
 	b.flush(t.Context())
 	calls := store.appendCalls()
 	if len(calls) != 1 || calls[0].key.SessionID != "s" {
@@ -477,12 +479,12 @@ func TestMirrorBatcherUnmappedPathDropped(t *testing.T) {
 
 func TestMirrorBatcherOnErrorPanicIsContained(t *testing.T) {
 	t.Parallel()
-	store := &mirrorStoreFake{appendHook: func(context.Context, SessionKey, []SessionStoreEntry) error {
+	store := &mirrorStoreFake{appendHook: func(context.Context, sessions.Key, []sessions.Entry) error {
 		return errors.New("boom")
 	}}
-	b := newTranscriptMirrorBatcher(store, mirrorProjectsDir, func(*SessionKey, string) { panic("callback") }, 10, 1<<20)
+	b := newTranscriptMirrorBatcher(store, mirrorProjectsDir, func(*sessions.Key, string) { panic("callback") }, 10, 1<<20)
 	b.sleep = func(context.Context, time.Duration) error { return nil }
-	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"type": "x"}})
+	b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{{"type": "x"}})
 	b.flush(t.Context())
 	b.close(t.Context())
 }
@@ -490,7 +492,7 @@ func TestMirrorBatcherOnErrorPanicIsContained(t *testing.T) {
 // gatedStore blocks every Append until the gate opens, recording entries once
 // released.
 func gatedStore(gate <-chan struct{}, entered chan<- struct{}) *mirrorStoreFake {
-	return &mirrorStoreFake{appendHook: func(ctx context.Context, _ SessionKey, _ []SessionStoreEntry) error {
+	return &mirrorStoreFake{appendHook: func(ctx context.Context, _ sessions.Key, _ []sessions.Entry) error {
 		select {
 		case entered <- struct{}{}:
 		default:
@@ -510,10 +512,10 @@ func TestMirrorBatcherEagerFlushesDoNotInterleave(t *testing.T) {
 	entered := make(chan struct{}, 1)
 	store := gatedStore(gate, entered)
 	b, _ := newTestMirrorBatcher(t, store, nil, 0, 0)
-	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"n": 1}})
+	b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{{"n": 1}})
 	<-entered // first drain is mid-append
-	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"n": 2}})
-	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"n": 3}})
+	b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{{"n": 2}})
+	b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{{"n": 3}})
 	close(gate)
 	b.flush(t.Context())
 
@@ -533,10 +535,10 @@ func TestMirrorBatcherFlushWaitsForInFlightEagerFlush(t *testing.T) {
 	gate := make(chan struct{})
 	entered := make(chan struct{}, 1)
 	store := gatedStore(gate, entered)
-	b, _ := newTestMirrorBatcher(t, store, nil, 1, storeAppendBatchBytes)
-	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"n": 1}, {"n": 2}})
+	b, _ := newTestMirrorBatcher(t, store, nil, 1, transcript.AppendBatchBytes)
+	b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{{"n": 1}, {"n": 2}})
 	<-entered
-	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"n": 3}})
+	b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{{"n": 3}})
 
 	flushed := make(chan struct{})
 	go func() {
@@ -560,8 +562,8 @@ func TestMirrorBatcherFlushReturnsOnContext(t *testing.T) {
 	gate := make(chan struct{})
 	entered := make(chan struct{}, 1)
 	store := gatedStore(gate, entered)
-	b, _ := newTestMirrorBatcher(t, store, nil, storeAppendBatchEntries, storeAppendBatchBytes)
-	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"n": 1}})
+	b, _ := newTestMirrorBatcher(t, store, nil, transcript.AppendBatchEntries, transcript.AppendBatchBytes)
+	b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{{"n": 1}})
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	b.flush(ctx)
@@ -575,14 +577,14 @@ func TestMirrorBatcherFlushReturnsOnContext(t *testing.T) {
 func TestMirrorBatcherCloseFlushesPending(t *testing.T) {
 	t.Parallel()
 	store := &mirrorStoreFake{}
-	b := newTranscriptMirrorBatcher(store, mirrorProjectsDir, nil, storeAppendBatchEntries, storeAppendBatchBytes)
-	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"n": 1}})
+	b := newTranscriptMirrorBatcher(store, mirrorProjectsDir, nil, transcript.AppendBatchEntries, transcript.AppendBatchBytes)
+	b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{{"n": 1}})
 	b.close(t.Context())
 	if n := len(store.appendCalls()); n != 1 {
 		t.Fatalf("calls = %d, want 1", n)
 	}
 	// Closed: further frames are dropped and close is idempotent.
-	b.enqueue(mirrorMainPath("p", "s"), []SessionStoreEntry{{"n": 2}})
+	b.enqueue(mirrorMainPath("p", "s"), []sessions.Entry{{"n": 2}})
 	b.flush(t.Context())
 	b.close(t.Context())
 	if n := len(store.appendCalls()); n != 1 {
@@ -596,16 +598,16 @@ func TestMirrorBatcherCloseIsBounded(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	entered := make(chan struct{}, 1)
-	store := &mirrorStoreFake{appendHook: func(context.Context, SessionKey, []SessionStoreEntry) error {
+	store := &mirrorStoreFake{appendHook: func(context.Context, sessions.Key, []sessions.Entry) error {
 		entered <- struct{}{}
 		<-release
 		return nil
 	}}
 	errs := &mirrorErrors{}
 	b := newTranscriptMirrorBatcher(store, mirrorProjectsDir, errs.record, 0, 0)
-	b.enqueue(mirrorMainPath("p", "a"), []SessionStoreEntry{{"n": 1}})
+	b.enqueue(mirrorMainPath("p", "a"), []sessions.Entry{{"n": 1}})
 	<-entered
-	b.enqueue(mirrorMainPath("p", "b"), []SessionStoreEntry{{"n": 2}}) // queued behind the stuck append
+	b.enqueue(mirrorMainPath("p", "b"), []sessions.Entry{{"n": 2}}) // queued behind the stuck append
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
 	defer cancel()
@@ -683,10 +685,10 @@ func TestEngineMirrorFramesReachStoreBeforeResult(t *testing.T) {
 		t.Fatalf("appends when the result surfaced = %d, want 1", appendsAtResult)
 	}
 	calls := store.appendCalls()
-	if calls[0].key != (SessionKey{ProjectKey: "myproj", SessionID: "mysess"}) {
+	if calls[0].key != (sessions.Key{ProjectKey: "myproj", SessionID: "mysess"}) {
 		t.Fatalf("key = %+v", calls[0].key)
 	}
-	want := []SessionStoreEntry{{"type": "user", "uuid": "u1"}, {"type": "user", "uuid": "u2"}}
+	want := []sessions.Entry{{"type": "user", "uuid": "u1"}, {"type": "user", "uuid": "u2"}}
 	if !reflect.DeepEqual(calls[0].entries, want) {
 		t.Fatalf("entries = %v", calls[0].entries)
 	}
@@ -706,7 +708,7 @@ func TestEngineMirrorLateFramesFlushedAtEnd(t *testing.T) {
 	}
 	// The stream ends only after the read loop's final flush.
 	calls := store.appendCalls()
-	if len(calls) != 1 || calls[0].key != (SessionKey{ProjectKey: "late", SessionID: "sess"}) {
+	if len(calls) != 1 || calls[0].key != (sessions.Key{ProjectKey: "late", SessionID: "sess"}) {
 		t.Fatalf("calls = %+v", calls)
 	}
 }
@@ -758,7 +760,7 @@ func TestEngineMirrorFramesDroppedWithoutStore(t *testing.T) {
 
 func TestEngineMirrorErrorSurfaces(t *testing.T) {
 	t.Parallel()
-	store := &mirrorStoreFake{appendHook: func(context.Context, SessionKey, []SessionStoreEntry) error {
+	store := &mirrorStoreFake{appendHook: func(context.Context, sessions.Key, []sessions.Entry) error {
 		return errors.New("disk full")
 	}}
 	eng, ft := startMirrorEngine(t, &Options{SessionStore: store})
@@ -792,7 +794,7 @@ func TestEngineMirrorErrorSurfaces(t *testing.T) {
 	if m.Subtype != "mirror_error" || !strings.Contains(m.Error, "disk full") {
 		t.Fatalf("message = %+v", m)
 	}
-	if m.Key == nil || *m.Key != (SessionKey{ProjectKey: "proj", SessionID: "sess"}) {
+	if m.Key == nil || *m.Key != (sessions.Key{ProjectKey: "proj", SessionID: "sess"}) {
 		t.Fatalf("key = %+v", m.Key)
 	}
 }
@@ -800,7 +802,7 @@ func TestEngineMirrorErrorSurfaces(t *testing.T) {
 func TestEngineReportMirrorError(t *testing.T) {
 	t.Parallel()
 	eng := newTestEngine(t, newFakeTransport(), nil)
-	eng.reportMirrorError(&SessionKey{ProjectKey: "p", SessionID: "s", Subpath: "subagents/agent-1"}, "boom")
+	eng.reportMirrorError(&sessions.Key{ProjectKey: "p", SessionID: "s", Subpath: "subagents/agent-1"}, "boom")
 	eng.reportMirrorError(nil, "no key")
 
 	first := (<-eng.messages.ch).msg.(*MirrorErrorMessage)
@@ -880,7 +882,7 @@ func TestEngineCloseBoundedWithStuckStore(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	entered := make(chan struct{}, 1)
-	store := &mirrorStoreFake{appendHook: func(context.Context, SessionKey, []SessionStoreEntry) error {
+	store := &mirrorStoreFake{appendHook: func(context.Context, sessions.Key, []sessions.Entry) error {
 		select {
 		case entered <- struct{}{}:
 		default:

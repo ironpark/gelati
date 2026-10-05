@@ -11,6 +11,9 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/ironpark/gelati/claude/internal/transcript"
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // claimHookSettingKeys are flag settings that govern hooks. A claim cannot
@@ -219,18 +222,18 @@ func spareOptions(opts *Options) (*Options, string, error) {
 func spareParkRoot(env map[string]string) (string, error) {
 	var dir string
 	if len(env) == 0 {
-		dir = claudeConfigHomeDir()
+		dir = transcript.ConfigHomeDir()
 	} else if c := strings.TrimSpace(env["CLAUDE_CONFIG_DIR"]); c != "" {
 		dir = c
 	} else {
 		home := strings.TrimSpace(env["HOME"])
 		if home == "" {
-			home, _ = userHomeDir()
+			home, _ = transcript.UserHomeDir()
 		}
 		dir = filepath.Join(home, ".claude")
 	}
 	if !filepath.IsAbs(dir) {
-		home, _ := userHomeDir()
+		home, _ := transcript.UserHomeDir()
 		dir = filepath.Join(home, ".claude")
 	}
 	if !filepath.IsAbs(dir) {
@@ -483,8 +486,8 @@ func (s *SpareProcess) runClaimed(ctx context.Context, inputs iter.Seq[UserInput
 // plugins_applied from the parked process when the claim does not report
 // them.
 func (s *SpareProcess) applyClaimResponse(resp map[string]any, cwd string) *ClaimResult {
-	result := &ClaimResult{Cwd: cwd, SessionID: str(resp["session_id"])}
-	if c := str(resp["cwd"]); c != "" {
+	result := &ClaimResult{Cwd: cwd, SessionID: jsonx.Str(resp["session_id"])}
+	if c := jsonx.Str(resp["cwd"]); c != "" {
 		result.Cwd = c
 	}
 	if ms, ok := toInt(resp["parked_ms"]); ok {

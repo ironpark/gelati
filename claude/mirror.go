@@ -10,6 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ironpark/gelati/claude/internal/ids"
+	"github.com/ironpark/gelati/claude/internal/transcript"
+	"github.com/ironpark/gelati/claude/sessions"
 	"github.com/ironpark/gelati/internal/jsonx"
 )
 
@@ -21,13 +24,22 @@ import (
 // pending buffer grows past its thresholds (background flush). Ported from
 // _internal/transcript_mirror_batcher.py.
 
+// SessionStoreFlushMode controls when mirrored transcript entries are flushed
+// to Options.SessionStore.
+type SessionStoreFlushMode string
+
 const (
-	// storeAppendBatchEntries and storeAppendBatchBytes bound the batches
-	// sent to SessionStore.Append: they are the batched-mode mirror
-	// thresholds past which a background flush starts, and the batch limits
-	// of ImportSessionToStore.
-	storeAppendBatchEntries = 500
-	storeAppendBatchBytes   = 1 << 20
+	// SessionStoreFlushBatched buffers entries and flushes once per turn
+	// (on the result message) or when the buffer exceeds 500 entries or
+	// 1 MiB. It keeps adapter latency off the streaming path.
+	SessionStoreFlushBatched SessionStoreFlushMode = "batched"
+	// SessionStoreFlushEager starts a background flush after every
+	// transcript frame. Appends stay serialized in order; a slow adapter
+	// sees frames coalesced while it is busy.
+	SessionStoreFlushEager SessionStoreFlushMode = "eager"
+)
+
+const (
 	// mirrorSendTimeout bounds one SessionStore.Append attempt.
 	mirrorSendTimeout = 60 * time.Second
 	// mirrorAppendMaxAttempts is the total number of Append attempts per batch.
@@ -44,7 +56,7 @@ var mirrorAppendBackoff = []time.Duration{200 * time.Millisecond, 800 * time.Mil
 // mirrorItem is one enqueued transcript_mirror frame.
 type mirrorItem struct {
 	filePath string
-	entries  []SessionStoreEntry
+	entries  []sessions.Entry
 }
 
 // transcriptMirrorBatcher buffers transcript_mirror frames and appends them to
@@ -62,9 +74,9 @@ type mirrorItem struct {
 // durable, so the session continues. Stores should dedupe by entry "uuid"
 // because a retried batch may overlap a partial earlier write.
 type transcriptMirrorBatcher struct {
-	store       SessionStore
+	store       sessions.Store
 	projectsDir string
-	onError     func(key *SessionKey, err string)
+	onError     func(key *sessions.Key, err string)
 
 	maxPendingEntries int
 	maxPendingBytes   int
@@ -103,7 +115,7 @@ type transcriptMirrorBatcher struct {
 // file paths are resolved to session keys relative to projectsDir. onError,
 // which may be nil, is called once per dropped batch. Zero thresholds make
 // every enqueue start a background flush.
-func newTranscriptMirrorBatcher(store SessionStore, projectsDir string, onError func(key *SessionKey, err string), maxPendingEntries, maxPendingBytes int) *transcriptMirrorBatcher {
+func newTranscriptMirrorBatcher(store sessions.Store, projectsDir string, onError func(key *sessions.Key, err string), maxPendingEntries, maxPendingBytes int) *transcriptMirrorBatcher {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &transcriptMirrorBatcher{
 		store:             store,
@@ -125,11 +137,11 @@ func newTranscriptMirrorBatcher(store SessionStore, projectsDir string, onError 
 // directory the CLI subprocess writes under (<CLAUDE_CONFIG_DIR>/projects, or
 // the materialized resume directory). SessionStoreFlushEager zeroes the
 // thresholds so every frame is flushed in the background as it arrives.
-func newMirrorBatcherForOptions(opts *Options, projectsDir string, onError func(key *SessionKey, err string)) *transcriptMirrorBatcher {
+func newMirrorBatcherForOptions(opts *Options, projectsDir string, onError func(key *sessions.Key, err string)) *transcriptMirrorBatcher {
 	if opts == nil || opts.SessionStore == nil {
 		return nil
 	}
-	maxEntries, maxBytes := storeAppendBatchEntries, storeAppendBatchBytes
+	maxEntries, maxBytes := transcript.AppendBatchEntries, transcript.AppendBatchBytes
 	if opts.SessionStoreFlush == SessionStoreFlushEager {
 		maxEntries, maxBytes = 0, 0
 	}
@@ -139,7 +151,7 @@ func newMirrorBatcherForOptions(opts *Options, projectsDir string, onError func(
 // enqueue buffers one frame and starts a background flush when the pending
 // buffer exceeds a threshold. It never blocks on the store. Frames enqueued
 // after close are dropped.
-func (b *transcriptMirrorBatcher) enqueue(filePath string, entries []SessionStoreEntry) {
+func (b *transcriptMirrorBatcher) enqueue(filePath string, entries []sessions.Entry) {
 	// Approximate wire size: one encode per frame keeps this cheap.
 	size := 0
 	if raw, err := json.Marshal(entries, jsonx.LegacyEncode); err == nil {
@@ -260,7 +272,7 @@ func (b *transcriptMirrorBatcher) drain(prevRelease, prevDone <-chan struct{}, r
 }
 
 type mirrorFailure struct {
-	key *SessionKey
+	key *sessions.Key
 	msg string
 }
 
@@ -268,7 +280,7 @@ type mirrorFailure struct {
 // first-seen path order and enqueue order within a path.
 func (b *transcriptMirrorBatcher) send(items []mirrorItem) []mirrorFailure {
 	var order []string
-	byPath := map[string][]SessionStoreEntry{}
+	byPath := map[string][]sessions.Entry{}
 	for _, item := range items {
 		bucket, seen := byPath[item.filePath]
 		if !seen {
@@ -300,7 +312,7 @@ func (b *transcriptMirrorBatcher) send(items []mirrorItem) []mirrorFailure {
 // appendWithRetry appends one batch, retrying failures with backoff. A timeout
 // is not retried: the abandoned call may still land, and a retry would race
 // it.
-func (b *transcriptMirrorBatcher) appendWithRetry(key SessionKey, entries []SessionStoreEntry) error {
+func (b *transcriptMirrorBatcher) appendWithRetry(key sessions.Key, entries []sessions.Entry) error {
 	var lastErr error
 	for attempt := range mirrorAppendMaxAttempts {
 		if attempt > 0 {
@@ -332,7 +344,7 @@ func (b *transcriptMirrorBatcher) appendWithRetry(key SessionKey, entries []Sess
 
 // appendOnce runs one Append bounded by sendTimeout (see runStoreCall), so a
 // store that ignores its context cannot wedge the batcher.
-func (b *transcriptMirrorBatcher) appendOnce(key SessionKey, entries []SessionStoreEntry) (timedOut bool, err error) {
+func (b *transcriptMirrorBatcher) appendOnce(key sessions.Key, entries []sessions.Entry) (timedOut bool, err error) {
 	_, err = runStoreCall(b.ctx, b.sendTimeout, func(ctx context.Context) (struct{}, error) {
 		return struct{}{}, b.store.Append(ctx, key, entries)
 	})
@@ -349,7 +361,7 @@ func (b *transcriptMirrorBatcher) appendOnce(key SessionKey, entries []SessionSt
 	return false, err
 }
 
-func (b *transcriptMirrorBatcher) reportError(key *SessionKey, msg string) {
+func (b *transcriptMirrorBatcher) reportError(key *sessions.Key, msg string) {
 	if b.onError == nil {
 		return
 	}
@@ -372,7 +384,7 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// filePathToSessionKey derives a SessionKey from a transcript path under
+// filePathToSessionKey derives the session key of a transcript path under
 // projectsDir:
 //
 //	<projectsDir>/<projectKey>/<sessionID>.jsonl                     main transcript
@@ -381,45 +393,45 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 // Subagent paths may nest deeper; the subpath is everything after the session
 // directory, "/"-joined on every platform, without the .jsonl suffix. It
 // reports false for a path outside projectsDir or of an unrecognized shape.
-func filePathToSessionKey(filePath, projectsDir string) (SessionKey, bool) {
+func filePathToSessionKey(filePath, projectsDir string) (sessions.Key, bool) {
 	if filePath == "" {
-		return SessionKey{}, false
+		return sessions.Key{}, false
 	}
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
-		return SessionKey{}, false
+		return sessions.Key{}, false
 	}
 	absDir, err := filepath.Abs(projectsDir)
 	if err != nil {
-		return SessionKey{}, false
+		return sessions.Key{}, false
 	}
 	rel, err := filepath.Rel(absDir, absPath)
 	if err != nil || filepath.IsAbs(rel) {
 		// Different volumes on Windows: not under projectsDir.
-		return SessionKey{}, false
+		return sessions.Key{}, false
 	}
 	parts := strings.Split(filepath.ToSlash(rel), "/")
 	if len(parts) < 2 || parts[0] == ".." {
-		return SessionKey{}, false
+		return sessions.Key{}, false
 	}
 	projectKey, second := parts[0], parts[1]
 	if len(parts) == 2 {
 		if sessionID, ok := strings.CutSuffix(second, ".jsonl"); ok {
-			return SessionKey{ProjectKey: projectKey, SessionID: sessionID}, true
+			return sessions.Key{ProjectKey: projectKey, SessionID: sessionID}, true
 		}
-		return SessionKey{}, false
+		return sessions.Key{}, false
 	}
 	if len(parts) >= 4 {
 		sub := append([]string(nil), parts[2:]...)
 		sub[len(sub)-1] = strings.TrimSuffix(sub[len(sub)-1], ".jsonl")
-		return SessionKey{ProjectKey: projectKey, SessionID: second, Subpath: strings.Join(sub, "/")}, true
+		return sessions.Key{ProjectKey: projectKey, SessionID: second, Subpath: strings.Join(sub, "/")}, true
 	}
-	return SessionKey{}, false
+	return sessions.Key{}, false
 }
 
 // mirrorEntries converts a frame's "entries" array, skipping anything that is
 // not a JSON object.
-func mirrorEntries(v any) []SessionStoreEntry {
+func mirrorEntries(v any) []sessions.Entry {
 	list, _ := v.([]any)
 	return objectItems(list)
 }
@@ -479,16 +491,16 @@ func (e *engine) flushMirror(ctx context.Context) {
 // reportMirrorError surfaces a dropped mirror batch as a MirrorErrorMessage.
 // It never blocks: when the consumer's buffer is full, or the stream has
 // ended, the report is dropped rather than back-pressuring the batcher.
-func (e *engine) reportMirrorError(key *SessionKey, errMsg string) {
+func (e *engine) reportMirrorError(key *sessions.Key, errMsg string) {
 	data := map[string]any{
 		"type":       "system",
 		"subtype":    "mirror_error",
 		"error":      errMsg,
 		"key":        nil,
-		"uuid":       randomUUID(),
+		"uuid":       ids.NewUUID(),
 		"session_id": "",
 	}
-	var keyCopy *SessionKey
+	var keyCopy *sessions.Key
 	if key != nil {
 		k := *key
 		keyCopy = &k

@@ -526,8 +526,8 @@ func TestToInt64(t *testing.T) {
 		{nil, 0, false},
 	}
 	for _, tc := range cases {
-		if got, ok := toInt64(tc.in); got != tc.want || ok != tc.ok {
-			t.Errorf("toInt64(%#v) = %d, %v; want %d, %v", tc.in, got, ok, tc.want, tc.ok)
+		if got, ok := jsonx.ToInt64(tc.in); got != tc.want || ok != tc.ok {
+			t.Errorf("jsonx.ToInt64(%#v) = %d, %v; want %d, %v", tc.in, got, ok, tc.want, tc.ok)
 		}
 	}
 }

@@ -232,13 +232,13 @@ type CanUseTool func(ctx context.Context, toolName string, input map[string]any,
 // well-formed objects are dropped; Raw still has everything.
 func toolPermissionContext(requestID string, request map[string]any) ToolPermissionContext {
 	permCtx := ToolPermissionContext{
-		ToolUseID:               str(request["tool_use_id"]),
-		AgentID:                 str(request["agent_id"]),
-		BlockedPath:             str(request["blocked_path"]),
-		DecisionReason:          str(request["decision_reason"]),
-		Title:                   str(request["title"]),
-		DisplayName:             str(request["display_name"]),
-		Description:             str(request["description"]),
+		ToolUseID:               jsonx.Str(request["tool_use_id"]),
+		AgentID:                 jsonx.Str(request["agent_id"]),
+		BlockedPath:             jsonx.Str(request["blocked_path"]),
+		DecisionReason:          jsonx.Str(request["decision_reason"]),
+		Title:                   jsonx.Str(request["title"]),
+		DisplayName:             jsonx.Str(request["display_name"]),
+		Description:             jsonx.Str(request["description"]),
 		DefaultToNo:             request["default_to_no"] == true,
 		SuppressAlwaysAllowRule: request["suppress_always_allow_rule"] == true,
 		RequestID:               requestID,
@@ -256,13 +256,13 @@ func toolPermissionContext(requestID string, request map[string]any) ToolPermiss
 		}
 	}
 	if server, ok := request["mcp_server"].(map[string]any); ok {
-		permCtx.MCPServer = &MCPServerProvenance{Name: str(server["name"]), Source: str(server["source"])}
+		permCtx.MCPServer = &MCPServerProvenance{Name: jsonx.Str(server["name"]), Source: jsonx.Str(server["source"])}
 	}
 	if b, ok := request["requires_user_interaction"].(bool); ok {
 		permCtx.RequiresUserInteraction = &b
 	}
 	if rule, ok := request["matched_ask_rule"].(map[string]any); ok {
-		matched := &MatchedAskRule{Source: str(rule["source"]), ToolName: str(rule["tool_name"])}
+		matched := &MatchedAskRule{Source: jsonx.Str(rule["source"]), ToolName: jsonx.Str(rule["tool_name"])}
 		if content, ok := rule["rule_content"].(string); ok {
 			matched.RuleContent = &content
 		}

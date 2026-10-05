@@ -1,7 +1,9 @@
 package claude
 
 import (
+	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -22,6 +24,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ironpark/gelati/claude/internal/ids"
+	"github.com/ironpark/gelati/claude/internal/transcript"
+	"github.com/ironpark/gelati/claude/sessions"
 	"github.com/ironpark/gelati/internal/jsonx"
 )
 
@@ -33,6 +38,10 @@ import (
 // out like ~/.claude/, and the subprocess is pointed at it through
 // CLAUDE_CONFIG_DIR. Ported from _internal/session_resume.py and
 // _internal/session_store_validation.py.
+
+// DefaultSessionLoadTimeout is the per-call bound on SessionStore reads during
+// resume materialization when Options.LoadTimeout is zero.
+const DefaultSessionLoadTimeout = 60 * time.Second
 
 // keychainServiceName is the macOS Keychain service holding the CLI's OAuth
 // credentials when CLAUDE_CONFIG_DIR is unset.
@@ -77,7 +86,7 @@ func (r resumeEnv) withDefaults() resumeEnv {
 		r.lookupEnv = os.LookupEnv
 	}
 	if r.homeDir == nil {
-		r.homeDir = userHomeDir
+		r.homeDir = transcript.UserHomeDir
 	}
 	if r.readKeychain == nil {
 		r.readKeychain = readKeychainCredentials
@@ -97,7 +106,7 @@ type materializedResume struct {
 	// CLAUDE_CONFIG_DIR pointing at it.
 	configDir string
 	// resumeSessionID is passed as --resume. For ContinueConversation it is
-	// the most recent main session found through SessionLister.
+	// the most recent main session found through sessions.Lister.
 	resumeSessionID string
 
 	removeAll  func(string) error
@@ -141,9 +150,9 @@ func validateSessionStoreOptions(opts *Options) error {
 	if opts.ContinueConversation && opts.Resume == "" {
 		// With Resume set, the session list is never consulted (Resume wins
 		// over ContinueConversation), so a minimal store is fine.
-		if _, ok := opts.SessionStore.(SessionLister); !ok {
+		if _, ok := opts.SessionStore.(sessions.Lister); !ok {
 			return errors.New("claude: Options.ContinueConversation with Options.SessionStore " +
-				"requires the store to implement SessionLister (ListSessions)")
+				"requires the store to implement sessions.Lister (ListSessions)")
 		}
 	}
 	if opts.EnableFileCheckpointing {
@@ -180,7 +189,7 @@ func materializeResumeSession(ctx context.Context, opts *Options, env resumeEnv)
 	// The key honors CLAUDE_CODE_PROJECT_DIR_NAME like the CLI, reading
 	// the environment the subprocess will see: Options.Env over the
 	// parent's.
-	projectKey := projectKeyForDirectory(opts.Cwd, func(k string) string {
+	projectKey := transcript.ProjectKey(opts.Cwd, func(k string) string {
 		if v, ok := opts.Env[k]; ok {
 			return v
 		}
@@ -191,13 +200,13 @@ func materializeResumeSession(ctx context.Context, opts *Options, env resumeEnv)
 	// An explicit Resume wins; otherwise pick the most recent main session.
 	var (
 		sessionID string
-		entries   []SessionStoreEntry
+		entries   []sessions.Entry
 		err       error
 	)
 	if opts.Resume != "" {
 		// The id becomes a path component below: anything but a UUID is
 		// passed to the CLI unchanged instead.
-		if !validateUUID(opts.Resume) {
+		if !ids.IsUUID(opts.Resume) {
 			return nil, nil
 		}
 		sessionID = opts.Resume
@@ -233,8 +242,8 @@ func materializeResumeSession(ctx context.Context, opts *Options, env resumeEnv)
 
 // populateResumeDir writes the transcript, auth files and subagent
 // transcripts into m.configDir.
-func populateResumeDir(ctx context.Context, m *materializedResume, store SessionStore, opts *Options,
-	env resumeEnv, projectKey string, entries []SessionStoreEntry, timeout time.Duration,
+func populateResumeDir(ctx context.Context, m *materializedResume, store sessions.Store, opts *Options,
+	env resumeEnv, projectKey string, entries []sessions.Entry, timeout time.Duration,
 ) error {
 	projectDir := filepath.Join(m.projectsDir(), projectKey)
 	if err := os.MkdirAll(projectDir, 0o700); err != nil {
@@ -252,7 +261,7 @@ func populateResumeDir(ctx context.Context, m *materializedResume, store Session
 	}
 
 	// Subagent transcripts, if the store can enumerate them.
-	if lister, ok := store.(SessionSubkeyLister); ok {
+	if lister, ok := store.(sessions.SubkeyLister); ok {
 		return materializeSubkeys(ctx, store, lister, projectDir, projectKey, m.resumeSessionID, timeout)
 	}
 	return nil
@@ -260,10 +269,10 @@ func populateResumeDir(ctx context.Context, m *materializedResume, store Session
 
 // loadResumeCandidate loads the entries of one session; nil means it is
 // empty or missing.
-func loadResumeCandidate(ctx context.Context, store SessionStore, projectKey, sessionID string, timeout time.Duration) ([]SessionStoreEntry, error) {
+func loadResumeCandidate(ctx context.Context, store sessions.Store, projectKey, sessionID string, timeout time.Duration) ([]sessions.Entry, error) {
 	return callWithLoadTimeout(ctx, timeout, "SessionStore.Load() for session "+sessionID,
-		func(ctx context.Context) ([]SessionStoreEntry, error) {
-			return store.Load(ctx, SessionKey{ProjectKey: projectKey, SessionID: sessionID})
+		func(ctx context.Context) ([]sessions.Entry, error) {
+			return store.Load(ctx, sessions.Key{ProjectKey: projectKey, SessionID: sessionID})
 		})
 }
 
@@ -275,23 +284,24 @@ func loadResumeCandidate(ctx context.Context, store SessionStore, projectKey, se
 // is needed anyway) and skipping sidechains, so ContinueConversation resumes
 // the user's conversation rather than a subagent's, as the CLI's own
 // --continue does. Equal mtimes keep the store's listing order.
-func resolveContinueCandidate(ctx context.Context, store SessionStore, projectKey string, timeout time.Duration) (string, []SessionStoreEntry, error) {
-	lister, ok := store.(SessionLister)
+func resolveContinueCandidate(ctx context.Context, store sessions.Store, projectKey string, timeout time.Duration) (string, []sessions.Entry, error) {
+	lister, ok := store.(sessions.Lister)
 	if !ok {
 		return "", nil, fmt.Errorf("claude: SessionStore.ListSessions() failed during resume materialization: %w",
 			errors.ErrUnsupported)
 	}
-	sessions, err := callWithLoadTimeout(ctx, timeout, "SessionStore.ListSessions()",
-		func(ctx context.Context) ([]SessionStoreListEntry, error) {
+	listing, err := callWithLoadTimeout(ctx, timeout, "SessionStore.ListSessions()",
+		func(ctx context.Context) ([]sessions.ListEntry, error) {
 			return lister.ListSessions(ctx, projectKey)
 		})
-	if err != nil || len(sessions) == 0 {
+	if err != nil || len(listing) == 0 {
 		return "", nil, err
 	}
-	sorted := slices.Clone(sessions)
-	slices.SortStableFunc(sorted, func(a, b SessionStoreListEntry) int { return cmpMTimeDesc(a.MTime, b.MTime) })
+	sorted := slices.Clone(listing)
+	// Newest first.
+	slices.SortStableFunc(sorted, func(a, b sessions.ListEntry) int { return cmp.Compare(b.MTime, a.MTime) })
 	for _, cand := range sorted {
-		if !validateUUID(cand.SessionID) {
+		if !ids.IsUUID(cand.SessionID) {
 			continue
 		}
 		entries, err := loadResumeCandidate(ctx, store, projectKey, cand.SessionID, timeout)
@@ -441,7 +451,7 @@ func stripSettingsForResume(content []byte) []byte {
 		// rejects in Python; keep the original bytes as the Python SDK does.
 		return content
 	}
-	out, err := newJSONAppender().append(nil, parsed)
+	out, err := json.Marshal(parsed, jsonx.LegacyEncode)
 	if err != nil {
 		return content
 	}
@@ -469,7 +479,7 @@ func decodeJSONObject(b []byte) (map[string]any, bool) {
 // a double.
 func hasOverflowingNumber(v any) bool {
 	switch x := v.(type) {
-	case numberText:
+	case jsonx.LiteralNumber:
 		// Integers are arbitrary-precision in Python; only floats overflow.
 		if s := x.String(); strings.ContainsAny(s, ".eE") {
 			if _, err := strconv.ParseFloat(s, 64); err != nil {
@@ -587,13 +597,13 @@ func readKeychainCredentials(ctx context.Context) (string, bool) {
 
 // materializeSubkeys loads every subagent transcript and metadata sidecar
 // stored under sessionID and writes them beneath the session directory.
-func materializeSubkeys(ctx context.Context, store SessionStore, lister SessionSubkeyLister,
+func materializeSubkeys(ctx context.Context, store sessions.Store, lister sessions.SubkeyLister,
 	projectDir, projectKey, sessionID string, timeout time.Duration,
 ) error {
 	sessionDir := filepath.Join(projectDir, sessionID)
 	subkeys, err := callWithLoadTimeout(ctx, timeout, "SessionStore.ListSubkeys() for session "+sessionID,
 		func(ctx context.Context) ([]string, error) {
-			return lister.ListSubkeys(ctx, SessionListSubkeysKey{ProjectKey: projectKey, SessionID: sessionID})
+			return lister.ListSubkeys(ctx, sessions.ListSubkeysKey{ProjectKey: projectKey, SessionID: sessionID})
 		})
 	if err != nil {
 		return err
@@ -604,10 +614,10 @@ func materializeSubkeys(ctx context.Context, store SessionStore, lister SessionS
 		if !isSafeSubpath(subpath, sessionDir) {
 			continue
 		}
-		key := SessionKey{ProjectKey: projectKey, SessionID: sessionID, Subpath: subpath}
+		key := sessions.Key{ProjectKey: projectKey, SessionID: sessionID, Subpath: subpath}
 		entries, err := callWithLoadTimeout(ctx, timeout,
 			fmt.Sprintf("SessionStore.Load() for session %s subpath %s", sessionID, subpath),
-			func(ctx context.Context) ([]SessionStoreEntry, error) { return store.Load(ctx, key) })
+			func(ctx context.Context) ([]sessions.Entry, error) { return store.Load(ctx, key) })
 		if err != nil {
 			return err
 		}
@@ -617,10 +627,10 @@ func materializeSubkeys(ctx context.Context, store SessionStore, lister SessionS
 
 		// agent_metadata entries stand for the .meta.json sidecar (the last
 		// one wins); everything else is a transcript line.
-		metadata, transcript := splitAgentMetadata(entries)
+		metadata, lines := transcript.SplitAgentMetadata(entries)
 		subFile := subpathTranscriptFile(sessionDir, subpath)
-		if len(transcript) > 0 {
-			if err := writeEntriesJSONL(subFile, transcript); err != nil {
+		if len(lines) > 0 {
+			if err := writeEntriesJSONL(subFile, lines); err != nil {
 				return err
 			}
 		}
@@ -630,7 +640,7 @@ func materializeSubkeys(ctx context.Context, store SessionStore, lister SessionS
 			if err != nil {
 				return fmt.Errorf("claude: encoding agent metadata for %s: %w", subpath, err)
 			}
-			metaFile := agentMetadataSidecarPath(subFile)
+			metaFile := transcript.AgentMetadataSidecarPath(subFile)
 			if err := os.MkdirAll(filepath.Dir(metaFile), 0o700); err != nil {
 				return fmt.Errorf("claude: writing %s: %w", metaFile, err)
 			}
@@ -675,11 +685,11 @@ func isSafeSubpath(subpath, sessionDir string) bool {
 	if strings.ContainsRune(subpath, 0) {
 		return false
 	}
-	target, err := realpath(subpathTranscriptFile(sessionDir, subpath))
+	target, err := transcript.Realpath(subpathTranscriptFile(sessionDir, subpath))
 	if err != nil {
 		return false
 	}
-	base, err := realpath(sessionDir)
+	base, err := transcript.Realpath(sessionDir)
 	if err != nil {
 		return false
 	}
@@ -741,4 +751,40 @@ func isRetryableRemoveError(err error) bool {
 		}
 	}
 	return false
+}
+
+// writeEntriesJSONL streams entries to path as one compact JSON object per
+// line, with "type" first (see transcript.TypeFirstKeys), and makes the file 0600.
+// Unlike the session store readers' JSONL rendering it fails on a value
+// that cannot be encoded instead of writing null for it.
+func writeEntriesJSONL(path string, entries []map[string]any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("claude: writing %s: %w", path, err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("claude: writing %s: %w", path, err)
+	}
+	w := bufio.NewWriter(f)
+	var a transcript.JSONAppender
+	var line []byte
+	for _, e := range entries {
+		if line, err = a.AppendEntry(line[:0], e, true); err != nil {
+			break
+		}
+		if _, err = w.Write(append(line, '\n')); err != nil {
+			break
+		}
+	}
+	if err == nil {
+		err = w.Flush()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return fmt.Errorf("claude: writing %s: %w", path, err)
+	}
+	_ = os.Chmod(path, 0o600)
+	return nil
 }
