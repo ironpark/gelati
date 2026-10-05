@@ -182,24 +182,42 @@ full Python/TypeScript-to-Go name mapping.
 
 ## codex
 
+`codex` drives the Codex agent through the `codex app-server` JSON-RPC
+protocol, following the official
+[Python SDK](https://github.com/openai/codex/tree/main/sdk/python) (with the
+[TypeScript SDK](https://github.com/openai/codex/tree/main/sdk/typescript)'s
+`run` naming). It needs the `codex` CLI on `PATH` (or `Options.Binary`) and a
+signed-in account.
+
 ```go
-client, err := codex.New(ctx, codex.Options{
-	ClientInfo: codex.ClientInfo{Name: "my-app", Version: "0.1.0"},
-	Approvals: codex.ApprovalFuncs{
-		Command: func(ctx context.Context, req *codex.CommandApprovalRequest) (codex.Decision, error) {
-			return codex.DecisionAccept, nil
-		},
-	},
-})
+client, err := codex.New(ctx, codex.Options{})
 if err != nil {
 	log.Fatal(err)
 }
 defer client.Close()
 
-thread, err := client.StartThread(ctx, codex.StartThreadParams{Cwd: "/repo"})
+policy, reviewer := codex.ApprovalModeAutoReview.Settings()
+thread, err := client.StartThread(ctx, codex.StartThreadParams{
+	ThreadSettings: codex.ThreadSettings{
+		Cwd:               "/repo",
+		Sandbox:           codex.SandboxModeWorkspaceWrite,
+		ApprovalPolicy:    policy,
+		ApprovalsReviewer: reviewer,
+	},
+})
 if err != nil {
 	log.Fatal(err)
 }
+result, err := client.Run(ctx, thread.ID, codex.Text("Run the tests"), nil)
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(result.FinalResponse)
+```
+
+To stream instead, `StartTurn` returns a `TurnStream`:
+
+```go
 stream, err := client.StartTurn(ctx, thread.ID, codex.Text("Run the tests"), nil)
 if err != nil {
 	log.Fatal(err)
@@ -209,7 +227,12 @@ for event := range stream.Events() {
 		fmt.Print(event.Delta)
 	}
 }
+result, err := stream.Result(ctx)
 ```
+
+Approval prompts go to `Options.Approvals`; with none, commands and file
+changes are declined (upstream's Python SDK accepts them). Methods the package
+does not wrap are available through `Client.Call`.
 
 ## antigravity
 
@@ -412,5 +435,6 @@ Optional suites:
 | `GELATI_CLAUDE_E2E=1` | End-to-end tests against the installed `claude` CLI (uses your credentials and costs a few cents) |
 | `GELATI_TS_SDK=/path/to/sdk.mjs` | Session parity tests against the real TypeScript SDK runtime (needs `node`) |
 | `GELATI_SDK_TOOLS_DTS=/path/to/sdk-tools.d.ts` | Checks that `claude/tools` is up to date with the given schema |
+| `GELATI_CODEX_E2E=1` | End-to-end test against the installed `codex` CLI (needs a signed-in account; spends a few tokens) |
 | `GELATI_ANTIGRAVITY_HARNESS=/path/to/localharness` | Integration tests against the real Antigravity harness, with no credentials (an invalid API key and a fake OpenAI-compatible server) |
 | `GELATI_ANTIGRAVITY_E2E=1` | End-to-end test against Gemini through the real harness (needs `GEMINI_API_KEY` and the harness on `ANTIGRAVITY_HARNESS_PATH` or `PATH`; costs a little) |

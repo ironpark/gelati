@@ -100,7 +100,7 @@ func TestTurnStreamEndToEnd(t *testing.T) {
 	server.notify(MethodReasoningSummaryTextDelta, map[string]any{"threadId": "thr_1", "turnId": "turn_1",
 		"itemId": "item_2", "delta": "thinking", "summaryIndex": 1})
 	server.notify(MethodCommandExecutionOutputDelta, map[string]any{"threadId": "thr_1", "turnId": "turn_1",
-		"itemId": "item_3", "stream": "stdout", "delta": "ok\n"})
+		"itemId": "item_3", "delta": "ok\n"})
 	server.notify(MethodTurnPlan, map[string]any{"threadId": "thr_1", "turnId": "turn_1",
 		"explanation": "why", "plan": []any{map[string]any{"step": "a", "status": "completed"}}})
 	server.notify(MethodTurnDiff, map[string]any{"threadId": "thr_1", "turnId": "turn_1", "diff": "@@ -1 +1 @@"})
@@ -139,7 +139,7 @@ func TestTurnStreamEndToEnd(t *testing.T) {
 				t.Errorf("reasoning delta = %+v", event)
 			}
 		case EventCommandOutputDelta:
-			if event.Stream != "stdout" || event.Delta != "ok\n" {
+			if event.ItemID != "item_3" || event.Delta != "ok\n" {
 				t.Errorf("command delta = %+v", event)
 			}
 		case EventPlanUpdated:
@@ -281,7 +281,7 @@ func TestTurnFailed(t *testing.T) {
 		"id": "turn_1", "status": "failed",
 		"error": map[string]any{
 			"message":        "context window exceeded",
-			"codexErrorInfo": map[string]any{"type": "ContextWindowExceeded"},
+			"codexErrorInfo": "contextWindowExceeded",
 		},
 	}})
 

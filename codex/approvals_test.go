@@ -41,7 +41,7 @@ func TestCommandApprovalAccepted(t *testing.T) {
 	replies := server.request("sr-1", MethodCommandApproval, map[string]any{
 		"itemId": "item_1", "threadId": "thr_1", "turnId": "turn_1",
 		"reason": "network access", "command": "cargo test", "cwd": "/w",
-		"availableDecisions": []string{"accept", "decline"},
+		"proposedExecpolicyAmendment": []string{"cargo", "test"}, "kind": "command",
 	})
 	reply := server.awaitReply(replies)
 	if got := decisionOf(t, reply); got != DecisionAcceptForSession {
@@ -56,8 +56,8 @@ func TestCommandApprovalAccepted(t *testing.T) {
 		if req.Command != "cargo test" || req.Cwd != "/w" || req.Reason != "network access" {
 			t.Fatalf("request = %+v", req)
 		}
-		if len(req.AvailableDecisions) != 2 {
-			t.Fatalf("availableDecisions = %v", req.AvailableDecisions)
+		if len(req.ProposedExecpolicyAmendment) != 2 || req.Kind != "command" {
+			t.Fatalf("request = %+v", req)
 		}
 	case <-time.After(fakeTimeout):
 		t.Fatal("handler never ran")
@@ -112,14 +112,13 @@ func TestFileChangeApproval(t *testing.T) {
 
 	replies := server.request("sr-2", MethodFileChangeApproval, map[string]any{
 		"itemId": "item_2", "threadId": "thr_1", "turnId": "turn_1",
-		"reason": "writes outside the workspace", "grantRoot": "/Users/me",
-		"changes": []any{map[string]any{"path": "/a.go", "kind": "update", "diff": "@@"}},
+		"reason": "writes outside the workspace", "grantRoot": "/Users/me", "startedAtMs": 42,
 	})
 	if got := decisionOf(t, server.awaitReply(replies)); got != DecisionAccept {
 		t.Fatalf("decision = %q", got)
 	}
 	req := <-seen
-	if req.GrantRoot != "/Users/me" || len(req.Changes) != 1 || req.Changes[0].Path != "/a.go" {
+	if req.GrantRoot != "/Users/me" || req.StartedAtMs != 42 {
 		t.Fatalf("request = %+v", req)
 	}
 }
@@ -143,7 +142,7 @@ func TestPermissionsApproval(t *testing.T) {
 					t.Errorf("request = %+v", req)
 				}
 				return &PermissionsResponse{
-					Permissions: json.RawMessage(`[{"type":"network"}]`),
+					Permissions: json.RawMessage(`{"network":{"enabled":true}}`),
 					Scope:       ScopeSession,
 				}, nil
 			},
@@ -153,14 +152,14 @@ func TestPermissionsApproval(t *testing.T) {
 	replies := server.request("sr-4", MethodPermissionsApproval, map[string]any{
 		"itemId": "item_3", "threadId": "thr_1", "turnId": "turn_1",
 		"environmentId": "local", "cwd": "/w",
-		"permissions": []any{map[string]any{"type": "network"}, map[string]any{"type": "filesystem"}},
+		"permissions": map[string]any{"network": map[string]any{"enabled": true}},
 	})
 	reply := server.awaitReply(replies)
 	var granted PermissionsResponse
 	if err := json.Unmarshal(reply.Result, &granted); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if granted.Scope != ScopeSession || string(granted.Permissions) != `[{"type":"network"}]` {
+	if granted.Scope != ScopeSession || string(granted.Permissions) != `{"network":{"enabled":true}}` {
 		t.Fatalf("granted = %+v", granted)
 	}
 }
@@ -176,7 +175,7 @@ func TestPermissionsApprovalDefaultGrantsNothing(t *testing.T) {
 	if err := json.Unmarshal(reply.Result, &granted); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if string(granted.Permissions) != "[]" || granted.Scope != "" {
+	if string(granted.Permissions) != "{}" || granted.Scope != "" {
 		t.Fatalf("granted = %+v", granted)
 	}
 }
@@ -190,7 +189,7 @@ func TestUserInputRequest(t *testing.T) {
 		},
 	})
 
-	replies := server.request("sr-6", MethodRequestUserInput, map[string]any{
+	replies := server.request("sr-6", MethodItemRequestUserInput, map[string]any{
 		"threadId": "thr_1", "turnId": "turn_1", "questions": []any{},
 	})
 	reply := server.awaitReply(replies)
@@ -205,7 +204,7 @@ func TestUserInputRequest(t *testing.T) {
 func TestUserInputRequestDefaultErrors(t *testing.T) {
 	_, server := connect(t, Options{})
 
-	replies := server.request("sr-7", MethodRequestUserInput, map[string]any{"threadId": "thr_1"})
+	replies := server.request("sr-7", MethodItemRequestUserInput, map[string]any{"threadId": "thr_1"})
 	reply := server.awaitReply(replies)
 	if reply.Error == nil || reply.Error.Code != CodeMethodNotFound {
 		t.Fatalf("error = %+v", reply.Error)
@@ -242,7 +241,7 @@ func TestTokenRefreshRequest(t *testing.T) {
 func TestUnknownServerRequestGetsMethodNotFound(t *testing.T) {
 	_, server := connect(t, Options{Approvals: ApprovalFuncs{}})
 
-	replies := server.request("sr-9", "mcpServer/elicitation/request", map[string]any{"threadId": "thr_1"})
+	replies := server.request("sr-9", "attestation/generate", nil)
 	reply := server.awaitReply(replies)
 	if reply.Error == nil || reply.Error.Code != CodeMethodNotFound {
 		t.Fatalf("error = %+v", reply.Error)
@@ -335,4 +334,47 @@ func TestApprovalContextCanceledOnClose(t *testing.T) {
 	case <-time.After(fakeTimeout):
 		t.Fatal("handler context not canceled on Close")
 	}
+}
+
+func TestObjectDecisions(t *testing.T) {
+	for _, tc := range []struct {
+		decision Decision
+		want     string
+	}{
+		{DecisionAccept, `{"decision":"accept"}`},
+		{AcceptWithExecpolicyAmendment([]string{"cargo", "test"}),
+			`{"decision":{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["cargo","test"]}}}`},
+		{ApplyNetworkPolicyAmendment("example.com", "allow"),
+			`{"decision":{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"action":"allow","host":"example.com"}}}}`},
+	} {
+		got, err := json.Marshal(decisionResult{Decision: tc.decision})
+		if err != nil || string(got) != tc.want {
+			t.Errorf("marshal = %s, %v; want %s", got, err, tc.want)
+		}
+	}
+}
+
+func TestUnmodeledServerRequests(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		_, server := connect(t, Options{})
+		reply := server.awaitReply(server.request("sr-e", MethodMcpElicitation, map[string]any{"threadId": "thr_1"}))
+		if reply.Error != nil || string(reply.Result) != `{"action":"decline"}` {
+			t.Fatalf("elicitation reply = %s, %+v", reply.Result, reply.Error)
+		}
+		reply = server.awaitReply(server.request("sr-t", MethodDynamicToolCall, map[string]any{"threadId": "thr_1"}))
+		if reply.Error == nil || reply.Error.Code != CodeMethodNotFound {
+			t.Fatalf("tool call error = %+v", reply.Error)
+		}
+	})
+	t.Run("handler", func(t *testing.T) {
+		_, server := connect(t, Options{Approvals: ApprovalFuncs{
+			Other: func(ctx context.Context, method string, params json.RawMessage) (any, error) {
+				return map[string]any{"success": true, "contentItems": []any{}, "method": method}, nil
+			},
+		}})
+		reply := server.awaitReply(server.request("sr-t", MethodDynamicToolCall, map[string]any{"threadId": "thr_1"}))
+		if reply.Error != nil || string(reply.Result) != `{"contentItems":[],"method":"item/tool/call","success":true}` {
+			t.Fatalf("tool call reply = %s, %+v", reply.Result, reply.Error)
+		}
+	})
 }

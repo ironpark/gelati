@@ -10,27 +10,31 @@
 //
 // New spawns the subprocess and performs the initialize/initialized handshake.
 // StartThread (or ResumeThread, ForkThread) opens a conversation and subscribes
-// to its events. StartTurn sends user input and returns a TurnStream carrying
-// typed events until the turn reaches a terminal status. Close stops the
-// subprocess and releases every waiting caller.
+// to its events. Run sends user input and waits for the turn's TurnResult, the
+// equivalent of upstream's thread.run; StartTurn returns a TurnStream carrying
+// typed events instead. Close stops the subprocess and releases every waiting
+// caller.
 //
-//	client, err := codex.New(ctx, codex.Options{
-//		ClientInfo: codex.ClientInfo{Name: "mohae", Version: "0.1.0"},
-//		Approvals: codex.ApprovalFuncs{
-//			Command: func(ctx context.Context, req *codex.CommandApprovalRequest) (codex.Decision, error) {
-//				return codex.DecisionAccept, nil
-//			},
-//		},
-//	})
+//	client, err := codex.New(ctx, codex.Options{})
 //	if err != nil {
 //		return err
 //	}
 //	defer client.Close()
 //
-//	thread, err := client.StartThread(ctx, codex.StartThreadParams{Cwd: "/repo"})
+//	thread, err := client.StartThread(ctx, codex.StartThreadParams{
+//		ThreadSettings: codex.ThreadSettings{Cwd: "/repo", Sandbox: codex.SandboxModeWorkspaceWrite},
+//	})
 //	if err != nil {
 //		return err
 //	}
+//	result, err := client.Run(ctx, thread.ID, codex.Text("Run the tests"), nil)
+//	if err != nil {
+//		return err
+//	}
+//	fmt.Println(result.FinalResponse)
+//
+// To stream, read the events of a TurnStream and then call Wait or Result:
+//
 //	stream, err := client.StartTurn(ctx, thread.ID, codex.Text("Run the tests"), nil)
 //	if err != nil {
 //		return err
@@ -41,6 +45,27 @@
 //		}
 //	}
 //	turn, err := stream.Wait(ctx)
+//
+// # Upstream mapping
+//
+// The package follows the official Python SDK (openai_codex), which drives the
+// same app-server protocol, and borrows the TypeScript SDK's Run naming:
+//
+//	Codex()                         New
+//	codex.thread_start(...)         Client.StartThread
+//	thread.run(input) -> TurnResult Client.Run, TurnStream.Result
+//	thread.turn(input) -> handle    Client.StartTurn -> *TurnStream
+//	handle.steer / interrupt        Client.SteerTurn / InterruptTurn
+//	ExternalMessage                 Client.StartExternalTurn, RunExternal
+//	ApprovalMode, Sandbox           ApprovalMode.Settings, SandboxMode
+//	codex.models()                  Client.ListModels
+//	retry_on_overload               RetryOnOverload, IsOverloaded
+//	login_chatgpt().wait()          Client.LoginChatGPT, AwaitLogin
+//
+// Methods this package does not wrap are reachable through Client.Call.
+//
+// Unlike upstream, approval requests are declined when Options.Approvals is
+// nil: upstream's default handler accepts every command and file change.
 //
 // # Delivery guarantees
 //
@@ -53,12 +78,15 @@
 //
 // # Failure modes
 //
-// Server error responses surface as *RPCError; use IsOverloaded to detect the
-// retryable -32001 overload error. A failed turn carries a *TurnError whose
-// Kind reports the codexErrorInfo discriminator. If the subprocess exits, the
+// Server error responses surface as *RPCError; IsOverloaded reports the
+// retryable overload errors and RetryOnOverload retries them. A failed turn
+// carries a *TurnError whose Kind reports the codexErrorInfo discriminator;
+// Run and TurnStream.Result return it as their error. Errors the server is
+// still retrying arrive as EventError events. If the subprocess exits, the
 // channel from Done closes, Err reports the cause, active turn streams fail
 // with ErrClosed, and later calls return ErrClosed.
 //
-// Unknown item and notification types decode into raw fallbacks rather than
-// failing, so a newer app-server does not break this client.
+// Unknown item types decode into UnknownItem and unmodeled turn-scoped
+// notifications arrive as EventNotification events, so a newer app-server
+// does not break this client.
 package codex

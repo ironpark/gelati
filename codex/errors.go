@@ -1,9 +1,15 @@
 package codex
 
 import (
+	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
+	"slices"
+	"strings"
+	"time"
 )
 
 // Sentinel errors returned by the package.
@@ -50,28 +56,126 @@ const (
 	CodeServerOverloaded = -32001
 )
 
-// Common codexErrorInfo discriminators carried by a failed turn's error.
-// Compare them against TurnError.Kind.
+// codexErrorInfo discriminators carried by a failed turn's error. Compare
+// them against TurnError.Kind.
 const (
-	ErrorInfoContextWindowExceeded          = "ContextWindowExceeded"
-	ErrorInfoUsageLimitExceeded             = "UsageLimitExceeded"
-	ErrorInfoHTTPConnectionFailed           = "HttpConnectionFailed"
-	ErrorInfoResponseStreamConnectionFailed = "ResponseStreamConnectionFailed"
-	ErrorInfoResponseStreamDisconnected     = "ResponseStreamDisconnected"
-	ErrorInfoResponseTooManyFailedAttempts  = "ResponseTooManyFailedAttempts"
-	ErrorInfoBadRequest                     = "BadRequest"
-	ErrorInfoUnauthorized                   = "Unauthorized"
-	ErrorInfoSandboxError                   = "SandboxError"
-	ErrorInfoInternalServerError            = "InternalServerError"
-	ErrorInfoOther                          = "Other"
+	ErrorInfoContextWindowExceeded          = "contextWindowExceeded"
+	ErrorInfoSessionBudgetExceeded          = "sessionBudgetExceeded"
+	ErrorInfoUsageLimitExceeded             = "usageLimitExceeded"
+	ErrorInfoRateLimitExceeded              = "rateLimitExceeded"
+	ErrorInfoFlexUnavailable                = "flexUnavailable"
+	ErrorInfoServerOverloaded               = "serverOverloaded"
+	ErrorInfoCyberPolicy                    = "cyberPolicy"
+	ErrorInfoTooManyDenials                 = "tooManyDenials"
+	ErrorInfoInternalServerError            = "internalServerError"
+	ErrorInfoUnauthorized                   = "unauthorized"
+	ErrorInfoBadRequest                     = "badRequest"
+	ErrorInfoSandboxError                   = "sandboxError"
+	ErrorInfoOther                          = "other"
+	ErrorInfoHTTPConnectionFailed           = "httpConnectionFailed"
+	ErrorInfoResponseStreamConnectionFailed = "responseStreamConnectionFailed"
+	ErrorInfoResponseStreamDisconnected     = "responseStreamDisconnected"
+	ErrorInfoResponseTooManyFailedAttempts  = "responseTooManyFailedAttempts"
+	ErrorInfoActiveTurnNotSteerable         = "activeTurnNotSteerable"
 )
 
-// IsOverloaded reports whether err is an app-server overload error
-// (JSON-RPC code -32001) that the caller may retry after a backoff.
+// IsOverloaded reports whether err is a transient server-overload error that
+// the caller may retry after a backoff: JSON-RPC code -32001, or a server
+// error (-32099..-32000) whose data marks it server_overloaded, the way
+// upstream's is_retryable_error decides.
 func IsOverloaded(err error) bool {
-	var rpcErr *RPCError
-	if errors.As(err, &rpcErr) {
-		return rpcErr.Code == CodeServerOverloaded
+	rpcErr, ok := serverError(err)
+	if !ok {
+		return false
+	}
+	if rpcErr.Code == CodeServerOverloaded {
+		return true
+	}
+	if len(rpcErr.Data) == 0 {
+		return false
+	}
+	var data any
+	if json.Unmarshal(rpcErr.Data, &data) != nil {
+		return false
+	}
+	return mentionsOverload(data)
+}
+
+// IsRetryLimitExceeded reports whether err is a server error saying its own
+// retry budget ran out.
+func IsRetryLimitExceeded(err error) bool {
+	rpcErr, ok := serverError(err)
+	if !ok {
+		return false
+	}
+	msg := strings.ToLower(rpcErr.Message)
+	return strings.Contains(msg, "retry limit") || strings.Contains(msg, "too many failed attempts")
+}
+
+// serverError returns err's *RPCError when its code is in the JSON-RPC
+// implementation-defined server error range, -32099..-32000.
+func serverError(err error) (*RPCError, bool) {
+	rpcErr, ok := errors.AsType[*RPCError](err)
+	if !ok || rpcErr.Code < -32099 || rpcErr.Code > -32000 {
+		return nil, false
+	}
+	return rpcErr, true
+}
+
+// mentionsOverload reports whether any string in a decoded JSON value is
+// server_overloaded or serverOverloaded.
+func mentionsOverload(v any) bool {
+	switch v := v.(type) {
+	case string:
+		return strings.EqualFold(v, "server_overloaded") || strings.EqualFold(v, ErrorInfoServerOverloaded)
+	case map[string]any:
+		for key, value := range v {
+			if strings.EqualFold(key, ErrorInfoServerOverloaded) || mentionsOverload(value) {
+				return true
+			}
+		}
+	case []any:
+		return slices.ContainsFunc(v, mentionsOverload)
 	}
 	return false
+}
+
+// RetryOptions tunes RetryOnOverload. Zero fields take upstream's defaults.
+type RetryOptions struct {
+	// MaxAttempts bounds the calls, including the first; default 3.
+	MaxAttempts int
+	// InitialDelay is the first backoff; default 250ms. It doubles per retry.
+	InitialDelay time.Duration
+	// MaxDelay caps the backoff; default 2s.
+	MaxDelay time.Duration
+	// Jitter is the random fraction added to or taken from each delay;
+	// default 0.2.
+	Jitter float64
+}
+
+// RetryOnOverload calls op until it succeeds, fails with an error IsOverloaded
+// rejects, runs out of attempts, or ctx ends, backing off exponentially with
+// jitter between attempts.
+func RetryOnOverload[T any](ctx context.Context, opts RetryOptions, op func(context.Context) (T, error)) (T, error) {
+	attempts := cmp.Or(opts.MaxAttempts, 3)
+	delay := cmp.Or(opts.InitialDelay, 250*time.Millisecond)
+	maxDelay := cmp.Or(opts.MaxDelay, 2*time.Second)
+	jitter := cmp.Or(opts.Jitter, 0.2)
+	for attempt := 1; ; attempt++ {
+		value, err := op(ctx)
+		if err == nil || attempt >= attempts || !IsOverloaded(err) {
+			return value, err
+		}
+		wait := min(delay, maxDelay)
+		wait += time.Duration((rand.Float64()*2 - 1) * jitter * float64(wait))
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			var zero T
+			return zero, ctx.Err()
+		case <-timer.C:
+		}
+		delay = min(delay*2, maxDelay)
+	}
 }

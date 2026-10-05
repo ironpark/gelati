@@ -8,10 +8,9 @@ import (
 
 // Account type discriminators returned by account/read.
 const (
-	AccountAPIKey            = "apiKey"
-	AccountChatGPT           = "chatgpt"
-	AccountChatGPTAuthTokens = "chatgptAuthTokens"
-	AccountAmazonBedrock     = "amazonBedrock"
+	AccountAPIKey        = "apiKey"
+	AccountChatGPT       = "chatgpt"
+	AccountAmazonBedrock = "amazonBedrock"
 )
 
 // Auth modes reported by account/updated.
@@ -19,15 +18,11 @@ const (
 	AuthModeAPIKey              = "apikey"
 	AuthModeChatGPT             = "chatgpt"
 	AuthModeChatGPTAuthTokens   = "chatgptAuthTokens"
+	AuthModeHeaders             = "headers"
+	AuthModeBedrockAccessKeys   = "bedrockAccessKeys"
 	AuthModeAgentIdentity       = "agentIdentity"
 	AuthModePersonalAccessToken = "personalAccessToken"
 	AuthModeBedrockAPIKey       = "bedrockApiKey"
-)
-
-// Bedrock credential sources.
-const (
-	CredentialSourceCodexManaged = "codexManaged"
-	CredentialSourceAWSManaged   = "awsManaged"
 )
 
 // Account describes the signed-in account.
@@ -38,8 +33,9 @@ type Account struct {
 	Email *string `json:"email,omitempty"`
 	// PlanType is the ChatGPT plan, such as "pro" or "plus".
 	PlanType string `json:"planType,omitempty"`
-	// CredentialSource is set for Amazon Bedrock accounts.
-	CredentialSource string `json:"credentialSource,omitempty"`
+	// UsesCodexManagedCredentials is set for Amazon Bedrock accounts whose
+	// credentials Codex manages.
+	UsesCodexManagedCredentials bool `json:"usesCodexManagedCredentials,omitempty"`
 }
 
 // AccountInfo is the account/read response.
@@ -165,13 +161,19 @@ func (c *Client) AccountUpdates() <-chan AccountUpdate { return c.accounts }
 
 // AwaitLogin waits for the account/login/completed notification matching
 // loginID. Use the empty string for flows with no login id, such as API-key
-// login. Register the wait before starting a login to avoid missing a fast
-// completion.
+// login. A completion for a non-empty loginID that arrived before the call is
+// kept for it, so the wait may start after the login does; for the empty id,
+// start waiting before the login.
 func (c *Client) AwaitLogin(ctx context.Context, loginID string) (*LoginCompletedParams, error) {
 	waiter := make(chan *LoginCompletedParams, 1)
 
 	c.mu.Lock()
-	c.logins[loginID] = append(c.logins[loginID], waiter)
+	if early, ok := c.loginResults[loginID]; ok {
+		delete(c.loginResults, loginID)
+		waiter <- early
+	} else {
+		c.logins[loginID] = append(c.logins[loginID], waiter)
+	}
 	c.mu.Unlock()
 
 	defer func() {
@@ -195,16 +197,24 @@ func (c *Client) AwaitLogin(ctx context.Context, loginID string) (*LoginComplete
 	case <-c.tr.Done():
 		return nil, ErrClosed
 	case completed := <-waiter:
-		if !completed.Success {
-			message := completed.Error
-			if message == "" {
-				message = "login failed"
-			}
-			return completed, fmt.Errorf("codex: %s", message)
-		}
-		return completed, nil
+		return completed, completed.err()
 	}
 }
+
+// err reports a failed login as an error.
+func (p *LoginCompletedParams) err() error {
+	if p.Success {
+		return nil
+	}
+	message := p.Error
+	if message == "" {
+		message = "login failed"
+	}
+	return fmt.Errorf("codex: %s", message)
+}
+
+// maxEarlyLogins bounds the completions kept for logins nobody awaits yet.
+const maxEarlyLogins = 16
 
 // routeAccountNotification dispatches account notifications to waiters.
 func (c *Client) routeAccountNotification(method string, params json.RawMessage) {
@@ -217,6 +227,19 @@ func (c *Client) routeAccountNotification(method string, params json.RawMessage)
 		}
 		c.mu.Lock()
 		waiters := append([]chan *LoginCompletedParams(nil), c.logins[payload.LoginID]...)
+		if len(waiters) == 0 && payload.LoginID != "" {
+			// Keep it for an AwaitLogin that has not started yet. Logins
+			// without an id are not kept: a later wait could not tell a
+			// stale completion from its own.
+			if len(c.loginResults) >= maxEarlyLogins {
+				// Make room by dropping one; which one does not matter.
+				for id := range c.loginResults {
+					delete(c.loginResults, id)
+					break
+				}
+			}
+			c.loginResults[payload.LoginID] = &payload
+		}
 		c.mu.Unlock()
 		for _, waiter := range waiters {
 			select {

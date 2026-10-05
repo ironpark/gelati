@@ -31,7 +31,7 @@ func TestStartThread(t *testing.T) {
 		if params.Model != "gpt-5.6-terra" || params.Cwd != "/Users/me/project" {
 			t.Errorf("params = %+v", params)
 		}
-		if params.ApprovalPolicy != ApprovalNever || params.Sandbox != SandboxTypeWorkspaceWrite {
+		if params.ApprovalPolicy != ApprovalNever || params.Sandbox != SandboxModeWorkspaceWrite {
 			t.Errorf("params = %+v", params)
 		}
 		if params.ServiceName != "mohae" {
@@ -43,12 +43,14 @@ func TestStartThread(t *testing.T) {
 	})
 
 	thread, err := client.StartThread(context.Background(), StartThreadParams{
-		Model:          "gpt-5.6-terra",
-		Cwd:            "/Users/me/project",
-		ApprovalPolicy: ApprovalNever,
-		Sandbox:        SandboxTypeWorkspaceWrite,
-		Personality:    "friendly",
-		ServiceName:    "mohae",
+		ThreadSettings: ThreadSettings{
+			Model:          "gpt-5.6-terra",
+			Cwd:            "/Users/me/project",
+			ApprovalPolicy: ApprovalNever,
+			Sandbox:        SandboxModeWorkspaceWrite,
+		},
+		Personality: "friendly",
+		ServiceName: "mohae",
 	})
 	<-done
 	if err != nil {
@@ -355,7 +357,7 @@ func TestThreadNotificationRouting(t *testing.T) {
 		"status":   map[string]any{"type": "active", "activeFlags": []string{"waitingOnApproval"}},
 	})
 	server.notify(MethodThreadArchived, map[string]any{"threadId": "thr_1"})
-	server.notify(MethodThreadNameUpdated, map[string]any{"threadId": "thr_1", "name": "Renamed"})
+	server.notify(MethodThreadNameUpdated, map[string]any{"threadId": "thr_1", "threadName": "Renamed"})
 	// An event for a thread nobody subscribed to must be dropped silently.
 	server.notify(MethodThreadClosed, map[string]any{"threadId": "thr_unknown"})
 

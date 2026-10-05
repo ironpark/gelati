@@ -122,14 +122,23 @@ func (c *Client) ThreadEvents(threadID string) <-chan ThreadEvent {
 	return nil
 }
 
-// routeThreadNotification delivers a thread lifecycle notification to its
-// subscriber.
-func (c *Client) routeThreadNotification(method string, params json.RawMessage, threadID string) {
+// isThreadMethod reports whether method is a thread lifecycle notification
+// delivered on ThreadEvents.
+func isThreadMethod(method string) bool {
 	switch method {
 	case MethodThreadStarted, MethodThreadStatusChanged, MethodThreadArchived,
 		MethodThreadUnarchived, MethodThreadDeleted, MethodThreadClosed,
 		MethodThreadNameUpdated, MethodServerRequestResolved:
+		return true
 	default:
+		return false
+	}
+}
+
+// routeThreadNotification delivers a thread lifecycle notification to its
+// subscriber.
+func (c *Client) routeThreadNotification(method string, params json.RawMessage, threadID string) {
+	if !isThreadMethod(method) {
 		return
 	}
 	sub := c.lookup(threadID)

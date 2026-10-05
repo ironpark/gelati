@@ -48,9 +48,9 @@ func TestReadAccountVariants(t *testing.T) {
 		},
 		{
 			name:   "bedrock",
-			result: `{"account":{"type":"amazonBedrock","credentialSource":"awsManaged"},"requiresOpenaiAuth":false}`,
+			result: `{"account":{"type":"amazonBedrock","usesCodexManagedCredentials":true},"requiresOpenaiAuth":false}`,
 			check: func(t *testing.T, info *AccountInfo) {
-				if info.Account.CredentialSource != CredentialSourceAWSManaged || info.RequiresOpenaiAuth {
+				if !info.Account.UsesCodexManagedCredentials || info.RequiresOpenaiAuth {
 					t.Fatalf("info = %+v", info)
 				}
 			},

@@ -27,6 +27,12 @@ const (
 	EventPlanUpdated        EventKind = "planUpdated"
 	EventDiffUpdated        EventKind = "diffUpdated"
 	EventTokenUsageUpdated  EventKind = "tokenUsageUpdated"
+	// EventError reports a turn error; WillRetry tells whether the turn
+	// continues.
+	EventError EventKind = "error"
+	// EventNotification carries any other turn-scoped notification, such as
+	// thread/compacted or model/rerouted, with only Method and Params set.
+	EventNotification EventKind = "notification"
 )
 
 // Event is one streamed update for a turn.
@@ -45,11 +51,9 @@ type Event struct {
 	Item *ThreadItem
 	// ItemID identifies the item a delta appends to.
 	ItemID string
-	// Delta is the appended text for the delta events, or the decoded output
-	// chunk for EventCommandOutputDelta.
+	// Delta is the appended text for the delta events, including
+	// EventCommandOutputDelta.
 	Delta string
-	// Stream is "stdout" or "stderr" for EventCommandOutputDelta.
-	Stream string
 	// SummaryIndex increments when a new reasoning summary section opens.
 	SummaryIndex int
 	// Reasoning reports whether a reasoning delta is a summary or raw text.
@@ -62,6 +66,9 @@ type Event struct {
 	// Usage is set for EventTokenUsageUpdated. Total is cumulative for the
 	// thread; see ThreadTokenUsage for what one update covers.
 	Usage *ThreadTokenUsage
+	// Error and WillRetry are set for EventError.
+	Error     *TurnError
+	WillRetry bool
 	// Params is the raw notification payload.
 	Params json.RawMessage
 }
@@ -80,6 +87,8 @@ type TurnStream struct {
 	finished bool
 	final    *Turn
 	err      error
+	items    []ThreadItem      // completed items, for Result
+	usage    *ThreadTokenUsage // latest usage update, for Result
 
 	doneOnce  sync.Once
 	closeOnce sync.Once
@@ -191,6 +200,16 @@ func (s *threadSubscription) bindTurnID(stream *TurnStream, turnID string) {
 	stream.mu.Unlock()
 }
 
+// endStream records the stream's terminal state, drops it, and closes its
+// event channel. Only the pump calls it, since the pump is the only sender on
+// that channel; other goroutines call finish, and the pump ends the stream the
+// next time it sees it. finish keeps the first terminal state.
+func (s *threadSubscription) endStream(stream *TurnStream, final *Turn, err error) {
+	stream.finish(final, err)
+	s.removeStream(stream)
+	stream.closeEvents()
+}
+
 // removeStream drops a stream from the subscription.
 func (s *threadSubscription) removeStream(target *TurnStream) {
 	s.mu.Lock()
@@ -260,8 +279,7 @@ func (s *threadSubscription) enqueue(c *Client, note queuedNotification) {
 func (s *threadSubscription) pump(c *Client) {
 	defer func() {
 		for _, stream := range s.activeStreams() {
-			stream.finish(nil, ErrClosed)
-			stream.closeEvents()
+			s.endStream(stream, nil, ErrClosed)
 		}
 	}()
 	for {
@@ -292,11 +310,11 @@ func (c *Client) deliverTurnEvent(sub *threadSubscription, note queuedNotificati
 	if event.TurnID == "" {
 		event.TurnID = stream.TurnID()
 	}
+	stream.record(event)
 
 	if !stream.deliver(event, sub.quit) {
-		// The consumer abandoned the stream or the client is shutting down.
-		sub.removeStream(stream)
-		stream.closeEvents()
+		// The consumer abandoned the stream or the subscription closed.
+		sub.endStream(stream, nil, ErrClosed)
 		return
 	}
 	if event.Kind == EventTurnStarted {
@@ -306,24 +324,23 @@ func (c *Client) deliverTurnEvent(sub *threadSubscription, note queuedNotificati
 	if event.Kind == EventTurnCompleted {
 		// Pending approval prompts for this turn can no longer be answered.
 		c.pending.cancelTurn(turnKey(event.ThreadID, event.TurnID))
-		stream.finish(event.Turn, nil)
-		sub.removeStream(stream)
-		stream.closeEvents()
+		sub.endStream(stream, event.Turn, nil)
 	}
 }
 
-// turnMethods is the set of notifications routed to turn streams.
-func isTurnMethod(method string) bool {
+// isTurnNotification reports whether a notification belongs on a turn
+// stream: the modeled turn and item methods, and any other notification that
+// names a turn, except the thread lifecycle ones.
+func isTurnNotification(method, turnID string) bool {
 	switch method {
 	case MethodTurnStarted, MethodTurnCompleted, MethodTurnDiff, MethodTurnPlan,
 		MethodItemStarted, MethodItemCompleted, MethodAgentMessageDelta,
 		MethodPlanDelta, MethodReasoningSummaryTextDelta,
 		MethodReasoningSummaryPartAdded, MethodReasoningTextDelta,
-		MethodCommandExecutionOutputDelta, MethodTokenUsageUpdated:
+		MethodCommandExecutionOutputDelta, MethodTokenUsageUpdated, MethodError:
 		return true
-	default:
-		return false
 	}
+	return turnID != "" && !isThreadMethod(method)
 }
 
 // buildEvent decodes a notification into a typed event.
@@ -387,8 +404,7 @@ func buildEvent(note queuedNotification) (Event, bool) {
 		}
 		event.Kind = EventCommandOutputDelta
 		event.ItemID = payload.ItemID
-		event.Stream = payload.Stream
-		event.Delta = payload.Text()
+		event.Delta = payload.Delta
 	case MethodTurnPlan:
 		var payload TurnPlanParams
 		if err := json.Unmarshal(note.params, &payload); err != nil {
@@ -412,8 +428,16 @@ func buildEvent(note queuedNotification) (Event, bool) {
 		event.Kind = EventTokenUsageUpdated
 		usage := payload.Usage
 		event.Usage = &usage
+	case MethodError:
+		var payload ErrorParams
+		if err := json.Unmarshal(note.params, &payload); err != nil {
+			return event, false
+		}
+		event.Kind = EventError
+		event.Error = &payload.Error
+		event.WillRetry = payload.WillRetry
 	default:
-		return event, false
+		event.Kind = EventNotification
 	}
 	return event, true
 }
@@ -421,7 +445,7 @@ func buildEvent(note queuedNotification) (Event, bool) {
 // routeTurnNotification queues a turn or item notification for its thread
 // pump. It reports whether the notification was a turn-scoped one.
 func (c *Client) routeTurnNotification(method string, params json.RawMessage, threadID, turnID string) bool {
-	if !isTurnMethod(method) {
+	if !isTurnNotification(method, turnID) {
 		return false
 	}
 	sub := c.lookup(threadID)
@@ -455,21 +479,29 @@ func (c *Client) soleSubscription() *threadSubscription {
 // StartTurn adds user input to a thread, begins Codex generation, and returns
 // a stream of the turn's events. Close the stream or drain it to completion.
 func (c *Client) StartTurn(ctx context.Context, threadID string, input []InputItem, opts *TurnOptions) (*TurnStream, error) {
+	return c.startTurn(ctx, StartTurnParams{ThreadID: threadID, Input: input}, opts)
+}
+
+// startTurn sends turn/start, with opts applied to params, after registering
+// a stream so events that race ahead of the response are not lost.
+func (c *Client) startTurn(ctx context.Context, params StartTurnParams, opts *TurnOptions) (*TurnStream, error) {
+	if opts != nil {
+		params.TurnOptions = *opts
+	}
+	threadID := params.ThreadID
 	sub := c.subscribe(threadID)
 	if sub == nil {
 		return nil, errors.New("codex: StartTurn requires a thread id")
 	}
 	stream := sub.newStream(c, threadID)
 
-	params := StartTurnParams{ThreadID: threadID, Input: input}
-	if opts != nil {
-		params.TurnOptions = *opts
-	}
 	var result StartTurnResult
 	if err := c.call(ctx, "turn/start", params, &result); err != nil {
+		// Only the pump closes the event channel. Nobody holds this stream,
+		// so finishing it is enough; a pump delivering to it sees it is done
+		// and ends it.
 		sub.removeStream(stream)
 		stream.finish(nil, err)
-		stream.closeEvents()
 		return nil, err
 	}
 	sub.bindTurnID(stream, result.Turn.ID)

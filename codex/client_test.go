@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -129,8 +131,11 @@ func TestClientDefaultsClientName(t *testing.T) {
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		t.Fatalf("params: %v", err)
 	}
-	if params.ClientInfo.Name != "mohae" {
-		t.Fatalf("default client name = %q", params.ClientInfo.Name)
+	if params.ClientInfo.Name != DefaultClientName || params.ClientInfo.Version == "" {
+		t.Fatalf("default client info = %+v", params.ClientInfo)
+	}
+	if params.Capabilities == nil || !params.Capabilities.ExperimentalApi {
+		t.Fatalf("default capabilities = %+v", params.Capabilities)
 	}
 	server.respond(req, defaultInitializeResult)
 }
@@ -244,5 +249,19 @@ func TestClientCloseStopsGoroutines(t *testing.T) {
 	}
 	if got := runtime.NumGoroutine(); got > before+4 {
 		t.Fatalf("goroutines leaked: before=%d after=%d", before, got)
+	}
+}
+
+func TestProcessExitReportsStderr(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("needs sh")
+	}
+	_, err := New(context.Background(), Options{
+		Binary: "sh",
+		Args:   []string{"-c", "echo boom >&2; exit 3"},
+		Stderr: io.Discard,
+	})
+	if err == nil || !strings.Contains(err.Error(), "exit status 3") || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("New = %v, want the exit status and stderr tail", err)
 	}
 }

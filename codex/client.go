@@ -1,12 +1,17 @@
 package codex
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"sync"
+
+	"github.com/ironpark/gelati/internal/buildinfo"
+	"github.com/ironpark/gelati/internal/tailbuf"
 )
 
 // DefaultBinary is the executable looked up on PATH when Options.Binary is
@@ -16,22 +21,39 @@ const DefaultBinary = "codex"
 // defaultEventBuffer bounds each turn's event channel.
 const defaultEventBuffer = 64
 
+// stderrTailLines is how much subprocess stderr Err reports after an exit.
+const stderrTailLines = 40
+
+// Default client identity, sent when Options.ClientInfo.Name is empty.
+const (
+	DefaultClientName  = "gelati_go_sdk"
+	DefaultClientTitle = "Gelati Go SDK"
+)
+
 // Options configures a Client.
 type Options struct {
 	// Binary is the codex executable; it defaults to DefaultBinary on PATH.
 	Binary string
-	// Args replaces the default subcommand arguments ("app-server").
+	// Args replaces the default arguments, ConfigOverrides included
+	// ("--config", k=v, ..., "app-server").
 	Args []string
+	// ConfigOverrides are "key=value" config.toml overrides, each passed as
+	// --config before the subcommand; values parse as TOML.
+	ConfigOverrides []string
 	// Env replaces the child process environment; nil inherits the parent's.
 	Env []string
 	// Dir is the working directory of the subprocess.
 	Dir string
-	// Stderr receives the subprocess stderr; it defaults to os.Stderr.
+	// Stderr receives the subprocess stderr; it defaults to os.Stderr. The
+	// last lines are also kept for the error Err reports after an exit.
 	Stderr io.Writer
 
-	// ClientInfo identifies the integration during initialize.
+	// ClientInfo identifies the integration during initialize. An empty Name
+	// sends DefaultClientName, DefaultClientTitle, and this module's version.
 	ClientInfo ClientInfo
-	// Capabilities are the optional client capabilities sent at initialize.
+	// Capabilities are the client capabilities sent at initialize. Nil opts
+	// into the experimental API, as upstream does; several turn/start fields
+	// (TurnTrigger, ServiceTierForTurn, ExternalMessage) need it.
 	Capabilities *ClientCapabilities
 
 	// Approvals answers server-initiated approval requests. When nil, command
@@ -67,6 +89,8 @@ type Client struct {
 	initialized bool
 	threads     map[string]*threadSubscription
 	logins      map[string][]chan *LoginCompletedParams
+	// loginResults holds completions that arrived with no waiter.
+	loginResults map[string]*LoginCompletedParams
 }
 
 // New spawns `codex app-server`, performs the initialize/initialized
@@ -79,9 +103,13 @@ func New(ctx context.Context, opts Options) (*Client, error) {
 	}
 	args := opts.Args
 	if args == nil {
-		args = []string{"app-server"}
+		for _, kv := range opts.ConfigOverrides {
+			args = append(args, "--config", kv)
+		}
+		args = append(args, "app-server")
 	}
-	proc, err := startProcess(binary, args, opts.Env, opts.Dir, opts.Stderr)
+	stderr := &tailbuf.Buffer{Tee: cmp.Or[io.Writer](opts.Stderr, os.Stderr), Max: stderrTailLines}
+	proc, err := startProcess(binary, args, opts.Env, opts.Dir, stderr)
 	if err != nil {
 		return nil, err
 	}
@@ -101,6 +129,8 @@ func dial(ctx context.Context, opts Options, in io.Reader, out io.Writer, releas
 		pending: newPendingRequests(),
 		threads: make(map[string]*threadSubscription),
 		logins:  make(map[string][]chan *LoginCompletedParams),
+
+		loginResults: make(map[string]*LoginCompletedParams),
 	}
 	c.accounts = make(chan AccountUpdate, c.eventBuffer())
 	c.tr = newTransport(transportConfig{
@@ -128,13 +158,19 @@ func dial(ctx context.Context, opts Options, in io.Reader, out io.Writer, releas
 func (c *Client) handshake(ctx context.Context) error {
 	params := InitializeParams{ClientInfo: c.opts.ClientInfo, Capabilities: c.opts.Capabilities}
 	if params.ClientInfo.Name == "" {
-		params.ClientInfo.Name = "mohae"
+		params.ClientInfo = ClientInfo{Name: DefaultClientName, Title: DefaultClientTitle}
+	}
+	if params.ClientInfo.Version == "" {
+		params.ClientInfo.Version = buildinfo.Version()
+	}
+	if params.Capabilities == nil {
+		params.Capabilities = &ClientCapabilities{ExperimentalApi: true}
 	}
 	var result InitializeResult
 	if err := c.tr.Call(ctx, "initialize", params, &result); err != nil {
 		return fmt.Errorf("codex: initialize: %w", err)
 	}
-	if err := c.tr.Notify("initialized", struct{}{}); err != nil {
+	if err := c.tr.Notify("initialized", nil); err != nil {
 		return fmt.Errorf("codex: initialized: %w", err)
 	}
 
@@ -162,6 +198,13 @@ func (c *Client) Err() error { return c.tr.Err() }
 // Close terminates the subprocess and releases every waiting caller. It is
 // safe to call more than once.
 func (c *Client) Close() error { return c.tr.Close() }
+
+// Call sends any app-server request and decodes its result into result,
+// which may be nil. Use it for methods this package does not wrap. Errors
+// from the server are *RPCError.
+func (c *Client) Call(ctx context.Context, method string, params, result any) error {
+	return c.call(ctx, method, params, result)
+}
 
 // call performs a JSON-RPC request, rejecting use before the handshake
 // completes or after the client is closed.

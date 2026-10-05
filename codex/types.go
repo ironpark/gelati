@@ -1,7 +1,6 @@
 package codex
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 )
@@ -15,7 +14,7 @@ import (
 type ClientInfo struct {
 	Name    string `json:"name"`
 	Title   string `json:"title,omitempty"`
-	Version string `json:"version,omitempty"`
+	Version string `json:"version"`
 }
 
 // ClientCapabilities are the optional capabilities advertised at initialize.
@@ -43,6 +42,8 @@ type InitializeParams struct {
 type InitializeResult struct {
 	// UserAgent is the user agent the server presents to upstream services.
 	UserAgent string `json:"userAgent"`
+	// CodexHome is the absolute path of the server's $CODEX_HOME.
+	CodexHome string `json:"codexHome,omitempty"`
 	// PlatformFamily describes the runtime target family.
 	PlatformFamily string `json:"platformFamily"`
 	// PlatformOs describes the runtime operating system.
@@ -53,16 +54,89 @@ type InitializeResult struct {
 // Policies
 // ---------------------------------------------------------------------------
 
-// ApprovalPolicy controls when Codex asks the client for approval.
+// ApprovalPolicy controls when Codex asks for approval before escalating.
 type ApprovalPolicy string
 
-// Approval policies accepted by thread/start and turn/start.
+// Approval policies accepted by thread/start, thread/resume, thread/fork, and
+// turn/start.
 const (
-	ApprovalNever         ApprovalPolicy = "never"
-	ApprovalOnRequest     ApprovalPolicy = "onRequest"
-	ApprovalOnFailure     ApprovalPolicy = "onFailure"
-	ApprovalUnlessTrusted ApprovalPolicy = "unlessTrusted"
+	// ApprovalUntrusted asks before running anything outside the trusted set.
+	ApprovalUntrusted ApprovalPolicy = "untrusted"
+	// ApprovalOnRequest lets the model decide when to ask.
+	ApprovalOnRequest ApprovalPolicy = "on-request"
+	// ApprovalNever never asks; escalations fail instead.
+	ApprovalNever ApprovalPolicy = "never"
 )
+
+// ApprovalsReviewer selects who reviews approval requests.
+type ApprovalsReviewer string
+
+// Approval reviewers.
+const (
+	// ReviewerUser routes approval requests to the client (the default).
+	ReviewerUser ApprovalsReviewer = "user"
+	// ReviewerAutoReview routes them to a reviewing subagent that approves or
+	// denies on a risk basis.
+	ReviewerAutoReview ApprovalsReviewer = "auto_review"
+)
+
+// ApprovalMode is a high-level approval preset, mirroring upstream's
+// ApprovalMode. Settings expands it into the approvalPolicy and
+// approvalsReviewer pair the protocol takes.
+type ApprovalMode string
+
+// Approval presets.
+const (
+	// ApprovalModeAutoReview asks on request and lets the auto-review subagent
+	// decide. It is upstream's default for new threads.
+	ApprovalModeAutoReview ApprovalMode = "auto_review"
+	// ApprovalModeDenyAll never asks, so every escalation is denied.
+	ApprovalModeDenyAll ApprovalMode = "deny_all"
+)
+
+// Settings returns the approval policy and reviewer for the preset. The
+// reviewer is empty for ApprovalModeDenyAll and for unknown presets, and the
+// policy is empty for unknown presets.
+func (m ApprovalMode) Settings() (ApprovalPolicy, ApprovalsReviewer) {
+	switch m {
+	case ApprovalModeAutoReview:
+		return ApprovalOnRequest, ReviewerAutoReview
+	case ApprovalModeDenyAll:
+		return ApprovalNever, ""
+	default:
+		return "", ""
+	}
+}
+
+// SandboxMode is the shorthand sandbox preset accepted by thread/start,
+// thread/resume, and thread/fork.
+type SandboxMode string
+
+// Sandbox presets.
+const (
+	// SandboxModeReadOnly allows reads but no writes.
+	SandboxModeReadOnly SandboxMode = "read-only"
+	// SandboxModeWorkspaceWrite also allows writes inside the workspace and
+	// configured writable roots.
+	SandboxModeWorkspaceWrite SandboxMode = "workspace-write"
+	// SandboxModeDangerFullAccess removes filesystem restrictions.
+	SandboxModeDangerFullAccess SandboxMode = "danger-full-access"
+)
+
+// Policy returns the turn/start sandbox policy equivalent to the preset, or
+// nil for an unknown preset.
+func (m SandboxMode) Policy() *SandboxPolicy {
+	switch m {
+	case SandboxModeReadOnly:
+		return &SandboxPolicy{Type: SandboxTypeReadOnly}
+	case SandboxModeWorkspaceWrite:
+		return &SandboxPolicy{Type: SandboxTypeWorkspaceWrite}
+	case SandboxModeDangerFullAccess:
+		return SandboxDangerFullAccess()
+	default:
+		return nil
+	}
+}
 
 // Sandbox policy type discriminators.
 const (
@@ -78,58 +152,33 @@ const (
 	NetworkAccessEnabled    = "enabled"
 )
 
-// ReadOnlyAccess describes which roots a sandboxed session may read.
-type ReadOnlyAccess struct {
-	// Type is "fullAccess" or "restricted".
-	Type string `json:"type"`
-	// IncludePlatformDefaults appends a curated platform-default policy for
-	// restricted-read sessions.
-	IncludePlatformDefaults bool `json:"includePlatformDefaults,omitempty"`
-	// ReadableRoots lists the absolute roots readable under "restricted".
-	ReadableRoots []string `json:"readableRoots,omitempty"`
-}
-
-// FullReadAccess returns the default unrestricted read access.
-func FullReadAccess() *ReadOnlyAccess { return &ReadOnlyAccess{Type: "fullAccess"} }
-
-// RestrictedReadAccess returns read access limited to the given roots.
-func RestrictedReadAccess(includePlatformDefaults bool, roots ...string) *ReadOnlyAccess {
-	return &ReadOnlyAccess{
-		Type:                    "restricted",
-		IncludePlatformDefaults: includePlatformDefaults,
-		ReadableRoots:           roots,
-	}
-}
-
-// SandboxPolicy is the tagged sandbox configuration shared by thread/start,
-// turn/start, and command/exec.
+// SandboxPolicy is the tagged sandbox configuration accepted by turn/start.
+// Thread lifecycle requests take a SandboxMode instead.
 type SandboxPolicy struct {
 	// Type is one of the SandboxType* constants.
 	Type string `json:"type"`
-	// Access applies to the readOnly policy.
-	Access *ReadOnlyAccess `json:"access,omitempty"`
 	// WritableRoots applies to the workspaceWrite policy.
 	WritableRoots []string `json:"writableRoots,omitempty"`
-	// ReadOnlyAccess applies to the workspaceWrite policy.
-	ReadOnlyAccess *ReadOnlyAccess `json:"readOnlyAccess,omitempty"`
-	// NetworkAccess is a bool for workspaceWrite and one of the
+	// NetworkAccess is a bool for readOnly and workspaceWrite and one of the
 	// NetworkAccess* strings for externalSandbox.
 	NetworkAccess any `json:"networkAccess,omitempty"`
+	// ExcludeSlashTmp and ExcludeTmpdirEnvVar keep /tmp and $TMPDIR out of
+	// the workspaceWrite writable set.
+	ExcludeSlashTmp     bool `json:"excludeSlashTmp,omitempty"`
+	ExcludeTmpdirEnvVar bool `json:"excludeTmpdirEnvVar,omitempty"`
 }
 
-// SandboxReadOnly returns a readOnly sandbox policy. Pass nil access for the
-// server default (full read access).
-func SandboxReadOnly(access *ReadOnlyAccess) *SandboxPolicy {
-	return &SandboxPolicy{Type: SandboxTypeReadOnly, Access: access}
+// SandboxReadOnly returns a readOnly sandbox policy.
+func SandboxReadOnly(networkAccess bool) *SandboxPolicy {
+	return &SandboxPolicy{Type: SandboxTypeReadOnly, NetworkAccess: networkAccess}
 }
 
 // SandboxWorkspaceWrite returns a workspaceWrite sandbox policy.
-func SandboxWorkspaceWrite(writableRoots []string, networkAccess bool, readOnlyAccess *ReadOnlyAccess) *SandboxPolicy {
+func SandboxWorkspaceWrite(writableRoots []string, networkAccess bool) *SandboxPolicy {
 	return &SandboxPolicy{
-		Type:           SandboxTypeWorkspaceWrite,
-		WritableRoots:  writableRoots,
-		ReadOnlyAccess: readOnlyAccess,
-		NetworkAccess:  networkAccess,
+		Type:          SandboxTypeWorkspaceWrite,
+		WritableRoots: writableRoots,
+		NetworkAccess: networkAccess,
 	}
 }
 
@@ -258,8 +307,23 @@ type Thread struct {
 	ForkedFromID string `json:"forkedFromId,omitempty"`
 	// ModelProvider is the provider backing the thread, such as "openai".
 	ModelProvider string `json:"modelProvider,omitempty"`
-	// IsPinned is the persisted pin state.
-	IsPinned bool `json:"isPinned,omitempty"`
+	// Model is the configured model when loaded, otherwise the latest
+	// persisted one.
+	Model string `json:"model,omitempty"`
+	// ReasoningEffort is the thread's reasoning effort, when known.
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	// Cwd is the thread's working directory.
+	Cwd string `json:"cwd,omitempty"`
+	// CliVersion is the version of the CLI that created the thread.
+	CliVersion string `json:"cliVersion,omitempty"`
+	// Path is the thread's location on disk (unstable upstream).
+	Path string `json:"path,omitempty"`
+	// ParentThreadID is set for threads spawned by another thread.
+	ParentThreadID string `json:"parentThreadId,omitempty"`
+	// ThreadSource is the client-supplied source classification.
+	ThreadSource string `json:"threadSource,omitempty"`
+	// Source is the session source the server recorded.
+	Source json.RawMessage `json:"source,omitempty"`
 	// CreatedAt and UpdatedAt are Unix timestamps in seconds.
 	CreatedAt int64 `json:"createdAt,omitempty"`
 	UpdatedAt int64 `json:"updatedAt,omitempty"`
@@ -269,8 +333,6 @@ type Thread struct {
 	GitInfo *GitInfo `json:"gitInfo,omitempty"`
 	// Turns is populated when the caller asked for turn history.
 	Turns []Turn `json:"turns,omitempty"`
-	// InstructionSources lists loaded instruction-file paths.
-	InstructionSources []string `json:"instructionSources,omitempty"`
 }
 
 // Turn statuses reported by turn/start and turn/completed.
@@ -284,20 +346,23 @@ const (
 // Turn is a single user request and the agent work that follows.
 type Turn struct {
 	ID string `json:"id"`
-	// ThreadID is present on turn payloads that carry it.
-	ThreadID string `json:"threadId,omitempty"`
 	// Status is one of TurnInProgress, TurnCompleted, TurnInterrupted, or
 	// TurnFailed.
 	Status string `json:"status"`
-	// Items holds the turn's items. turn/diff/updated and turn/plan/updated
-	// carry an empty list; use item/* notifications as the source of truth.
+	// Items holds the turn's items. turn/started and turn/completed carry an
+	// empty list; use item/* notifications as the source of truth.
 	Items []ThreadItem `json:"items,omitempty"`
-	// Error is set when Status is TurnFailed.
+	// ItemsView reports how much of Items was loaded: "notLoaded",
+	// "summary", or "full".
+	ItemsView string `json:"itemsView,omitempty"`
+	// Error is set when Status is TurnFailed, and sometimes when it is
+	// TurnInterrupted.
 	Error *TurnError `json:"error,omitempty"`
-	// Usage is the token usage recorded for the turn, when reported. The
-	// app-server does not send it on turn/completed as of codex-cli 0.150;
-	// thread/tokenUsage/updated is where usage actually arrives.
-	Usage *TokenUsage `json:"usage,omitempty"`
+	// StartedAt and CompletedAt are Unix timestamps in seconds, when known.
+	StartedAt   *int64 `json:"startedAt,omitempty"`
+	CompletedAt *int64 `json:"completedAt,omitempty"`
+	// DurationMs is the time between start and completion, when known.
+	DurationMs *int64 `json:"durationMs,omitempty"`
 }
 
 // IsTerminal reports whether the turn has reached a final status.
@@ -313,8 +378,10 @@ func (t *Turn) IsTerminal() bool {
 // TurnError describes why a turn failed.
 type TurnError struct {
 	Message string `json:"message"`
-	// CodexErrorInfo is a tagged union whose "type" is one of the ErrorInfo*
-	// constants; it can also carry an httpStatusCode.
+	// CodexErrorInfo classifies the failure. It is either a bare string, one
+	// of the ErrorInfo* constants, or an object with a single ErrorInfo* key
+	// whose value can carry an httpStatusCode. Use Kind and HTTPStatusCode
+	// rather than decoding it by hand.
 	CodexErrorInfo json.RawMessage `json:"codexErrorInfo,omitempty"`
 	// AdditionalDetails carries free-form server detail.
 	AdditionalDetails json.RawMessage `json:"additionalDetails,omitempty"`
@@ -334,53 +401,59 @@ func (e *TurnError) Error() string {
 	return "codex: turn failed: " + e.Message
 }
 
-// Kind returns the codexErrorInfo discriminator, which the server sends either
-// as a bare string or as an object with a "type" field. It returns the empty
+// Kind returns the codexErrorInfo discriminator: the bare string, or the
+// single key of the externally tagged object form. It returns the empty
 // string when no error info is present.
 func (e *TurnError) Kind() string {
-	if e == nil || len(e.CodexErrorInfo) == 0 {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(e.CodexErrorInfo, &s); err == nil {
-		return s
-	}
-	var obj struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal(e.CodexErrorInfo, &obj); err == nil {
-		return obj.Type
-	}
-	return ""
+	kind, _ := e.errorInfo()
+	return kind
 }
 
 // HTTPStatusCode returns the upstream HTTP status forwarded by the server, if
 // any.
 func (e *TurnError) HTTPStatusCode() (int, bool) {
-	if e == nil || len(e.CodexErrorInfo) == 0 {
+	_, detail := e.errorInfo()
+	if len(detail) == 0 {
 		return 0, false
 	}
 	var obj struct {
 		HTTPStatusCode *int `json:"httpStatusCode"`
 	}
-	if err := json.Unmarshal(e.CodexErrorInfo, &obj); err != nil || obj.HTTPStatusCode == nil {
+	if err := json.Unmarshal(detail, &obj); err != nil || obj.HTTPStatusCode == nil {
 		return 0, false
 	}
 	return *obj.HTTPStatusCode, true
 }
 
+// errorInfo splits codexErrorInfo into its discriminator and, for the object
+// form {"<kind>": {...}}, the variant's payload.
+func (e *TurnError) errorInfo() (string, json.RawMessage) {
+	if e == nil || len(e.CodexErrorInfo) == 0 {
+		return "", nil
+	}
+	var s string
+	if err := json.Unmarshal(e.CodexErrorInfo, &s); err == nil {
+		return s, nil
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(e.CodexErrorInfo, &obj); err != nil || len(obj) != 1 {
+		return "", nil
+	}
+	for kind, detail := range obj {
+		return kind, detail
+	}
+	return "", nil
+}
+
 // TokenUsage reports token consumption for a thread or turn. InputTokens
 // includes CachedInputTokens rather than excluding it.
 type TokenUsage struct {
-	InputTokens         int64 `json:"inputTokens,omitempty"`
-	CachedInputTokens   int64 `json:"cachedInputTokens,omitempty"`
-	CacheWriteTokens    int64 `json:"cacheWriteInputTokens,omitempty"`
-	OutputTokens        int64 `json:"outputTokens,omitempty"`
-	ReasoningTokens     int64 `json:"reasoningOutputTokens,omitempty"`
-	TotalTokens         int64 `json:"totalTokens,omitempty"`
-	ContextWindow       int64 `json:"contextWindow,omitempty"`
-	ContextWindowUsed   int64 `json:"contextWindowUsed,omitempty"`
-	ContextWindowRemain int64 `json:"contextWindowRemaining,omitempty"`
+	InputTokens       int64 `json:"inputTokens,omitempty"`
+	CachedInputTokens int64 `json:"cachedInputTokens,omitempty"`
+	CacheWriteTokens  int64 `json:"cacheWriteInputTokens,omitempty"`
+	OutputTokens      int64 `json:"outputTokens,omitempty"`
+	ReasoningTokens   int64 `json:"reasoningOutputTokens,omitempty"`
+	TotalTokens       int64 `json:"totalTokens,omitempty"`
 }
 
 // ThreadTokenUsage is the tokenUsage object carried by
@@ -425,6 +498,9 @@ const (
 	ItemEnteredReviewMode = "enteredReviewMode"
 	ItemExitedReviewMode  = "exitedReviewMode"
 	ItemContextCompaction = "contextCompaction"
+	ItemDynamicToolCall   = "dynamicToolCall"
+	ItemCollabAgentCall   = "collabAgentToolCall"
+	ItemImageView         = "imageView"
 )
 
 // Item is one unit of input or output inside a turn.
@@ -446,9 +522,15 @@ type UserMessageItem struct {
 type AgentMessageItem struct {
 	ID   string `json:"id"`
 	Text string `json:"text"`
-	// Phase uses Responses API wire values ("commentary", "final_answer").
+	// Phase is PhaseCommentary, PhaseFinalAnswer, or empty.
 	Phase string `json:"phase,omitempty"`
 }
+
+// Agent message phases, in Responses API wire form.
+const (
+	PhaseCommentary  = "commentary"
+	PhaseFinalAnswer = "final_answer"
+)
 
 // ReasoningItem holds streamed reasoning summaries and raw reasoning blocks.
 type ReasoningItem struct {
@@ -477,12 +559,26 @@ type CommandExecutionItem struct {
 	DurationMs       *int64          `json:"durationMs,omitempty"`
 }
 
+// Patch change kinds.
+const (
+	PatchAdd    = "add"
+	PatchDelete = "delete"
+	PatchUpdate = "update"
+)
+
+// PatchChangeKind is the kind of one file edit.
+type PatchChangeKind struct {
+	// Type is PatchAdd, PatchDelete, or PatchUpdate.
+	Type string `json:"type"`
+	// MovePath is the destination of a renaming update.
+	MovePath string `json:"move_path,omitempty"`
+}
+
 // FileChange is one proposed edit inside a FileChangeItem.
 type FileChange struct {
-	Path string `json:"path"`
-	// Kind is the edit kind, such as "add", "update", or "delete".
-	Kind string `json:"kind"`
-	Diff string `json:"diff,omitempty"`
+	Path string          `json:"path"`
+	Kind PatchChangeKind `json:"kind"`
+	Diff string          `json:"diff"`
 }
 
 // FileChangeItem describes proposed edits.
@@ -502,7 +598,46 @@ type McpToolCallItem struct {
 	AppContext json.RawMessage `json:"appContext,omitempty"`
 	PluginID   string          `json:"pluginId,omitempty"`
 	Result     json.RawMessage `json:"result,omitempty"`
-	Error      string          `json:"error,omitempty"`
+	// Error is set when the call failed.
+	Error      *McpToolCallError `json:"error,omitempty"`
+	DurationMs *int64            `json:"durationMs,omitempty"`
+}
+
+// McpToolCallError reports a failed MCP tool call.
+type McpToolCallError struct {
+	Message string `json:"message"`
+}
+
+// DynamicToolCallItem is a call to a client-provided dynamic tool.
+type DynamicToolCallItem struct {
+	ID        string          `json:"id"`
+	Tool      string          `json:"tool"`
+	Namespace string          `json:"namespace,omitempty"`
+	Status    string          `json:"status"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	// ContentItems is the tool output, once reported.
+	ContentItems json.RawMessage `json:"contentItems,omitempty"`
+	Success      *bool           `json:"success,omitempty"`
+	DurationMs   *int64          `json:"durationMs,omitempty"`
+}
+
+// CollabAgentToolCallItem is a call that spawns or messages other agent
+// threads.
+type CollabAgentToolCallItem struct {
+	ID                string          `json:"id"`
+	Tool              string          `json:"tool"`
+	Status            string          `json:"status"`
+	SenderThreadID    string          `json:"senderThreadId"`
+	ReceiverThreadIDs []string        `json:"receiverThreadIds"`
+	Prompt            string          `json:"prompt,omitempty"`
+	Model             string          `json:"model,omitempty"`
+	AgentsStates      json.RawMessage `json:"agentsStates,omitempty"`
+}
+
+// ImageViewItem records the agent viewing a local image.
+type ImageViewItem struct {
+	ID   string `json:"id"`
+	Path string `json:"path"`
 }
 
 // WebSearchAction describes what a web search item is doing.
@@ -620,6 +755,24 @@ func (i ContextCompactionItem) ItemID() string { return i.ID }
 func (i ContextCompactionItem) ItemType() string { return ItemContextCompaction }
 
 // ItemID returns the item id.
+func (i DynamicToolCallItem) ItemID() string { return i.ID }
+
+// ItemType returns the item type discriminator.
+func (i DynamicToolCallItem) ItemType() string { return ItemDynamicToolCall }
+
+// ItemID returns the item id.
+func (i CollabAgentToolCallItem) ItemID() string { return i.ID }
+
+// ItemType returns the item type discriminator.
+func (i CollabAgentToolCallItem) ItemType() string { return ItemCollabAgentCall }
+
+// ItemID returns the item id.
+func (i ImageViewItem) ItemID() string { return i.ID }
+
+// ItemType returns the item type discriminator.
+func (i ImageViewItem) ItemType() string { return ItemImageView }
+
+// ItemID returns the item id.
 func (i UnknownItem) ItemID() string { return i.ID }
 
 // ItemType returns the item type discriminator as sent by the server.
@@ -694,6 +847,12 @@ func (t *ThreadItem) UnmarshalJSON(data []byte) error {
 		return decode(&ExitedReviewModeItem{})
 	case ItemContextCompaction:
 		return decode(&ContextCompactionItem{})
+	case ItemDynamicToolCall:
+		return decode(&DynamicToolCallItem{})
+	case ItemCollabAgentCall:
+		return decode(&CollabAgentToolCallItem{})
+	case ItemImageView:
+		return decode(&ImageViewItem{})
 	default:
 		t.Item = &UnknownItem{ID: head.ID, Type: head.Type, Raw: t.Raw}
 		return nil
@@ -715,38 +874,61 @@ func (t ThreadItem) MarshalJSON() ([]byte, error) {
 // Request and response payloads
 // ---------------------------------------------------------------------------
 
+// ThreadSettings are the configuration overrides shared by thread/start,
+// thread/resume, and thread/fork. Zero fields keep the server's value.
+type ThreadSettings struct {
+	Model         string `json:"model,omitempty"`
+	ModelProvider string `json:"modelProvider,omitempty"`
+	Cwd           string `json:"cwd,omitempty"`
+	// ApprovalPolicy and ApprovalsReviewer control escalation prompts; see
+	// ApprovalMode.Settings for upstream's presets.
+	ApprovalPolicy    ApprovalPolicy    `json:"approvalPolicy,omitempty"`
+	ApprovalsReviewer ApprovalsReviewer `json:"approvalsReviewer,omitempty"`
+	// Sandbox is the filesystem access preset.
+	Sandbox SandboxMode `json:"sandbox,omitempty"`
+	// Config holds config.toml overrides keyed by dotted path.
+	Config                map[string]any `json:"config,omitempty"`
+	BaseInstructions      string         `json:"baseInstructions,omitempty"`
+	DeveloperInstructions string         `json:"developerInstructions,omitempty"`
+	ServiceTier           string         `json:"serviceTier,omitempty"`
+}
+
 // StartThreadParams are the parameters of thread/start.
 type StartThreadParams struct {
-	Model          string         `json:"model,omitempty"`
-	Cwd            string         `json:"cwd,omitempty"`
-	ApprovalPolicy ApprovalPolicy `json:"approvalPolicy,omitempty"`
-	// Sandbox is the shorthand sandbox mode name accepted by thread/start.
-	Sandbox string `json:"sandbox,omitempty"`
-	// SandboxPolicy is the full sandbox policy object.
-	SandboxPolicy *SandboxPolicy `json:"sandboxPolicy,omitempty"`
-	Personality   string         `json:"personality,omitempty"`
+	ThreadSettings
+	// Ephemeral creates an in-memory thread that is not persisted.
+	Ephemeral bool `json:"ephemeral,omitempty"`
+	// Personality is deprecated upstream: "none", "friendly", or "pragmatic".
+	Personality string `json:"personality,omitempty"`
 	// ServiceName tags thread-level metrics with the integration's name.
 	ServiceName string `json:"serviceName,omitempty"`
+	// ThreadSource is a client-supplied source classification.
+	ThreadSource string `json:"threadSource,omitempty"`
+	// SessionStartSource is "startup" or "clear".
+	SessionStartSource string `json:"sessionStartSource,omitempty"`
 }
 
 // ResumeThreadParams are the parameters of thread/resume.
 type ResumeThreadParams struct {
-	ThreadID       string         `json:"threadId"`
-	Model          string         `json:"model,omitempty"`
-	Cwd            string         `json:"cwd,omitempty"`
-	ApprovalPolicy ApprovalPolicy `json:"approvalPolicy,omitempty"`
-	Sandbox        string         `json:"sandbox,omitempty"`
-	SandboxPolicy  *SandboxPolicy `json:"sandboxPolicy,omitempty"`
-	Personality    string         `json:"personality,omitempty"`
+	ThreadID string `json:"threadId"`
+	ThreadSettings
+	Personality string `json:"personality,omitempty"`
+	// ExcludeTurns returns only thread metadata, without Thread.Turns.
+	ExcludeTurns bool `json:"excludeTurns,omitempty"`
 }
 
 // ForkThreadParams are the parameters of thread/fork.
 type ForkThreadParams struct {
 	ThreadID string `json:"threadId"`
+	ThreadSettings
 	// LastTurnID copies history through that turn, inclusive.
 	LastTurnID string `json:"lastTurnId,omitempty"`
 	// Ephemeral creates an in-memory fork.
 	Ephemeral bool `json:"ephemeral,omitempty"`
+	// ExcludeTurns returns only thread metadata, without Thread.Turns.
+	ExcludeTurns bool `json:"excludeTurns,omitempty"`
+	// ThreadSource is a client-supplied source classification.
+	ThreadSource string `json:"threadSource,omitempty"`
 }
 
 // ThreadResult is the common `{ "thread": ... }` response body.
@@ -782,7 +964,6 @@ type ListThreadsParams struct {
 	ModelProviders []string `json:"modelProviders,omitempty"`
 	SourceKinds    []string `json:"sourceKinds,omitempty"`
 	Archived       bool     `json:"archived,omitempty"`
-	IsPinned       *bool    `json:"isPinned,omitempty"`
 	Cwd            []string `json:"cwd,omitempty"`
 	UseStateDBOnly bool     `json:"useStateDbOnly,omitempty"`
 	SearchTerm     string   `json:"searchTerm,omitempty"`
@@ -805,20 +986,49 @@ type UnsubscribeResult struct {
 // become the defaults for later turns on the same thread, except OutputSchema
 // which applies only to the current turn.
 type TurnOptions struct {
-	Model          string          `json:"model,omitempty"`
-	Cwd            string          `json:"cwd,omitempty"`
-	ApprovalPolicy ApprovalPolicy  `json:"approvalPolicy,omitempty"`
-	SandboxPolicy  *SandboxPolicy  `json:"sandboxPolicy,omitempty"`
-	Effort         string          `json:"effort,omitempty"`
-	Summary        string          `json:"summary,omitempty"`
-	Personality    string          `json:"personality,omitempty"`
-	OutputSchema   json.RawMessage `json:"outputSchema,omitempty"`
+	Model             string            `json:"model,omitempty"`
+	Cwd               string            `json:"cwd,omitempty"`
+	ApprovalPolicy    ApprovalPolicy    `json:"approvalPolicy,omitempty"`
+	ApprovalsReviewer ApprovalsReviewer `json:"approvalsReviewer,omitempty"`
+	// SandboxPolicy overrides the sandbox; SandboxMode.Policy converts a
+	// preset.
+	SandboxPolicy *SandboxPolicy `json:"sandboxPolicy,omitempty"`
+	// Effort is a reasoning effort the model advertises, such as "low",
+	// "medium", or "high".
+	Effort string `json:"effort,omitempty"`
+	// Summary is "auto", "concise", "detailed", or "none".
+	Summary     string `json:"summary,omitempty"`
+	Personality string `json:"personality,omitempty"`
+	// ServiceTier updates the thread default; ServiceTierForTurn applies
+	// only to the turn this request starts.
+	ServiceTier        string `json:"serviceTier,omitempty"`
+	ServiceTierForTurn string `json:"serviceTierForTurn,omitempty"`
+	// OutputSchema is a JSON Schema constraining the final assistant message
+	// of this turn only.
+	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
+	// TurnTrigger labels what started the turn; it grants no authority.
+	TurnTrigger string `json:"turnTrigger,omitempty"`
+}
+
+// ExternalMessage is untrusted content delivered by another agent, tool, or
+// application. It has tool-level authority, below user and developer
+// instructions, and never counts as user approval. Pass it to
+// StartExternalTurn.
+type ExternalMessage struct {
+	// ToolName identifies the tool delivering the content.
+	ToolName  string `json:"name"`
+	Namespace string `json:"namespace,omitempty"`
+	// Output is a string or a list of Responses-compatible function output
+	// content items.
+	Output any `json:"output"`
 }
 
 // StartTurnParams are the parameters of turn/start.
 type StartTurnParams struct {
 	ThreadID string      `json:"threadId"`
 	Input    []InputItem `json:"input"`
+	// ToolOutput replaces Input with external content; see ExternalMessage.
+	ToolOutput *ExternalMessage `json:"toolOutput,omitempty"`
 	TurnOptions
 }
 
@@ -876,6 +1086,7 @@ const (
 	MethodReasoningTextDelta          = "item/reasoning/textDelta"
 	MethodCommandExecutionOutputDelta = "item/commandExecution/outputDelta"
 
+	MethodError                 = "error"
 	MethodServerRequestResolved = "serverRequest/resolved"
 	MethodAccountUpdated        = "account/updated"
 	MethodLoginCompleted        = "account/login/completed"
@@ -901,7 +1112,8 @@ type ThreadIDParams struct {
 // ThreadNameUpdatedParams is the payload of thread/name/updated.
 type ThreadNameUpdatedParams struct {
 	ThreadID string `json:"threadId"`
-	Name     string `json:"name"`
+	// Name is empty when the name was cleared.
+	Name string `json:"threadName,omitempty"`
 }
 
 // TurnParams is the payload of turn/started and turn/completed.
@@ -966,32 +1178,18 @@ type CommandOutputDeltaParams struct {
 	ThreadID string `json:"threadId,omitempty"`
 	TurnID   string `json:"turnId,omitempty"`
 	ItemID   string `json:"itemId"`
-	// Stream is "stdout" or "stderr" when the server reports it.
-	Stream string `json:"stream,omitempty"`
-	// Delta is plain-text output.
-	Delta string `json:"delta,omitempty"`
-	// Chunk is a base64-encoded output chunk used by some server versions.
-	Chunk string `json:"chunk,omitempty"`
-	// DeltaBase64 is a base64-encoded output chunk.
-	DeltaBase64 string `json:"deltaBase64,omitempty"`
+	// Delta is the appended output text.
+	Delta string `json:"delta"`
 }
 
-// Text returns the decoded output chunk, preferring the plain-text field and
-// falling back to the base64-encoded variants.
-func (p CommandOutputDeltaParams) Text() string {
-	if p.Delta != "" {
-		return p.Delta
-	}
-	for _, encoded := range []string{p.DeltaBase64, p.Chunk} {
-		if encoded == "" {
-			continue
-		}
-		if decoded, err := base64.StdEncoding.DecodeString(encoded); err == nil {
-			return string(decoded)
-		}
-		return encoded
-	}
-	return ""
+// ErrorParams is the payload of the error notification, which reports a
+// turn error the server may still be retrying.
+type ErrorParams struct {
+	ThreadID string    `json:"threadId,omitempty"`
+	TurnID   string    `json:"turnId,omitempty"`
+	Error    TurnError `json:"error"`
+	// WillRetry reports that the server retries and the turn continues.
+	WillRetry bool `json:"willRetry"`
 }
 
 // TokenUsageParams is the payload of thread/tokenUsage/updated.

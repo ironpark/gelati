@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 )
 
@@ -11,9 +12,10 @@ const (
 	MethodCommandApproval      = "item/commandExecution/requestApproval"
 	MethodFileChangeApproval   = "item/fileChange/requestApproval"
 	MethodPermissionsApproval  = "item/permissions/requestApproval"
-	MethodRequestUserInput     = "tool/requestUserInput"
 	MethodItemRequestUserInput = "item/tool/requestUserInput"
 	MethodChatGPTTokenRefresh  = "account/chatgptAuthTokens/refresh"
+	MethodMcpElicitation       = "mcpServer/elicitation/request"
+	MethodDynamicToolCall      = "item/tool/call"
 )
 
 // Decision is the client's answer to an approval request.
@@ -31,12 +33,44 @@ const (
 	DecisionCancel Decision = "cancel"
 )
 
+// AcceptWithExecpolicyAmendment approves a command and adds the amendment,
+// usually CommandApprovalRequest.ProposedExecpolicyAmendment, so matching
+// commands later run without asking.
+func AcceptWithExecpolicyAmendment(amendment []string) Decision {
+	return objectDecision("acceptWithExecpolicyAmendment", "execpolicy_amendment", amendment)
+}
+
+// ApplyNetworkPolicyAmendment records a persistent network rule for a host;
+// action is "allow" or "deny".
+func ApplyNetworkPolicyAmendment(host, action string) Decision {
+	return objectDecision("applyNetworkPolicyAmendment", "network_policy_amendment",
+		map[string]string{"host": host, "action": action})
+}
+
+// objectDecision encodes an object-form decision. Decision stays a string so
+// that the plain decisions remain untyped constants; MarshalJSON emits the
+// object unquoted.
+func objectDecision(kind, field string, value any) Decision {
+	b, _ := json.Marshal(map[string]any{kind: map[string]any{field: value}}) // cannot fail
+	return Decision(b)
+}
+
+// MarshalJSON emits plain decisions as strings and object-form decisions,
+// built by AcceptWithExecpolicyAmendment or ApplyNetworkPolicyAmendment, as
+// objects.
+func (d Decision) MarshalJSON() ([]byte, error) {
+	if strings.HasPrefix(string(d), "{") {
+		return []byte(d), nil
+	}
+	return json.Marshal(string(d))
+}
+
 // NetworkApprovalContext is present when a command approval prompt is really a
 // managed network-access prompt.
 type NetworkApprovalContext struct {
-	Host     string `json:"host,omitempty"`
+	Host string `json:"host,omitempty"`
+	// Protocol is "http", "https", "socks5Tcp", or "socks5Udp".
 	Protocol string `json:"protocol,omitempty"`
-	Port     int    `json:"port,omitempty"`
 }
 
 // CommandApprovalRequest asks whether the agent may run a command.
@@ -51,14 +85,18 @@ type CommandApprovalRequest struct {
 	CommandActions json.RawMessage `json:"commandActions,omitempty"`
 	// ProposedExecpolicyAmendment is an amendment the client may accept with
 	// the acceptWithExecpolicyAmendment decision.
-	ProposedExecpolicyAmendment json.RawMessage `json:"proposedExecpolicyAmendment,omitempty"`
+	ProposedExecpolicyAmendment []string `json:"proposedExecpolicyAmendment,omitempty"`
 	// NetworkApprovalContext marks a managed network-access prompt.
 	NetworkApprovalContext *NetworkApprovalContext `json:"networkApprovalContext,omitempty"`
-	// AvailableDecisions restricts the decisions the server accepts.
-	AvailableDecisions []Decision `json:"availableDecisions,omitempty"`
-	// AdditionalPermissions describes requested per-command sandbox access
-	// (experimental).
-	AdditionalPermissions json.RawMessage `json:"additionalPermissions,omitempty"`
+	// ProposedNetworkPolicyAmendments are network rules the client may
+	// accept with the applyNetworkPolicyAmendment decision.
+	ProposedNetworkPolicyAmendments json.RawMessage `json:"proposedNetworkPolicyAmendments,omitempty"`
+	// Kind is "command" or "writeStdin".
+	Kind string `json:"kind,omitempty"`
+	// ApprovalID distinguishes several prompts for one item.
+	ApprovalID    string `json:"approvalId,omitempty"`
+	EnvironmentID string `json:"environmentId,omitempty"`
+	StartedAtMs   int64  `json:"startedAtMs,omitempty"`
 	// Params is the raw request payload.
 	Params json.RawMessage `json:"-"`
 }
@@ -70,9 +108,8 @@ type FileChangeApprovalRequest struct {
 	TurnID   string `json:"turnId"`
 	Reason   string `json:"reason,omitempty"`
 	// GrantRoot is the root the agent asks to be granted write access to.
-	GrantRoot string `json:"grantRoot,omitempty"`
-	// Changes lists the proposed edits, when the server includes them.
-	Changes []FileChange `json:"changes,omitempty"`
+	GrantRoot   string `json:"grantRoot,omitempty"`
+	StartedAtMs int64  `json:"startedAtMs,omitempty"`
 	// Params is the raw request payload.
 	Params json.RawMessage `json:"-"`
 }
@@ -102,8 +139,19 @@ const (
 // PermissionsResponse carries the granted subset of a permissions request.
 // Permissions that were not requested are ignored by the server.
 type PermissionsResponse struct {
+	// Permissions is the granted profile, an object with optional
+	// "fileSystem" and "network" members; {} grants nothing.
 	Permissions json.RawMessage `json:"permissions"`
-	Scope       string          `json:"scope,omitempty"`
+	// Scope is ScopeTurn (the default) or ScopeSession.
+	Scope string `json:"scope,omitempty"`
+	// StrictAutoReview reviews every later command in the turn before it
+	// runs.
+	StrictAutoReview *bool `json:"strictAutoReview,omitempty"`
+}
+
+// grantNothing is the fail-closed permissions answer.
+func grantNothing() *PermissionsResponse {
+	return &PermissionsResponse{Permissions: json.RawMessage("{}")}
 }
 
 // TokenRefreshRequest asks the host application for fresh externally managed
@@ -138,7 +186,7 @@ type PermissionApprover interface {
 }
 
 // UserInputResponder is an optional ApprovalHandler extension for
-// tool/requestUserInput. The returned value is marshaled as the JSON-RPC
+// item/tool/requestUserInput. The returned value is marshaled as the JSON-RPC
 // result.
 type UserInputResponder interface {
 	RequestUserInput(ctx context.Context, params json.RawMessage) (any, error)
@@ -150,6 +198,15 @@ type TokenRefresher interface {
 	RefreshChatGPTTokens(ctx context.Context, req *TokenRefreshRequest) (*ChatGPTAuthTokens, error)
 }
 
+// ServerRequestHandler is an optional ApprovalHandler extension that answers
+// every server request the client does not model, such as
+// MethodDynamicToolCall, MethodMcpElicitation, or attestation/generate. The
+// returned value is marshaled as the JSON-RPC result. Without it, MCP
+// elicitations are declined and other requests fail with method-not-found.
+type ServerRequestHandler interface {
+	HandleServerRequest(ctx context.Context, method string, params json.RawMessage) (any, error)
+}
+
 // ApprovalFuncs adapts plain functions to ApprovalHandler. A nil field falls
 // back to the default behavior for that request.
 type ApprovalFuncs struct {
@@ -158,6 +215,7 @@ type ApprovalFuncs struct {
 	Permissions  func(ctx context.Context, req *PermissionsRequest) (*PermissionsResponse, error)
 	UserInput    func(ctx context.Context, params json.RawMessage) (any, error)
 	TokenRefresh func(ctx context.Context, req *TokenRefreshRequest) (*ChatGPTAuthTokens, error)
+	Other        func(ctx context.Context, method string, params json.RawMessage) (any, error)
 }
 
 // ApproveCommand implements ApprovalHandler.
@@ -179,7 +237,7 @@ func (f ApprovalFuncs) ApproveFileChange(ctx context.Context, req *FileChangeApp
 // ApprovePermissions implements PermissionApprover.
 func (f ApprovalFuncs) ApprovePermissions(ctx context.Context, req *PermissionsRequest) (*PermissionsResponse, error) {
 	if f.Permissions == nil {
-		return &PermissionsResponse{Permissions: json.RawMessage("[]")}, nil
+		return grantNothing(), nil
 	}
 	return f.Permissions(ctx, req)
 }
@@ -187,7 +245,7 @@ func (f ApprovalFuncs) ApprovePermissions(ctx context.Context, req *PermissionsR
 // RequestUserInput implements UserInputResponder.
 func (f ApprovalFuncs) RequestUserInput(ctx context.Context, params json.RawMessage) (any, error) {
 	if f.UserInput == nil {
-		return nil, &RPCError{Code: CodeMethodNotFound, Message: "codex: no user input handler registered"}
+		return defaultServerRequest(MethodItemRequestUserInput)
 	}
 	return f.UserInput(ctx, params)
 }
@@ -195,9 +253,34 @@ func (f ApprovalFuncs) RequestUserInput(ctx context.Context, params json.RawMess
 // RefreshChatGPTTokens implements TokenRefresher.
 func (f ApprovalFuncs) RefreshChatGPTTokens(ctx context.Context, req *TokenRefreshRequest) (*ChatGPTAuthTokens, error) {
 	if f.TokenRefresh == nil {
-		return nil, &RPCError{Code: CodeMethodNotFound, Message: "codex: no token refresh handler registered"}
+		_, err := defaultServerRequest(MethodChatGPTTokenRefresh)
+		return nil, err
 	}
 	return f.TokenRefresh(ctx, req)
+}
+
+// HandleServerRequest implements ServerRequestHandler.
+func (f ApprovalFuncs) HandleServerRequest(ctx context.Context, method string, params json.RawMessage) (any, error) {
+	if f.Other == nil {
+		return defaultServerRequest(method)
+	}
+	return f.Other(ctx, method, params)
+}
+
+// defaultServerRequest answers a server request no handler takes: MCP
+// elicitations are declined so the tool call fails cleanly, and anything else
+// is method-not-found.
+func defaultServerRequest(method string) (any, error) {
+	message := "codex: unhandled server request " + method
+	switch method {
+	case MethodMcpElicitation:
+		return map[string]string{"action": "decline"}, nil
+	case MethodItemRequestUserInput:
+		message = "codex: no user input handler registered"
+	case MethodChatGPTTokenRefresh:
+		message = "codex: no token refresh handler registered"
+	}
+	return nil, &RPCError{Code: CodeMethodNotFound, Message: message}
 }
 
 // decisionResult is the JSON-RPC result of an approval request.
@@ -319,13 +402,13 @@ func (c *Client) handleServerRequest(ctx context.Context, method string, params 
 			return approver.ApprovePermissions(ctx, req)
 		}
 		// Fail closed: grant nothing.
-		return &PermissionsResponse{Permissions: json.RawMessage("[]")}, nil
+		return grantNothing(), nil
 
-	case MethodRequestUserInput, MethodItemRequestUserInput:
+	case MethodItemRequestUserInput:
 		if responder, ok := c.opts.Approvals.(UserInputResponder); ok {
 			return responder.RequestUserInput(ctx, params)
 		}
-		return nil, &RPCError{Code: CodeMethodNotFound, Message: "codex: no user input handler registered"}
+		return defaultServerRequest(MethodItemRequestUserInput)
 
 	case MethodChatGPTTokenRefresh:
 		if refresher, ok := c.opts.Approvals.(TokenRefresher); ok {
@@ -336,9 +419,13 @@ func (c *Client) handleServerRequest(ctx context.Context, method string, params 
 			req.Params = params
 			return refresher.RefreshChatGPTTokens(ctx, req)
 		}
-		return nil, &RPCError{Code: CodeMethodNotFound, Message: "codex: no token refresh handler registered"}
+		_, err := defaultServerRequest(MethodChatGPTTokenRefresh)
+		return nil, err
 
 	default:
-		return nil, &RPCError{Code: CodeMethodNotFound, Message: "codex: unhandled server request " + method}
+		if handler, ok := c.opts.Approvals.(ServerRequestHandler); ok {
+			return handler.HandleServerRequest(ctx, method, params)
+		}
+		return defaultServerRequest(method)
 	}
 }

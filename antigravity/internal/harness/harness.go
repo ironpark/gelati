@@ -45,6 +45,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/ironpark/gelati/antigravity/internal/wire"
+	"github.com/ironpark/gelati/internal/tailbuf"
 )
 
 // APIKeyHeader is the request header carrying the key the harness reports in
@@ -110,7 +111,7 @@ type Harness struct {
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
 	stdout  *os.File
-	stderr  *tailBuffer
+	stderr  *tailbuf.Buffer
 	ws      *websocket.Conn
 	msgs    chan []byte   // messages from readLoop; closed when it stops
 	readErr error         // why readLoop stopped; valid once msgs is closed
@@ -165,7 +166,7 @@ func Start(ctx context.Context, opts Options) (*Harness, error) {
 			cmd.Env = append(cmd.Env, k+"="+v)
 		}
 	}
-	stderr := &tailBuffer{tee: opts.Stderr, max: stderrTailLines}
+	stderr := &tailbuf.Buffer{Tee: opts.Stderr, Max: stderrTailLines}
 	cmd.Stderr = stderr
 	// Children of the harness may inherit stderr; don't let them hold Wait.
 	cmd.WaitDelay = time.Second

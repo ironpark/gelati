@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"github.com/ironpark/gelati/internal/tailbuf"
 )
 
 // maxLineBytes bounds a single JSONL message read from the app-server.
@@ -348,26 +350,31 @@ func (t *transport) fatal(err error) {
 	})
 }
 
-// processHandles holds the streams and lifecycle of a spawned app-server.
+// exitWait bounds how long a stdout EOF waits for the process to exit
+// before it is reported without an exit status.
+const exitWait = 2 * time.Second
+
+// processHandle holds the streams and lifecycle of a spawned app-server.
 type processHandle struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
-	stdout io.ReadCloser
+	stdout io.Reader // reports the process exit in place of io.EOF
+	pipe   io.ReadCloser
+	stderr *tailbuf.Buffer
+
+	exited  chan struct{} // closed once cmd.Wait returns
+	waitErr error
 }
 
 // startProcess spawns `codex app-server` (or the configured equivalent) with
-// piped stdin/stdout.
-func startProcess(bin string, args []string, env []string, dir string, stderr io.Writer) (*processHandle, error) {
+// piped stdin/stdout, keeping the tail of stderr for the exit error.
+func startProcess(bin string, args []string, env []string, dir string, stderr *tailbuf.Buffer) (*processHandle, error) {
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
 	if env != nil {
 		cmd.Env = env
 	}
-	if stderr != nil {
-		cmd.Stderr = stderr
-	} else {
-		cmd.Stderr = os.Stderr
-	}
+	cmd.Stderr = stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("codex: stdin pipe: %w", err)
@@ -379,8 +386,42 @@ func startProcess(bin string, args []string, env []string, dir string, stderr io
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("codex: start %s: %w", bin, err)
 	}
-	return &processHandle{cmd: cmd, stdin: stdin, stdout: stdout}, nil
+	p := &processHandle{cmd: cmd, stdin: stdin, pipe: stdout, stderr: stderr, exited: make(chan struct{})}
+	p.stdout = exitReader{p}
+	go func() {
+		p.waitErr = cmd.Wait()
+		close(p.exited)
+	}()
+	return p, nil
 }
+
+// exitReader reads the process's stdout and turns its EOF into an error that
+// carries the exit status and the tail of stderr. Waiting for the exit first
+// guarantees stderr has been fully copied.
+type exitReader struct{ p *processHandle }
+
+func (r exitReader) Read(b []byte) (int, error) {
+	n, err := r.p.pipe.Read(b)
+	if err != io.EOF {
+		return n, err
+	}
+	select {
+	case <-r.p.exited:
+	case <-time.After(exitWait):
+		return n, io.EOF
+	}
+	status := "exited"
+	if r.p.waitErr != nil {
+		status = r.p.waitErr.Error()
+	}
+	if tail := r.p.stderr.String(); tail != "" {
+		return n, fmt.Errorf("codex: app-server %s\napp-server stderr:\n%s", status, tail)
+	}
+	return n, fmt.Errorf("codex: app-server %s", status)
+}
+
+// Close closes stdout so a blocked read returns.
+func (r exitReader) Close() error { return r.p.pipe.Close() }
 
 // close terminates the subprocess and waits for it to exit.
 func (p *processHandle) close() error {
@@ -388,7 +429,7 @@ func (p *processHandle) close() error {
 	if p.cmd.Process != nil {
 		_ = p.cmd.Process.Kill()
 	}
-	_ = p.cmd.Wait()
-	_ = p.stdout.Close()
+	<-p.exited
+	_ = p.pipe.Close()
 	return nil
 }

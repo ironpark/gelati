@@ -1,7 +1,6 @@
 package codex
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"testing"
 )
@@ -36,8 +35,8 @@ func TestDecodeThreadStartResult(t *testing.T) {
 func TestDecodeThreadListResult(t *testing.T) {
 	const payload = `{
 	  "data": [
-	    { "id": "thr_a", "preview": "Create a TUI", "ephemeral": false, "isPinned": true, "modelProvider": "openai", "createdAt": 1730831111, "updatedAt": 1730831111, "name": "TUI prototype", "status": { "type": "notLoaded" } },
-	    { "id": "thr_b", "preview": "Fix tests", "ephemeral": false, "isPinned": false, "modelProvider": "openai", "createdAt": 1730750000, "updatedAt": 1730750000, "status": { "type": "notLoaded" } }
+	    { "id": "thr_a", "preview": "Create a TUI", "ephemeral": false, "cwd": "/w", "modelProvider": "openai", "createdAt": 1730831111, "updatedAt": 1730831111, "name": "TUI prototype", "status": { "type": "notLoaded" } },
+	    { "id": "thr_b", "preview": "Fix tests", "ephemeral": false, "modelProvider": "openai", "createdAt": 1730750000, "updatedAt": 1730750000, "status": { "type": "notLoaded" } }
 	  ],
 	  "nextCursor": "opaque-token-or-null"
 	}`
@@ -52,8 +51,8 @@ func TestDecodeThreadListResult(t *testing.T) {
 	if res.Data[0].Name == nil || *res.Data[0].Name != "TUI prototype" {
 		t.Fatalf("name = %v", res.Data[0].Name)
 	}
-	if !res.Data[0].IsPinned || res.Data[1].IsPinned {
-		t.Fatal("isPinned mismatch")
+	if res.Data[0].Cwd != "/w" || res.Data[1].Cwd != "" {
+		t.Fatal("cwd mismatch")
 	}
 	if res.Data[1].Status == nil || res.Data[1].Status.Type != ThreadStatusNotLoaded {
 		t.Fatalf("status = %+v", res.Data[1].Status)
@@ -99,8 +98,8 @@ func TestDecodeTurnStartResult(t *testing.T) {
 func TestDecodeFailedTurn(t *testing.T) {
 	const payload = `{"turn":{"id":"turn_9","status":"failed","items":[],"error":{
 	  "message":"upstream failed",
-	  "codexErrorInfo":{"type":"HttpConnectionFailed","httpStatusCode":503},
-	  "additionalDetails":{"attempts":3}
+	  "codexErrorInfo":{"httpConnectionFailed":{"httpStatusCode":503}},
+	  "additionalDetails":"3 attempts"
 	}}}`
 
 	var res StartTurnResult
@@ -128,7 +127,7 @@ func TestDecodeFailedTurn(t *testing.T) {
 
 func TestDecodeTurnErrorInfoAsString(t *testing.T) {
 	var turnErr TurnError
-	if err := json.Unmarshal([]byte(`{"message":"nope","codexErrorInfo":"UsageLimitExceeded"}`), &turnErr); err != nil {
+	if err := json.Unmarshal([]byte(`{"message":"nope","codexErrorInfo":"usageLimitExceeded"}`), &turnErr); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if turnErr.Kind() != ErrorInfoUsageLimitExceeded {
@@ -186,10 +185,11 @@ func TestDecodeThreadItems(t *testing.T) {
 		},
 		{
 			name:    "fileChange",
-			payload: `{"type":"fileChange","id":"item_3","status":"inProgress","changes":[{"path":"/a.go","kind":"update","diff":"@@"}]}`,
+			payload: `{"type":"fileChange","id":"item_3","status":"inProgress","changes":[{"path":"/a.go","kind":{"type":"update","move_path":"/b.go"},"diff":"@@"}]}`,
 			check: func(t *testing.T, item ThreadItem) {
 				fc := item.Item.(*FileChangeItem)
-				if len(fc.Changes) != 1 || fc.Changes[0].Path != "/a.go" || fc.Changes[0].Kind != "update" {
+				if len(fc.Changes) != 1 || fc.Changes[0].Path != "/a.go" ||
+					fc.Changes[0].Kind != (PatchChangeKind{Type: PatchUpdate, MovePath: "/b.go"}) {
 					t.Fatalf("changes = %+v", fc.Changes)
 				}
 			},
@@ -335,24 +335,6 @@ func TestDecodeItemNotifications(t *testing.T) {
 	}
 }
 
-func TestCommandOutputDeltaText(t *testing.T) {
-	plain := CommandOutputDeltaParams{Delta: "hello"}
-	if plain.Text() != "hello" {
-		t.Fatalf("plain = %q", plain.Text())
-	}
-	encoded := CommandOutputDeltaParams{DeltaBase64: base64.StdEncoding.EncodeToString([]byte("hi"))}
-	if encoded.Text() != "hi" {
-		t.Fatalf("encoded = %q", encoded.Text())
-	}
-	chunk := CommandOutputDeltaParams{Chunk: base64.StdEncoding.EncodeToString([]byte("yo"))}
-	if chunk.Text() != "yo" {
-		t.Fatalf("chunk = %q", chunk.Text())
-	}
-	if (CommandOutputDeltaParams{}).Text() != "" {
-		t.Fatal("empty delta should decode to empty string")
-	}
-}
-
 func TestDecodeTurnPlanUpdated(t *testing.T) {
 	const payload = `{"turnId":"turn_1","explanation":"why","plan":[{"step":"a","status":"completed"},{"step":"b","status":"inProgress"}]}`
 	var params TurnPlanParams
@@ -376,8 +358,8 @@ func TestEncodeInputItems(t *testing.T) {
 		},
 		TurnOptions: TurnOptions{
 			Model:          "gpt-5.6-terra",
-			ApprovalPolicy: ApprovalUnlessTrusted,
-			SandboxPolicy:  SandboxWorkspaceWrite([]string{"/Users/me/project"}, true, nil),
+			ApprovalPolicy: ApprovalUntrusted,
+			SandboxPolicy:  SandboxWorkspaceWrite([]string{"/Users/me/project"}, true),
 		},
 	}
 
@@ -391,7 +373,7 @@ func TestEncodeInputItems(t *testing.T) {
 		`{"type":"image","url":"https://example.com/design.png"},` +
 		`{"path":"/tmp/screenshot.png","type":"localImage"},` +
 		`{"name":"Demo App","path":"app://demo-app","type":"mention"}` +
-		`],"model":"gpt-5.6-terra","approvalPolicy":"unlessTrusted",` +
+		`],"model":"gpt-5.6-terra","approvalPolicy":"untrusted",` +
 		`"sandboxPolicy":{"type":"workspaceWrite","writableRoots":["/Users/me/project"],"networkAccess":true}}`
 	if string(out) != want {
 		t.Fatalf("marshal mismatch:\n got: %s\nwant: %s", out, want)
@@ -403,15 +385,14 @@ func TestEncodeSandboxPolicies(t *testing.T) {
 		policy *SandboxPolicy
 		want   string
 	}{
-		{SandboxReadOnly(FullReadAccess()), `{"type":"readOnly","access":{"type":"fullAccess"}}`},
+		{SandboxReadOnly(false), `{"type":"readOnly","networkAccess":false}`},
+		{SandboxModeReadOnly.Policy(), `{"type":"readOnly"}`},
+		{SandboxModeWorkspaceWrite.Policy(), `{"type":"workspaceWrite"}`},
 		{SandboxDangerFullAccess(), `{"type":"dangerFullAccess"}`},
 		{SandboxExternal(NetworkAccessRestricted), `{"type":"externalSandbox","networkAccess":"restricted"}`},
 		{
-			SandboxWorkspaceWrite([]string{"/Users/me/project"}, false,
-				RestrictedReadAccess(true, "/Users/me/shared-read-only")),
-			`{"type":"workspaceWrite","writableRoots":["/Users/me/project"],` +
-				`"readOnlyAccess":{"type":"restricted","includePlatformDefaults":true,"readableRoots":["/Users/me/shared-read-only"]},` +
-				`"networkAccess":false}`,
+			SandboxWorkspaceWrite([]string{"/Users/me/project"}, false),
+			`{"type":"workspaceWrite","writableRoots":["/Users/me/project"],"networkAccess":false}`,
 		},
 	}
 	for _, tc := range tests {
@@ -466,5 +447,42 @@ func TestTurnErrorAccessorsOnANilReceiver(t *testing.T) {
 	}
 	if code, ok := failure.HTTPStatusCode(); ok {
 		t.Errorf("HTTPStatusCode() = %d, true; want 0, false", code)
+	}
+}
+
+func TestDecodeMcpToolCallError(t *testing.T) {
+	var item ThreadItem
+	payload := `{"type":"mcpToolCall","id":"i","server":"s","tool":"t","status":"failed","arguments":{},"error":{"message":"boom"}}`
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	call := item.Item.(*McpToolCallItem)
+	if call.Error == nil || call.Error.Message != "boom" {
+		t.Fatalf("error = %+v", call.Error)
+	}
+}
+
+func TestApprovalModeSettings(t *testing.T) {
+	if p, r := ApprovalModeAutoReview.Settings(); p != ApprovalOnRequest || r != ReviewerAutoReview {
+		t.Errorf("auto_review = %q, %q", p, r)
+	}
+	if p, r := ApprovalModeDenyAll.Settings(); p != ApprovalNever || r != "" {
+		t.Errorf("deny_all = %q, %q", p, r)
+	}
+}
+
+func TestEncodeThreadSettings(t *testing.T) {
+	out, err := json.Marshal(StartThreadParams{
+		ThreadSettings: ThreadSettings{Cwd: "/repo", Sandbox: SandboxModeWorkspaceWrite,
+			ApprovalPolicy: ApprovalOnRequest, ApprovalsReviewer: ReviewerAutoReview},
+		Ephemeral: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"cwd":"/repo","approvalPolicy":"on-request","approvalsReviewer":"auto_review",` +
+		`"sandbox":"workspace-write","ephemeral":true}`
+	if string(out) != want {
+		t.Fatalf("\n got: %s\nwant: %s", out, want)
 	}
 }
