@@ -77,8 +77,11 @@
 //
 // The transport reader never blocks. Turn events are handed to a per-thread
 // pump that blocks only on its own thread's consumer, so a slow reader delays
-// that thread alone; turn events are never dropped while the stream is live.
-// Closing a TurnStream releases its pump immediately.
+// that thread alone. While it lags by a few buffers (4 × Options.EventBuffer
+// notifications), streaming deltas and plan or diff updates are dropped, so
+// concatenated deltas may have gaps; turn and item start and completion,
+// token usage, and errors are never dropped, so the completed items and
+// TurnResult stay whole. Closing a TurnStream releases its pump immediately.
 //
 // Client.ThreadEvents and Client.AccountUpdates are iterators: each loop
 // subscribes when it starts and unsubscribes when it exits, so events that

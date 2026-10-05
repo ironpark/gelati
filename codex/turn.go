@@ -332,32 +332,66 @@ func (s *threadSubscription) activeStreams() []*TurnStream {
 }
 
 // enqueue hands a notification to the thread's pump. It never blocks the
-// transport reader: when the queue is full the notification is dropped.
+// transport reader. While a stalled consumer holds the pump and a few
+// buffers' worth of notifications wait, only those that keepOnOverflow
+// accepts are queued; the rest (streaming deltas, plan and diff snapshots)
+// are dropped.
 func (s *threadSubscription) enqueue(c *Client, note queuedNotification) {
 	if s.quit.Ended() {
 		return
 	}
-	select {
-	case s.queue <- note:
-	default:
+	s.queueMu.Lock()
+	if len(s.queue) >= 4*c.eventBuffer() && !keepOnOverflow(note.method) {
+		s.queueMu.Unlock()
 		c.logger.Debug("codex: dropped turn notification", "threadId", s.id, "method", note.method)
+		return
+	}
+	s.queue = append(s.queue, note)
+	s.queueMu.Unlock()
+	select {
+	case s.wake <- struct{}{}:
+	default:
 	}
 }
 
+// keepOnOverflow reports whether a notification is queued even past the
+// limit: the ones a turn's result is built from, and the turn's end. Every
+// other notification is superseded by a later one (a completed item holds the
+// text its deltas streamed), so dropping it loses no final state.
+func keepOnOverflow(method string) bool {
+	switch method {
+	case MethodTurnStarted, MethodTurnCompleted, MethodItemStarted, MethodItemCompleted,
+		MethodTokenUsageUpdated, MethodError:
+		return true
+	}
+	return false
+}
+
 // pump fans notifications out to turn streams. One pump runs per subscribed
-// thread, so a slow consumer stalls only its own thread.
+// thread, so a slow consumer stalls only its own thread. It drains the queue
+// a batch at a time, reusing the drained batch's array for the next one.
 func (s *threadSubscription) pump(c *Client) {
 	defer func() {
 		for _, stream := range s.activeStreams() {
 			s.endStream(stream, nil, ErrClosed)
 		}
 	}()
+	var batch []queuedNotification
 	for {
 		select {
 		case <-s.quit.C():
 			return
-		case note := <-s.queue:
+		case <-s.wake:
+		}
+		s.queueMu.Lock()
+		batch, s.queue = s.queue, batch[:0]
+		s.queueMu.Unlock()
+		for i, note := range batch {
+			if s.quit.Ended() {
+				return
+			}
 			c.deliverTurnEvent(s, note)
+			batch[i] = queuedNotification{}
 		}
 	}
 }
@@ -568,7 +602,7 @@ func (c *Client) startTurn(ctx context.Context, params StartTurnParams, opts *Tu
 	stream := sub.newStream(c, threadID)
 
 	var result StartTurnResult
-	if err := c.call(ctx, "turn/start", params, &result); err != nil {
+	if err := c.tr.Call(ctx, "turn/start", params, &result); err != nil {
 		// Only the pump closes the event channel. Nobody holds this stream,
 		// so dropping and finishing it is enough.
 		sub.removeStream(stream)
@@ -584,7 +618,7 @@ func (c *Client) startTurn(ctx context.Context, params StartTurnParams, opts *Tu
 func (c *Client) SteerTurn(ctx context.Context, threadID, expectedTurnID string, input []InputItem) (string, error) {
 	params := SteerTurnParams{ThreadID: threadID, Input: input, ExpectedTurnID: expectedTurnID}
 	var result SteerTurnResult
-	if err := c.call(ctx, "turn/steer", params, &result); err != nil {
+	if err := c.tr.Call(ctx, "turn/steer", params, &result); err != nil {
 		return "", err
 	}
 	return result.TurnID, nil
@@ -593,13 +627,13 @@ func (c *Client) SteerTurn(ctx context.Context, threadID, expectedTurnID string,
 // InterruptTurn requests cancellation of an in-flight turn. On success the
 // turn ends with status "interrupted".
 func (c *Client) InterruptTurn(ctx context.Context, threadID, turnID string) error {
-	return c.call(ctx, "turn/interrupt", InterruptTurnParams{ThreadID: threadID, TurnID: turnID}, nil)
+	return c.tr.Call(ctx, "turn/interrupt", InterruptTurnParams{ThreadID: threadID, TurnID: turnID}, nil)
 }
 
 // CompactThread triggers manual history compaction. Progress streams as
 // ordinary turn and item notifications.
 func (c *Client) CompactThread(ctx context.Context, threadID string) error {
-	return c.call(ctx, "thread/compact/start", ThreadIDParams{ThreadID: threadID}, nil)
+	return c.tr.Call(ctx, "thread/compact/start", ThreadIDParams{ThreadID: threadID}, nil)
 }
 
 // RunShellCommand runs a user-initiated shell command against a thread. It
@@ -609,5 +643,5 @@ func (c *Client) RunShellCommand(ctx context.Context, threadID, command string) 
 		ThreadID string `json:"threadId"`
 		Command  string `json:"command"`
 	}{ThreadID: threadID, Command: command}
-	return c.call(ctx, "thread/shellCommand", params, nil)
+	return c.tr.Call(ctx, "thread/shellCommand", params, nil)
 }

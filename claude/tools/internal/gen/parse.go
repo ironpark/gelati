@@ -169,9 +169,7 @@ func cleanDoc(body string) string {
 	for _, l := range lines {
 		l = strings.TrimSpace(l)
 		l = strings.TrimPrefix(l, "*")
-		if strings.HasPrefix(l, " ") {
-			l = l[1:]
-		}
+		l = strings.TrimPrefix(l, " ")
 		out = append(out, strings.TrimRight(l, " \t"))
 	}
 	return strings.Trim(strings.Join(out, "\n"), "\n")

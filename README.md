@@ -174,8 +174,11 @@ for msg, err := range turn.Events(ctx) {
 res, err := turn.Result(ctx)
 ```
 
-Turns are read in the order they were sent; one `TurnStream` is read at a
-time.
+`Send` may be called while an earlier turn is still running: the CLI queues
+the input and answers it after the current turn. The client has one message
+stream, so turns are read in the order they were sent and one `TurnStream` is
+read at a time; reading a later turn first skips the earlier turn's unread
+messages, while its `Result` stays available.
 
 A connected `Client` can also interrupt a turn, change the model or permission
 mode, rewind files, manage MCP servers, reload plugins and skills, apply

@@ -31,12 +31,17 @@ type ThreadEvent struct {
 type threadSubscription struct {
 	id     string
 	events *broadcast[ThreadEvent]
-	queue  chan queuedNotification
+	// wake signals the pump that queue has notifications.
+	wake chan struct{}
 	// quit ends when the subscription closes; it stops enqueue and the pump.
 	quit lifecycle.Done
 
 	mu      sync.Mutex
 	streams []*TurnStream
+
+	// queue holds turn notifications waiting for the pump (see enqueue).
+	queueMu sync.Mutex
+	queue   []queuedNotification
 }
 
 // emit delivers an event to every ThreadEvents loop without ever blocking the
@@ -78,7 +83,7 @@ func (c *Client) subscribe(threadID string) *threadSubscription {
 	sub := &threadSubscription{
 		id:     threadID,
 		events: newBroadcast[ThreadEvent](c.eventBuffer()),
-		queue:  make(chan queuedNotification, 4*c.eventBuffer()),
+		wake:   make(chan struct{}, 1),
 	}
 	c.threads[threadID] = sub
 	go sub.pump(c)
@@ -192,7 +197,7 @@ func (c *Client) routeThreadNotification(method string, params jsontext.Value, t
 // StartThread creates a new thread and subscribes to its turn and item events.
 func (c *Client) StartThread(ctx context.Context, params StartThreadParams) (*Thread, error) {
 	var result ThreadResult
-	if err := c.call(ctx, "thread/start", params, &result); err != nil {
+	if err := c.tr.Call(ctx, "thread/start", params, &result); err != nil {
 		return nil, err
 	}
 	c.subscribe(result.Thread.ID)
@@ -202,7 +207,7 @@ func (c *Client) StartThread(ctx context.Context, params StartThreadParams) (*Th
 // ResumeThread reopens a stored thread so later turns append to it.
 func (c *Client) ResumeThread(ctx context.Context, params ResumeThreadParams) (*Thread, error) {
 	var result ThreadResult
-	if err := c.call(ctx, "thread/resume", params, &result); err != nil {
+	if err := c.tr.Call(ctx, "thread/resume", params, &result); err != nil {
 		return nil, err
 	}
 	c.subscribe(result.Thread.ID)
@@ -212,7 +217,7 @@ func (c *Client) ResumeThread(ctx context.Context, params ResumeThreadParams) (*
 // ForkThread branches a stored thread into a new thread id.
 func (c *Client) ForkThread(ctx context.Context, params ForkThreadParams) (*Thread, error) {
 	var result ThreadResult
-	if err := c.call(ctx, "thread/fork", params, &result); err != nil {
+	if err := c.tr.Call(ctx, "thread/fork", params, &result); err != nil {
 		return nil, err
 	}
 	c.subscribe(result.Thread.ID)
@@ -222,7 +227,7 @@ func (c *Client) ForkThread(ctx context.Context, params ForkThreadParams) (*Thre
 // ReadThread reads a stored thread without resuming or subscribing to it.
 func (c *Client) ReadThread(ctx context.Context, params ReadThreadParams) (*Thread, error) {
 	var result ThreadResult
-	if err := c.call(ctx, "thread/read", params, &result); err != nil {
+	if err := c.tr.Call(ctx, "thread/read", params, &result); err != nil {
 		return nil, err
 	}
 	return &result.Thread, nil
@@ -232,7 +237,7 @@ func (c *Client) ReadThread(ctx context.Context, params ReadThreadParams) (*Thre
 // the final page.
 func (c *Client) ListThreads(ctx context.Context, params ListThreadsParams) (*ListThreadsResult, error) {
 	var result ListThreadsResult
-	if err := c.call(ctx, "thread/list", params, &result); err != nil {
+	if err := c.tr.Call(ctx, "thread/list", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -265,13 +270,13 @@ func (c *Client) AllThreads(ctx context.Context, params ListThreadsParams) iter.
 // ArchiveThread moves a thread's log into the archived directory, along with
 // spawned descendant threads.
 func (c *Client) ArchiveThread(ctx context.Context, threadID string) error {
-	return c.call(ctx, "thread/archive", ThreadIDParams{ThreadID: threadID}, nil)
+	return c.tr.Call(ctx, "thread/archive", ThreadIDParams{ThreadID: threadID}, nil)
 }
 
 // UnarchiveThread restores an archived thread and returns it.
 func (c *Client) UnarchiveThread(ctx context.Context, threadID string) (*Thread, error) {
 	var result ThreadResult
-	if err := c.call(ctx, "thread/unarchive", ThreadIDParams{ThreadID: threadID}, &result); err != nil {
+	if err := c.tr.Call(ctx, "thread/unarchive", ThreadIDParams{ThreadID: threadID}, &result); err != nil {
 		return nil, err
 	}
 	return &result.Thread, nil
@@ -280,7 +285,7 @@ func (c *Client) UnarchiveThread(ctx context.Context, threadID string) (*Thread,
 // DeleteThread permanently deletes a stored thread and its spawned
 // descendants.
 func (c *Client) DeleteThread(ctx context.Context, threadID string) error {
-	return c.call(ctx, "thread/delete", ThreadIDParams{ThreadID: threadID}, nil)
+	return c.tr.Call(ctx, "thread/delete", ThreadIDParams{ThreadID: threadID}, nil)
 }
 
 // UnsubscribeThread drops this connection's subscription to a thread and
@@ -288,7 +293,7 @@ func (c *Client) DeleteThread(ctx context.Context, threadID string) error {
 // "notSubscribed", or "notLoaded".
 func (c *Client) UnsubscribeThread(ctx context.Context, threadID string) (string, error) {
 	var result UnsubscribeResult
-	err := c.call(ctx, "thread/unsubscribe", ThreadIDParams{ThreadID: threadID}, &result)
+	err := c.tr.Call(ctx, "thread/unsubscribe", ThreadIDParams{ThreadID: threadID}, &result)
 	c.unsubscribeLocal(threadID)
 	if err != nil {
 		return "", err
@@ -302,7 +307,7 @@ func (c *Client) SetThreadName(ctx context.Context, threadID, name string) error
 		ThreadID string `json:"threadId"`
 		Name     string `json:"name"`
 	}{ThreadID: threadID, Name: name}
-	return c.call(ctx, "thread/name/set", params, nil)
+	return c.tr.Call(ctx, "thread/name/set", params, nil)
 }
 
 // ListLoadedThreads returns the thread ids currently loaded in memory.
@@ -310,7 +315,7 @@ func (c *Client) ListLoadedThreads(ctx context.Context) ([]string, error) {
 	var result struct {
 		Data []string `json:"data"`
 	}
-	if err := c.call(ctx, "thread/loaded/list", nil, &result); err != nil {
+	if err := c.tr.Call(ctx, "thread/loaded/list", nil, &result); err != nil {
 		return nil, err
 	}
 	return result.Data, nil

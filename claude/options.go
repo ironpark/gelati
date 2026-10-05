@@ -485,7 +485,7 @@ type Options struct {
 
 	// SettingSources selects which filesystem settings layers to load. nil
 	// loads all of them; a non-nil empty slice loads none.
-	SettingSources *[]string
+	SettingSources *[]SettingSource
 
 	// ManagedSettings supplies policy-tier settings from the embedding
 	// process, passed to --managed-settings. The CLI keeps only restrictive

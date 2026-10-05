@@ -101,7 +101,7 @@ func (s *InMemorySessionStore) Append(_ context.Context, key SessionKey, entries
 			cur = &inMemorySummary{seq: s.seq}
 			s.summaries[ref] = cur
 		}
-		cur.summary = FoldSessionSummaryWithOptions(prev, key, entries, &FoldSessionOptions{MTime: now})
+		cur.summary = FoldSessionSummary(prev, key, entries, &FoldSessionOptions{MTime: now})
 	}
 	rec.mtime = now
 	return nil

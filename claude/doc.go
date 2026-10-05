@@ -171,7 +171,7 @@
 //	get_session_messages()         -> GetSessionMessages
 //	list_sessions_from_store()     -> ListSessionsFromStore (likewise *_from_store)
 //	rename_session_via_store()     -> RenameSessionViaStore (likewise *_via_store)
-//	fold_session_summary()         -> FoldSessionSummary, FoldSessionSummaryWithOptions
+//	fold_session_summary()         -> FoldSessionSummary
 //	project_key_for_directory()    -> ProjectKeyForDirectory
 //	import_session_to_store()      -> ImportSessionToStore
 //	InMemorySessionStore()         -> NewInMemorySessionStore
@@ -203,9 +203,9 @@
 // rather than replacing it (as in the TypeScript SDK).
 //
 // The TypeScript SDK's resolveSettings (alpha), which re-implements the CLI's
-// settings cascade, is not ported; [FilterEscalatingDefaultMode] works on a
-// [ResolvedSettings] obtained elsewhere. The TypeScript bridge, browser and
-// bundling entry points are JavaScript-runtime specific and out of scope.
+// settings cascade, is not ported, nor is its filterEscalatingDefaultMode
+// helper. The TypeScript bridge, browser and bundling entry points are
+// JavaScript-runtime specific and out of scope.
 // Deprecated TypeScript options (maxThinkingTokens, setMaxThinkingTokens) are
 // kept only where the Python port already had them.
 package claude

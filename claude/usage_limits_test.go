@@ -44,26 +44,16 @@ func TestConstantsUsagePrefixes(t *testing.T) {
 			t.Errorf("IsOrgPolicyLimit(%q) = %v", tt.text, got)
 		}
 	}
-	if len(UsageLimitErrorPrefixes) != 12 || len(UsageTransitionPrefixes) != 6 || len(UsageWarningPrefixes) != 2 || len(OrgPolicyLimitPrefixes) != 1 {
+	if len(usageLimitErrorPrefixes) != 12 || len(usageTransitionPrefixes) != 6 || len(usageWarningPrefixes) != 2 || len(orgPolicyLimitPrefixes) != 1 {
 		t.Error("prefix list sizes differ from the TS SDK")
 	}
 }
 
-// TestExportedListsAreCopies checks that modifying an exported list does not
-// change what the SDK matches. It mutates package state, so it is not
-// parallel.
-func TestExportedListsAreCopies(t *testing.T) {
-	saved := UsageLimitErrorPrefixes[0]
-	UsageLimitErrorPrefixes[0] = "zzz"
-	defer func() { UsageLimitErrorPrefixes[0] = saved }()
-	if !IsUsageLimitError("You've hit your limit") || IsUsageLimitError("zzz") {
-		t.Fatal("modifying UsageLimitErrorPrefixes changed IsUsageLimitError")
-	}
-	// TerminalTaskStatuses is a map that parallel tests may read, so it is
-	// compared rather than modified.
-	for _, s := range []string{"completed", "failed", "stopped", "killed", "running", ""} {
-		if isTerminalTaskStatus(s) != TerminalTaskStatuses[s] {
-			t.Errorf("isTerminalTaskStatus(%q) disagrees with TerminalTaskStatuses", s)
+func TestIsTerminalTaskStatus(t *testing.T) {
+	t.Parallel()
+	for s, want := range map[string]bool{"completed": true, "failed": true, "stopped": true, "killed": true, "running": false, "": false} {
+		if got := IsTerminalTaskStatus(s); got != want {
+			t.Errorf("IsTerminalTaskStatus(%q) = %v, want %v", s, got, want)
 		}
 	}
 }

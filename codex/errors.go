@@ -63,9 +63,6 @@ var (
 	// ErrCLINotFound is returned when the codex executable cannot be
 	// located or started from Options.CLIPath.
 	ErrCLINotFound = errors.New("codex: codex CLI not found; install it or set Options.CLIPath")
-	// ErrNotInitialized is returned when an API call is made before the
-	// initialize/initialized handshake completed.
-	ErrNotInitialized = errors.New("codex: not initialized")
 )
 
 // RPCError is a JSON-RPC 2.0 error object returned by the app-server.

@@ -34,7 +34,7 @@ func TestRunReportsStreamError(t *testing.T) {
 		ft.push(map[string]any{"type": "control_response", "response": map[string]any{
 			"subtype": "success", "request_id": frame["request_id"], "response": map[string]any{}}})
 		ft.push(resultFrame())
-		ft.finish(NewProcessError("Command failed", &code, "", nil))
+		ft.finish(newProcessError("Command failed", &code, "", nil))
 	}
 	res, err := Run(t.Context(), "hi", Options{Transport: ft})
 	if _, ok := errors.AsType[*ProcessError](err); !ok {
@@ -159,7 +159,7 @@ func TestClientDoneOnProcessExit(t *testing.T) {
 	t.Parallel()
 	client, ft := connectedClient(t, nil)
 	code := 1
-	ft.finish(NewProcessError("Command failed", &code, "boom", nil))
+	ft.finish(newProcessError("Command failed", &code, "boom", nil))
 	waitDone(t, client.Done())
 	if _, ok := errors.AsType[*ProcessError](client.Err()); !ok {
 		t.Fatalf("Err = %T (%v), want *ProcessError", client.Err(), client.Err())

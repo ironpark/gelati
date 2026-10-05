@@ -93,7 +93,7 @@ func (t *subprocessTransport) Connect(ctx context.Context) error {
 		return nil
 	}
 	if t.opts.User != "" {
-		return NewConnectionError(
+		return newConnectionError(
 			"Options.User is not supported by the subprocess transport; " +
 				"run the process as the desired user instead")
 	}
@@ -117,7 +117,7 @@ func (t *subprocessTransport) Connect(ctx context.Context) error {
 
 	if t.opts.Cwd != "" && spawn == nil {
 		if info, err := os.Stat(t.opts.Cwd); err != nil || !info.IsDir() {
-			return NewConnectionError("Working directory does not exist: " + t.opts.Cwd)
+			return newConnectionError("Working directory does not exist: " + t.opts.Cwd)
 		}
 	}
 	if spawn == nil {
@@ -143,9 +143,9 @@ func (t *subprocessTransport) Connect(ctx context.Context) error {
 	if err != nil {
 		cancel()
 		if proc.IsNotFound(err) {
-			return NewCLINotFoundError("Claude Code not found at", cliPath)
+			return newCLINotFoundError("Claude Code not found at", cliPath)
 		}
-		return NewConnectionError("Failed to start Claude Code: " + err.Error())
+		return newConnectionError("Failed to start Claude Code: " + err.Error())
 	}
 
 	stdin := child.Stdin()
@@ -246,10 +246,10 @@ func (t *subprocessTransport) Write(ctx context.Context, data []byte) error {
 	stdin, ready, exitErr := t.stdin, t.ready, t.exitErr
 	t.mu.Unlock()
 	if !ready || stdin == nil {
-		return NewConnectionError("transport is not ready for writing")
+		return newConnectionError("transport is not ready for writing")
 	}
 	if exitErr != nil {
-		return NewConnectionError("Cannot write to process that exited with error: " + exitErr.Error())
+		return newConnectionError("Cannot write to process that exited with error: " + exitErr.Error())
 	}
 	if len(data) == 0 || data[len(data)-1] != '\n' {
 		// One write per frame, newline included.
@@ -262,7 +262,7 @@ func (t *subprocessTransport) Write(ctx context.Context, data []byte) error {
 			t.exitErr = err
 		}
 		t.mu.Unlock()
-		return NewConnectionError("Failed to write to process stdin: " + err.Error())
+		return newConnectionError("Failed to write to process stdin: " + err.Error())
 	}
 	return nil
 }
@@ -325,7 +325,7 @@ func (t *subprocessTransport) ReadMessages() iter.Seq2[jsontext.Value, error] {
 		stdout, child := t.stdout, t.proc
 		t.mu.Unlock()
 		if stdout == nil || child == nil {
-			yield(nil, NewConnectionError("not connected"))
+			yield(nil, newConnectionError("not connected"))
 			return
 		}
 
@@ -358,7 +358,7 @@ func (t *subprocessTransport) ReadMessages() iter.Seq2[jsontext.Value, error] {
 				return
 			}
 			if !errors.Is(err, os.ErrClosed) {
-				yield(nil, NewConnectionError("Failed to read from process stdout: "+err.Error()))
+				yield(nil, newConnectionError("Failed to read from process stdout: "+err.Error()))
 				return
 			}
 		}
@@ -377,7 +377,7 @@ func (t *subprocessTransport) ReadMessages() iter.Seq2[jsontext.Value, error] {
 				exitCode = &code
 				msg = fmt.Sprintf("Command failed with exit code %d", code)
 			}
-			perr := NewProcessError(msg, exitCode, strings.TrimSpace(t.stderrTail.String()), waitErr)
+			perr := newProcessError(msg, exitCode, strings.TrimSpace(t.stderrTail.String()), waitErr)
 			t.mu.Lock()
 			t.exitErr = perr
 			t.mu.Unlock()

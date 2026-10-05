@@ -1,16 +1,29 @@
 package claude
 
 import (
+	"encoding/json/jsontext"
 	"errors"
-	"github.com/ironpark/gelati/internal/jsonx"
+	"fmt"
 	"testing"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
+
+// parseMessage decodes one raw CLI output frame and parses it with
+// parseMessageMap, as the control loop does.
+func parseMessage(data []byte) (Message, error) {
+	var raw map[string]any
+	if err := jsonx.Unmarshal(data, &raw); err != nil {
+		return nil, newMessageParseError(fmt.Sprintf("Invalid message data: %v", err), jsontext.Value(data))
+	}
+	return parseMessageMap(raw, jsontext.Value(data))
+}
 
 func mustParse(t *testing.T, line string) Message {
 	t.Helper()
-	msg, err := ParseMessage([]byte(line))
+	msg, err := parseMessage([]byte(line))
 	if err != nil {
-		t.Fatalf("ParseMessage(%s): %v", line, err)
+		t.Fatalf("parseMessage(%s): %v", line, err)
 	}
 	return msg
 }
@@ -187,13 +200,13 @@ func TestParseTaskMessages(t *testing.T) {
 
 	notif := mustParse(t, `{"type":"system","subtype":"task_notification","task_id":"t1",
 	  "status":"completed","output_file":"/tmp/o","summary":"done","uuid":"u1","session_id":"s1"}`).(*TaskNotificationMessage)
-	if notif.Status != "completed" || notif.Usage != nil || !TerminalTaskStatuses[notif.Status] {
+	if notif.Status != "completed" || notif.Usage != nil || !IsTerminalTaskStatus(notif.Status) {
 		t.Fatalf("unexpected: %+v", notif)
 	}
 
 	updated := mustParse(t, `{"type":"system","subtype":"task_updated","task_id":"t1",
 	  "patch":{"status":"killed","end_time":1}}`).(*TaskUpdatedMessage)
-	if updated.Status != "killed" || !TerminalTaskStatuses[updated.Status] {
+	if updated.Status != "killed" || !IsTerminalTaskStatus(updated.Status) {
 		t.Fatalf("unexpected: %+v", updated)
 	}
 	// A patch-less update must not fail.
@@ -348,7 +361,7 @@ func TestParseStreamEventDecodesEventOnce(t *testing.T) {
 
 func TestParseUnknownTypeIsKept(t *testing.T) {
 	t.Parallel()
-	msg, err := ParseMessage([]byte(`{"type":"brand_new_message","x":1}`))
+	msg, err := parseMessage([]byte(`{"type":"brand_new_message","x":1}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -370,7 +383,7 @@ func TestParseMalformedMessages(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			msg, err := ParseMessage([]byte(tc.line))
+			msg, err := parseMessage([]byte(tc.line))
 			if err == nil {
 				t.Fatalf("expected error, got %#v", msg)
 			}

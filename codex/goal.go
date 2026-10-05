@@ -42,7 +42,7 @@ func (c *Client) SetThreadGoal(ctx context.Context, params SetThreadGoalParams) 
 	var result struct {
 		Goal ThreadGoal `json:"goal"`
 	}
-	if err := c.call(ctx, "thread/goal/set", params, &result); err != nil {
+	if err := c.tr.Call(ctx, "thread/goal/set", params, &result); err != nil {
 		return nil, err
 	}
 	return &result.Goal, nil
@@ -53,7 +53,7 @@ func (c *Client) ReadThreadGoal(ctx context.Context, threadID string) (*ThreadGo
 	var result struct {
 		Goal *ThreadGoal `json:"goal"`
 	}
-	if err := c.call(ctx, "thread/goal/get", ThreadIDParams{ThreadID: threadID}, &result); err != nil {
+	if err := c.tr.Call(ctx, "thread/goal/get", ThreadIDParams{ThreadID: threadID}, &result); err != nil {
 		return nil, err
 	}
 	return result.Goal, nil
@@ -64,7 +64,7 @@ func (c *Client) ClearThreadGoal(ctx context.Context, threadID string) (bool, er
 	var result struct {
 		Cleared bool `json:"cleared"`
 	}
-	if err := c.call(ctx, "thread/goal/clear", ThreadIDParams{ThreadID: threadID}, &result); err != nil {
+	if err := c.tr.Call(ctx, "thread/goal/clear", ThreadIDParams{ThreadID: threadID}, &result); err != nil {
 		return false, err
 	}
 	return result.Cleared, nil

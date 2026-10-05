@@ -422,6 +422,7 @@ func toolResultPayload(r *ToolResult) map[string]any {
 // custom tool call.
 func toolResponse(r *ToolResult) (*wire.ToolResponse, error) {
 	if r.ID == "" {
+		//lint:ignore ST1005 message text follows the upstream SDK
 		return nil, fmt.Errorf("agy: ToolResult for '%s' is missing an id. The local connection protocol requires an id to correlate results with calls.", r.Name)
 	}
 	if r.Failed() {

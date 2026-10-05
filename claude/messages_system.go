@@ -1,7 +1,6 @@
 package claude
 
 import (
-	"maps"
 	"slices"
 )
 
@@ -49,7 +48,7 @@ type InitMessage struct {
 	OutputStyle           string   `json:"output_style"`
 	Skills                []string `json:"skills"`
 	// Plugins lists the loaded plugins; PluginErrors the load failures.
-	Plugins                []InitPlugin           `json:"plugins"`
+	Plugins                []PluginInfo           `json:"plugins"`
 	PluginErrors           []InitPluginError      `json:"plugin_errors,omitempty"`
 	FastModeState          FastModeState          `json:"fast_mode_state,omitempty"`
 	FastModeDisabledReason FastModeDisabledReason `json:"fast_mode_disabled_reason,omitempty"`
@@ -78,9 +77,6 @@ type InitMCPServer struct {
 	// config scope), when reported.
 	Source string `json:"source,omitempty"`
 }
-
-// InitPlugin is one loaded plugin on an InitMessage.
-type InitPlugin = PluginInfo
 
 // InitPluginError is one plugin load failure on an InitMessage.
 type InitPluginError struct {
@@ -421,22 +417,17 @@ type TaskUsage struct {
 	DurationMS  int `json:"duration_ms"`
 }
 
-// TerminalTaskStatuses lists the task statuses that mean the task has finished.
-// It spans both lifecycle vocabularies: task_notification reports "stopped"
-// while task_updated reports the raw "killed". The SDK checks statuses against
-// a private copy, so modifying it affects only the caller.
-var TerminalTaskStatuses = map[string]bool{
-	"completed": true,
-	"failed":    true,
-	"stopped":   true,
-	"killed":    true,
+// IsTerminalTaskStatus reports whether status means the task has finished:
+// "completed", "failed", "stopped" or "killed". It spans both lifecycle
+// vocabularies, since task_notification reports "stopped" while task_updated
+// reports the raw "killed".
+func IsTerminalTaskStatus(status string) bool {
+	switch status {
+	case "completed", "failed", "stopped", "killed":
+		return true
+	}
+	return false
 }
-
-// terminalTaskStatuses is the private copy of TerminalTaskStatuses.
-var terminalTaskStatuses = maps.Clone(TerminalTaskStatuses)
-
-// isTerminalTaskStatus reports whether status means the task has finished.
-func isTerminalTaskStatus(status string) bool { return terminalTaskStatuses[status] }
 
 // TaskStartedMessage is emitted when a task starts. It embeds SystemMessage, so
 // a type switch on *SystemMessage does not match it — switch on the concrete

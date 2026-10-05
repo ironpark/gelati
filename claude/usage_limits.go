@@ -5,14 +5,10 @@ import (
 	"strings"
 )
 
-// Usage-limit message prefixes exported by the TypeScript SDK. The Is*
-// functions match against private copies taken at package initialization, so
-// modifying an exported list affects only the caller.
+// The prefix lists mirror the TypeScript SDK's exported usage-limit lists;
+// each backs the Is* function of the same name, which documents it.
 
-// UsageLimitErrorPrefixes are the prefixes of messages meaning "a usage
-// limit was genuinely reached" (the CLI's limit-reached and
-// usage-credits-required texts). Alpha.
-var UsageLimitErrorPrefixes = []string{
+var usageLimitErrorPrefixes = []string{
 	"You've hit your",
 	"You've reached your",
 	"You're out of usage credits",
@@ -27,10 +23,7 @@ var UsageLimitErrorPrefixes = []string{
 	"Your seat type doesn't include extra usage",
 }
 
-// UsageTransitionPrefixes are the prefixes of overage-transition
-// notifications ("now drawing from credits"). They are shown as toasts and
-// never arrive as API errors. Alpha.
-var UsageTransitionPrefixes = []string{
+var usageTransitionPrefixes = []string{
 	"You're now using usage credits",
 	"You're now using your usage allocation",
 	"Now using your usage allocation",
@@ -39,47 +32,37 @@ var UsageTransitionPrefixes = []string{
 	"Now using extra usage",
 }
 
-// UsageWarningPrefixes are the prefixes of approaching-limit warnings
-// (severity "warning"). They are shown in the footer or as toasts and never
-// arrive as API errors. Alpha.
-var UsageWarningPrefixes = []string{
+var usageWarningPrefixes = []string{
 	"You've used",
 	"You're close to",
 }
 
-// OrgPolicyLimitPrefixes are the prefixes of messages that arrive on the
-// same error path as usage limits but mean an organization policy blocks
-// the request; present them as "disabled for your org", not as a usage
-// limit. Alpha.
-var OrgPolicyLimitPrefixes = []string{
+var orgPolicyLimitPrefixes = []string{
 	"This service is disabled for your org",
 }
-
-// Private copies of the exported lists, which callers may modify.
-var (
-	usageLimitErrorPrefixes = slices.Clone(UsageLimitErrorPrefixes)
-	usageTransitionPrefixes = slices.Clone(UsageTransitionPrefixes)
-	usageWarningPrefixes    = slices.Clone(UsageWarningPrefixes)
-	orgPolicyLimitPrefixes  = slices.Clone(OrgPolicyLimitPrefixes)
-)
 
 // hasAnyPrefix reports whether text starts with one of prefixes.
 func hasAnyPrefix(text string, prefixes []string) bool {
 	return slices.ContainsFunc(prefixes, func(p string) bool { return strings.HasPrefix(text, p) })
 }
 
-// IsUsageLimitError reports whether text starts with one of
-// UsageLimitErrorPrefixes. Alpha.
+// IsUsageLimitError reports whether text is a message meaning a usage limit
+// was genuinely reached (the CLI's limit-reached and usage-credits-required
+// texts). Alpha.
 func IsUsageLimitError(text string) bool { return hasAnyPrefix(text, usageLimitErrorPrefixes) }
 
-// IsUsageTransition reports whether text starts with one of
-// UsageTransitionPrefixes. Alpha.
+// IsUsageTransition reports whether text is an overage-transition
+// notification ("now drawing from credits"). Such texts are shown as toasts
+// and never arrive as API errors. Alpha.
 func IsUsageTransition(text string) bool { return hasAnyPrefix(text, usageTransitionPrefixes) }
 
-// IsUsageWarning reports whether text starts with one of
-// UsageWarningPrefixes. Alpha.
+// IsUsageWarning reports whether text is an approaching-limit warning
+// (severity "warning"). Such texts are shown in the footer or as toasts and
+// never arrive as API errors. Alpha.
 func IsUsageWarning(text string) bool { return hasAnyPrefix(text, usageWarningPrefixes) }
 
-// IsOrgPolicyLimit reports whether text starts with one of
-// OrgPolicyLimitPrefixes. Alpha.
+// IsOrgPolicyLimit reports whether text is a message that arrives on the same
+// error path as usage limits but means an organization policy blocks the
+// request; present it as "disabled for your org", not as a usage limit.
+// Alpha.
 func IsOrgPolicyLimit(text string) bool { return hasAnyPrefix(text, orgPolicyLimitPrefixes) }

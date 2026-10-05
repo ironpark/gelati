@@ -329,7 +329,7 @@ var contracts = []contract{
 		if summ.Data == nil {
 			c.Fatal("summary Data is nil")
 		}
-		refolded := claude.FoldSessionSummary(&summ, k, []claude.SessionStoreEntry{e("timestamp", "2024-01-01T00:00:03.000Z")})
+		refolded := claude.FoldSessionSummary(&summ, k, []claude.SessionStoreEntry{e("timestamp", "2024-01-01T00:00:03.000Z")}, nil)
 		if refolded.SessionID != "summ-sess" || refolded.MTime != summ.MTime {
 			c.Errorf("refolded = %+v", refolded)
 		}

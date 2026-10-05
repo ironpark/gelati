@@ -92,10 +92,9 @@ type Client struct {
 
 	accounts *broadcast[AccountUpdate]
 
-	mu          sync.Mutex
-	initialized bool
-	threads     map[string]*threadSubscription
-	logins      map[string][]chan *LoginCompletedParams
+	mu      sync.Mutex
+	threads map[string]*threadSubscription
+	logins  map[string][]chan *LoginCompletedParams
 	// loginResults holds completions that arrived with no waiter.
 	loginResults map[string]*LoginCompletedParams
 }
@@ -184,7 +183,6 @@ func (c *Client) handshake(ctx context.Context) error {
 
 	c.mu.Lock()
 	c.info = result
-	c.initialized = true
 	c.mu.Unlock()
 	return nil
 }
@@ -211,18 +209,6 @@ func (c *Client) Close() error { return c.tr.Close() }
 // which may be nil. Use it for methods this package does not wrap. Errors
 // from the server are *RPCError.
 func (c *Client) Call(ctx context.Context, method string, params, result any) error {
-	return c.call(ctx, method, params, result)
-}
-
-// call performs a JSON-RPC request, rejecting use before the handshake
-// completes or after the client is closed.
-func (c *Client) call(ctx context.Context, method string, params, result any) error {
-	c.mu.Lock()
-	initialized := c.initialized
-	c.mu.Unlock()
-	if !initialized {
-		return ErrNotInitialized
-	}
 	return c.tr.Call(ctx, method, params, result)
 }
 

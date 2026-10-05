@@ -156,7 +156,7 @@ func (t *TurnStream) readOwn(ctx context.Context, emit func(Message) bool) error
 // *ResultError for an error result, and the result alone otherwise.
 func checkResult(result *ResultMessage) (*ResultMessage, error) {
 	if result == nil {
-		return nil, NewConnectionError("Claude Code ended without a result")
+		return nil, newConnectionError("Claude Code ended without a result")
 	}
 	if result.IsError {
 		return result, newErrorResultError(result.Data, nil)

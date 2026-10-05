@@ -291,7 +291,7 @@ func TestToolPermissionContextWrongTypes(t *testing.T) {
 // A rate-limit reset time that is not a number is left nil, not 0.
 func TestRateLimitResetsAtWrongType(t *testing.T) {
 	t.Parallel()
-	msg, err := ParseMessage([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":"soon","overageResetsAt":true}}`))
+	msg, err := parseMessage([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":"soon","overageResetsAt":true}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

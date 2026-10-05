@@ -1,35 +1,20 @@
 package claude
 
-import (
-	"encoding/json/jsontext"
-	"fmt"
+import "encoding/json/jsontext"
 
-	"github.com/ironpark/gelati/internal/jsonx"
-)
-
-// ParseMessage turns one raw CLI output frame into a typed Message.
+// parseMessageMap turns one decoded CLI output frame into a typed Message.
+// src is the original, non-nil payload, from which typed fields are decoded;
+// generic subtrees are taken from data instead of being decoded a second time.
 //
 // Parsing is lenient, like the TypeScript SDK, which never validates frames: a
 // field that is missing or has an unexpected JSON type is left at its zero
 // value. A message type this SDK version does not model (including a frame
 // without a "type") becomes an *UnknownMessage, so that a newer CLI neither
 // breaks an older SDK nor loses data. A *MessageParseError is returned only
-// when data is not a JSON object.
-func ParseMessage(data []byte) (Message, error) {
-	var raw map[string]any
-	if err := jsonx.Unmarshal(data, &raw); err != nil {
-		return nil, NewMessageParseError(
-			fmt.Sprintf("Invalid message data: %v", err), jsontext.Value(data))
-	}
-	return parseMessageMap(raw, jsontext.Value(data))
-}
-
-// parseMessageMap parses an already-decoded frame. src is the original,
-// non-nil payload, from which typed fields are decoded; generic subtrees are
-// taken from data instead of being decoded a second time.
+// when the frame is not a JSON object (data is nil).
 func parseMessageMap(data map[string]any, src jsontext.Value) (Message, error) {
 	if data == nil {
-		return nil, NewMessageParseError("Invalid message data (expected object)", src)
+		return nil, newMessageParseError("Invalid message data (expected object)", src)
 	}
 	typ := str(data["type"])
 	parse, ok := messageParsers[typ]

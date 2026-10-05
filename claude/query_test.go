@@ -278,7 +278,7 @@ func TestQueryPropagatesStreamError(t *testing.T) {
 		ft.push(map[string]any{"type": "control_response", "response": map[string]any{
 			"subtype": "success", "request_id": frame["request_id"], "response": map[string]any{}}})
 		code := 1
-		ft.finish(NewProcessError("Command failed with exit code 1", &code, "bad", nil))
+		ft.finish(newProcessError("Command failed with exit code 1", &code, "bad", nil))
 	}
 	ft.mu.Unlock()
 

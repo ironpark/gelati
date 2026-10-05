@@ -192,65 +192,6 @@ func TestSandboxSettingsMarshalJSON(t *testing.T) {
 	}
 }
 
-func TestFilterEscalatingDefaultMode(t *testing.T) {
-	t.Parallel()
-	mode := func(m string) Settings {
-		return Settings{"permissions": map[string]any{"defaultMode": m, "allow": []any{"Read"}}}
-	}
-	resolved := func(m string, sources ...string) *ResolvedSettings {
-		r := &ResolvedSettings{Effective: Settings{"model": "opus", "permissions": map[string]any{"defaultMode": m, "allow": []any{"Read"}}}}
-		for _, src := range sources {
-			r.Sources = append(r.Sources, ResolvedSettingsSource{Source: src, Settings: mode(m)})
-		}
-		// A higher tier that sets other keys only does not count.
-		r.Sources = append(r.Sources, ResolvedSettingsSource{Source: "flag", Settings: Settings{"model": "opus"}})
-		return r
-	}
-	cases := []struct {
-		name     string
-		in       *ResolvedSettings
-		stripped bool
-	}{
-		{"bypassFromProject", resolved(PermissionModeBypassPermissions, SettingSourceProject), true},
-		{"autoFromLocal", resolved(PermissionModeAuto, SettingSourceLocal), true},
-		{"acceptEditsFromProject", resolved(PermissionModeAcceptEdits, SettingSourceProject), true},
-		{"acceptEditsFromLocal", resolved(PermissionModeAcceptEdits, SettingSourceLocal), false},
-		{"bypassFromUser", resolved(PermissionModeBypassPermissions, SettingSourceUser), false},
-		{"userOverridesProject", resolved(PermissionModeAuto, SettingSourceProject, SettingSourceUser), false},
-		{"projectOverridesUser", resolved(PermissionModeAuto, SettingSourceUser, SettingSourceProject), true},
-		{"planNotEscalating", resolved(PermissionModePlan, SettingSourceProject), false},
-		{"noSources", &ResolvedSettings{Effective: mode(PermissionModeAuto)}, false},
-		{"settingsTypedPermissions", &ResolvedSettings{
-			Effective: Settings{"permissions": Settings{"defaultMode": "auto"}},
-			Sources:   []ResolvedSettingsSource{{Source: "project", Settings: Settings{"permissions": Settings{"defaultMode": "auto"}}}},
-		}, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			before, _ := jsonx.Marshal(tc.in)
-			got := FilterEscalatingDefaultMode(tc.in)
-			_, has := defaultModeOf(got)
-			if has == tc.stripped {
-				t.Fatalf("defaultMode present = %v, want stripped = %v (%v)", has, tc.stripped, got)
-			}
-			if tc.stripped {
-				perms, _ := settingsObject(got["permissions"])
-				if _, ok := tc.in.Effective["permissions"].(map[string]any); ok && perms["allow"] == nil {
-					t.Fatalf("other permission keys lost: %v", got)
-				}
-			}
-			after, _ := jsonx.Marshal(tc.in)
-			if string(before) != string(after) {
-				t.Fatalf("input modified: %s -> %s", before, after)
-			}
-		})
-	}
-	if FilterEscalatingDefaultMode(nil) != nil {
-		t.Fatal("nil input should give nil")
-	}
-}
-
 func TestResolveCommand(t *testing.T) {
 	t.Parallel()
 	flags := []string{"--verbose"}

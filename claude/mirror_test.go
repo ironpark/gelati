@@ -819,7 +819,7 @@ func TestEngineReportMirrorError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := ParseMessage(raw)
+	parsed, err := parseMessage(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -828,7 +828,7 @@ func TestEngineReportMirrorError(t *testing.T) {
 		t.Fatalf("parsed = %#v", parsed)
 	}
 
-	bare, err := ParseMessage([]byte(`{"type":"system","subtype":"mirror_error","error":"e"}`))
+	bare, err := parseMessage([]byte(`{"type":"system","subtype":"mirror_error","error":"e"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

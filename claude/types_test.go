@@ -261,7 +261,7 @@ func TestAgentDefinitionJSON(t *testing.T) {
 func TestErrorHierarchy(t *testing.T) {
 	t.Parallel()
 
-	notFound := NewCLINotFoundError("", "/usr/bin/claude")
+	notFound := newCLINotFoundError("Claude Code not found", "/usr/bin/claude")
 	if notFound.Error() != "Claude Code not found: /usr/bin/claude" {
 		t.Fatalf("message = %q", notFound.Error())
 	}
@@ -278,7 +278,7 @@ func TestErrorHierarchy(t *testing.T) {
 	}
 
 	code := 2
-	proc := NewProcessError("Command failed", &code, "boom", nil)
+	proc := newProcessError("Command failed", &code, "boom", nil)
 	if proc.Error() != "Command failed (exit code: 2)\nError output: boom" {
 		t.Fatalf("message = %q", proc.Error())
 	}
@@ -286,7 +286,7 @@ func TestErrorHierarchy(t *testing.T) {
 		t.Fatalf("unexpected fields: %+v", proc)
 	}
 	cause := errors.New("exit status 2")
-	if !errors.Is(NewProcessError("x", &code, "", cause), cause) {
+	if !errors.Is(newProcessError("x", &code, "", cause), cause) {
 		t.Fatal("ProcessError should unwrap to its Err")
 	}
 
@@ -296,7 +296,7 @@ func TestErrorHierarchy(t *testing.T) {
 	if err := closedError("client"); !errors.Is(err, ErrClosed) || errors.Is(err, ErrNotConnected) {
 		t.Fatalf("closed = %v", err)
 	}
-	if errors.Is(NewConnectionError("x"), ErrClosed) {
+	if errors.Is(newConnectionError("x"), ErrClosed) {
 		t.Fatal("a plain ConnectionError matches no sentinel")
 	}
 }
@@ -312,7 +312,7 @@ func TestResultError(t *testing.T) {
 		"terminal_reason":  "api_error",
 		"session_id":       "sess-1",
 	}
-	err := NewResultError("Query failed", data, &code)
+	err := newResultError("Query failed", data, &code)
 	if err.Subtype != "error_max_turns" {
 		t.Fatalf("subtype = %q", err.Subtype)
 	}
@@ -331,12 +331,12 @@ func TestResultError(t *testing.T) {
 	}
 
 	// A bare string errors field is tolerated.
-	err = NewResultError("x", map[string]any{"errors": "oops"}, nil)
+	err = newResultError("x", map[string]any{"errors": "oops"}, nil)
 	if len(err.Errors) != 1 || err.Errors[0] != "oops" {
 		t.Fatalf("errors = %#v", err.Errors)
 	}
 	// A missing payload is tolerated.
-	if e := NewResultError("x", nil, nil); e.Subtype != "" || e.Errors != nil {
+	if e := newResultError("x", nil, nil); e.Subtype != "" || e.Errors != nil {
 		t.Fatalf("unexpected: %+v", e)
 	}
 }
@@ -344,16 +344,12 @@ func TestResultError(t *testing.T) {
 func TestJSONDecodeAndParseErrors(t *testing.T) {
 	t.Parallel()
 	inner := errors.New("unexpected token")
-	line := "{" + string(make([]byte, 0)) + "not json"
-	de := NewJSONDecodeError(line, inner)
+	de := &JSONDecodeError{baseError{Msg: "bad"}, "{not json", inner}
 	if !errors.Is(de, inner) {
 		t.Fatal("JSONDecodeError should wrap its cause")
 	}
-	if de.Line != line {
-		t.Fatalf("line = %q", de.Line)
-	}
 
-	pe := NewMessageParseError("missing type", jsontext.Value(`{"a":1}`))
+	pe := newMessageParseError("missing type", jsontext.Value(`{"a":1}`))
 	if pe.Error() != "missing type" || string(pe.Data) != `{"a":1}` {
 		t.Fatalf("unexpected: %+v", pe)
 	}

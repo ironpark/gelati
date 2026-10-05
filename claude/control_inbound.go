@@ -107,6 +107,7 @@ func (e *engine) dispatchControlRequest(ctx context.Context, requestID string, r
 	case "request_user_dialog":
 		return e.handleUserDialog(ctx, requestID, request)
 	default:
+		//lint:ignore ST1005 sent to the CLI verbatim, as the Python SDK does
 		return nil, fmt.Errorf("Unsupported control request subtype: %s", subtype)
 	}
 }
@@ -149,6 +150,7 @@ func (e *engine) handleHookCallback(ctx context.Context, request map[string]any)
 	id := str(request["callback_id"])
 	callback, ok := e.cfg.hookCallbacks[id]
 	if !ok {
+		//lint:ignore ST1005 sent to the CLI verbatim, as the Python SDK does
 		return nil, fmt.Errorf("No hook callback found for ID: %s", id)
 	}
 	input, _ := request["input"].(map[string]any)

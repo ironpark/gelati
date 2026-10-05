@@ -136,7 +136,7 @@ func (r *runTracker) onTaskFrame(frame map[string]any) {
 		delete(r.tasks, taskID)
 	case "task_updated":
 		patch, _ := frame["patch"].(map[string]any)
-		if isTerminalTaskStatus(str(patch["status"])) {
+		if IsTerminalTaskStatus(str(patch["status"])) {
 			delete(r.tasks, taskID)
 		}
 	}
@@ -344,7 +344,7 @@ func (t *errorResultTracker) translate(err error) error {
 
 // newErrorResultError reports a failed result frame as a ResultError.
 func newErrorResultError(frame map[string]any, exitCode *int) *ResultError {
-	return NewResultError("Claude Code returned an error result: "+errorResultText(frame), frame, exitCode)
+	return newResultError("Claude Code returned an error result: "+errorResultText(frame), frame, exitCode)
 }
 
 // errorResultText picks the most informative text out of a failed result frame.

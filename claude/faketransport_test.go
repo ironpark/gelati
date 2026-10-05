@@ -48,7 +48,7 @@ func (f *fakeTransport) Write(_ context.Context, data []byte) error {
 	f.mu.Lock()
 	if f.closed {
 		f.mu.Unlock()
-		return NewConnectionError("transport is closed")
+		return newConnectionError("transport is closed")
 	}
 	cp := append([]byte(nil), data...)
 	f.writes = append(f.writes, cp)

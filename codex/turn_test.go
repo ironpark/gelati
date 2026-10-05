@@ -418,6 +418,33 @@ func TestAbandonedStreamDoesNotBlockOtherThreads(t *testing.T) {
 	}
 }
 
+func TestOverflowKeepsItemsAndTurnEnd(t *testing.T) {
+	client, server := connect(t, Options{EventBuffer: 1})
+	threadID := startThread(t, client, server, "thr_1")
+	stream := startTurn(t, client, server, threadID, "turn_1", Text("flood"))
+
+	// Nobody reads yet, so the queue overflows: deltas are dropped, but the
+	// completed item and the turn's end must still arrive.
+	for range 20 {
+		server.notify(MethodAgentMessageDelta, map[string]any{"threadId": "thr_1", "turnId": "turn_1",
+			"itemId": "item_1", "delta": "x"})
+	}
+	server.notify(MethodItemCompleted, map[string]any{"threadId": "thr_1", "turnId": "turn_1",
+		"item": map[string]any{"type": "agentMessage", "id": "item_1", "text": "full answer"}})
+	server.notify(MethodTurnCompleted, map[string]any{"threadId": "thr_1",
+		"turn": map[string]any{"id": "turn_1", "status": "completed"}})
+
+	ctx, cancel := context.WithTimeout(context.Background(), fakeTimeout)
+	defer cancel()
+	result, err := stream.Result(ctx)
+	if err != nil || result.Turn.Status != TurnCompleted {
+		t.Fatalf("Result = %+v, %v; want completed", result, err)
+	}
+	if got := result.Text(); got != "full answer" {
+		t.Fatalf("Text = %q, want %q", got, "full answer")
+	}
+}
+
 func TestCloseAfterTurnEnded(t *testing.T) {
 	client, server := connect(t, Options{})
 	threadID := startThread(t, client, server, "thr_1")

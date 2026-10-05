@@ -75,7 +75,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Lock()
 	if c.sess != nil || c.connecting {
 		c.mu.Unlock()
-		return NewConnectionError("already connected")
+		return newConnectionError("already connected")
 	}
 	// Reserved for the whole handshake, so a concurrent Connect cannot open
 	// a second session and leak one of them.

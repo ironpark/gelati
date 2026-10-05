@@ -207,7 +207,7 @@ func (e *engine) writeFrame(ctx context.Context, frame map[string]any) error {
 // outlive the engine.
 func (e *engine) sendMCPFrame(ctx context.Context, frame map[string]any) error {
 	if e.isClosed() {
-		return NewConnectionError("connection closed")
+		return newConnectionError("connection closed")
 	}
 	return e.writeFrame(ctx, frame)
 }
@@ -474,7 +474,7 @@ func (e *engine) beginControlRequest(ctx context.Context, request map[string]any
 		return nil, err
 	}
 	if e.isClosed() {
-		return nil, NewConnectionError("connection closed")
+		return nil, newConnectionError("connection closed")
 	}
 	e.mu.Lock()
 	e.counter++
@@ -503,7 +503,7 @@ func (e *engine) beginControlRequest(ctx context.Context, request map[string]any
 			return nil, ctx.Err()
 		case <-e.closed:
 			cleanup()
-			return nil, NewConnectionError("connection closed while awaiting a control response")
+			return nil, newConnectionError("connection closed while awaiting a control response")
 		case <-e.readerDone:
 			// The read loop delivers any response before it ends, so one
 			// that arrived is already buffered in p.ch.
@@ -513,7 +513,7 @@ func (e *engine) beginControlRequest(ctx context.Context, request map[string]any
 			default:
 			}
 			cleanup()
-			return nil, NewConnectionError("CLI output ended while awaiting a control response")
+			return nil, newConnectionError("CLI output ended while awaiting a control response")
 		}
 	}, nil
 }
@@ -733,5 +733,5 @@ func (e *engine) endReason() error {
 	if fatal != nil {
 		return fatal
 	}
-	return NewConnectionError("Claude Code output ended")
+	return newConnectionError("Claude Code output ended")
 }

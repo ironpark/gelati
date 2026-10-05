@@ -304,7 +304,7 @@ func (g *gen) printf(format string, args ...any) { fmt.Fprintf(&g.body, format, 
 // claim reserves a Go type name for a structural key.
 func (g *gen) claim(name, k string) error {
 	if prev, ok := g.used[name]; ok && prev != k && !g.debug {
-		return fmt.Errorf("Go type name %s generated for two different shapes; add a typeNames entry", name)
+		return fmt.Errorf("type name %s generated for two different shapes; add a typeNames entry", name)
 	}
 	g.used[name] = k
 	return nil

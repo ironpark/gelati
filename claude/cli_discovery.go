@@ -12,7 +12,7 @@ func findCLI() (string, error) {
 	if path, ok := proc.Find("claude", cliCandidatesFn()...); ok {
 		return path, nil
 	}
-	return "", NewCLINotFoundError(
+	return "", newCLINotFoundError(
 		"Claude Code not found. Install with:\n"+
 			"  npm install -g @anthropic-ai/claude-code\n"+
 			"\nIf already installed locally, try:\n"+

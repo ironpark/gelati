@@ -14,8 +14,8 @@ import (
 	"github.com/ironpark/gelati/internal/safecall"
 )
 
-// DefaultMCPProtocolVersion is offered when the client does not name one.
-const DefaultMCPProtocolVersion = "2024-11-05"
+// defaultMCPProtocolVersion is offered when the client does not name one.
+const defaultMCPProtocolVersion = "2024-11-05"
 
 // JSON-RPC error codes used by the in-process server.
 const (
@@ -565,7 +565,7 @@ func negotiateProtocolVersion(params jsontext.Value) string {
 	if len(params) > 0 && jsonx.Unmarshal(params, &p) == nil && p.ProtocolVersion != "" {
 		return p.ProtocolVersion
 	}
-	return DefaultMCPProtocolVersion
+	return defaultMCPProtocolVersion
 }
 
 // validateAgainstSchema performs the minimal JSON Schema checks the SDK makes

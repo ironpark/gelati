@@ -142,17 +142,6 @@ func TestClientDefaultsClientName(t *testing.T) {
 	server.respond(req, defaultInitializeResult)
 }
 
-func TestClientCallBeforeHandshake(t *testing.T) {
-	server := newFakeServer(t)
-	c := &Client{}
-	c.tr = newTransport(transportConfig{in: server.toClientR, out: server.clientW})
-	t.Cleanup(func() { _ = c.tr.Close() })
-
-	if err := c.call(context.Background(), "thread/start", nil, nil); !errors.Is(err, ErrNotInitialized) {
-		t.Fatalf("err = %v, want ErrNotInitialized", err)
-	}
-}
-
 func TestClientCallAfterClose(t *testing.T) {
 	client, _ := connect(t, Options{})
 
@@ -164,7 +153,7 @@ func TestClientCallAfterClose(t *testing.T) {
 		t.Fatalf("second Close: %v", err)
 	}
 
-	err := client.call(context.Background(), "thread/start", nil, nil)
+	err := client.Call(context.Background(), "thread/start", nil, nil)
 	if !errors.Is(err, ErrClosed) {
 		t.Fatalf("err = %v, want ErrClosed", err)
 	}
@@ -189,7 +178,7 @@ func TestClientProcessExitSurfaces(t *testing.T) {
 	if client.Err() == nil {
 		t.Fatal("Err = nil after server exit")
 	}
-	if err := client.call(context.Background(), "thread/start", nil, nil); err == nil {
+	if err := client.Call(context.Background(), "thread/start", nil, nil); err == nil {
 		t.Fatal("call succeeded after server exit")
 	}
 }

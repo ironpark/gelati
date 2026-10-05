@@ -517,12 +517,12 @@ func (s *SpareProcess) applyClaimResponse(resp map[string]any, cwd string) *Clai
 // idempotent.
 func (s *SpareProcess) Close() error {
 	s.mu.Lock()
-	claimed := s.state == spareClaimed
-	if !claimed {
+	parked := s.state == spareParked
+	if parked {
 		s.state = spareClosed
 	}
 	s.mu.Unlock()
-	if !claimed {
+	if parked {
 		s.settle(nil, newClaimError(claimSpareClosed, "the spare was closed before it was claimed", nil, nil))
 	}
 	err := s.sess.close()

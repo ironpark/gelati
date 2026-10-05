@@ -50,7 +50,7 @@ func (s *memStoreFake) Append(_ context.Context, key SessionKey, entries []Sessi
 		if p, ok := s.summaries[key]; ok {
 			prev = &p
 		}
-		next := FoldSessionSummary(prev, key, entries)
+		next := FoldSessionSummary(prev, key, entries, nil)
 		next.MTime = s.clock
 		s.summaries[key] = next
 	}
@@ -119,12 +119,6 @@ func (s *memStoreFake) loads() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return slices.Clone(s.loadCalls)
-}
-
-func (s *memStoreFake) resetLoads() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.loadCalls = nil
 }
 
 // storeMinimal exposes only Append and Load.

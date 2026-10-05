@@ -108,9 +108,9 @@ func TestParseLenient(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			msg, err := ParseMessage([]byte(tc.line))
+			msg, err := parseMessage([]byte(tc.line))
 			if err != nil {
-				t.Fatalf("ParseMessage: %v", err)
+				t.Fatalf("parseMessage: %v", err)
 			}
 			tc.check(t, msg)
 		})
@@ -152,7 +152,7 @@ func TestParseSystemSubtypes(t *testing.T) {
 				if im.MCPServers[0] != (InitMCPServer{Name: "fs", Status: "connected", Source: "sdk"}) {
 					t.Fatalf("mcp = %+v", im.MCPServers)
 				}
-				if im.Plugins[0] != (InitPlugin{Name: "p", Path: "/p", Version: "1.0.0"}) ||
+				if im.Plugins[0] != (PluginInfo{Name: "p", Path: "/p", Version: "1.0.0"}) ||
 					im.PluginErrors[0] != (InitPluginError{Plugin: "inline[0]", Type: "path-not-found", Message: "m", Path: "/x"}) {
 					t.Fatalf("plugins = %+v / %+v", im.Plugins, im.PluginErrors)
 				}

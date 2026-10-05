@@ -143,6 +143,7 @@ func (r *toolRunner) unregister(name string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.tools[name]; !ok {
+		//lint:ignore ST1005 message text follows the upstream SDK
 		return fmt.Errorf("Tool '%s' is not registered.", name)
 	}
 	delete(r.tools, name)
@@ -180,6 +181,7 @@ func (r *toolRunner) execute(ctx context.Context, name string, args map[string]a
 	t, tc := r.tools[name], r.tc
 	r.mu.RUnlock()
 	if t == nil {
+		//lint:ignore ST1005 message text follows the upstream SDK
 		return nil, fmt.Errorf("Tool '%s' is not registered.", name)
 	}
 	return t.Call(ctx, tc, maps.Clone(args))

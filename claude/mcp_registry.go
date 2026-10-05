@@ -305,7 +305,7 @@ func (r *sdkMCPRegistry) sendToCLI(ctx context.Context, entry *sdkMCPEntry, mess
 	entry.mu.Unlock()
 	name := entry.config.Name
 	if removed {
-		return NewConnectionError(fmt.Sprintf("MCP server '%s' is no longer registered", name))
+		return newConnectionError(fmt.Sprintf("MCP server '%s' is no longer registered", name))
 	}
 	if !message.IsValid(jsonx.Foreign) {
 		return fmt.Errorf("claude: MCP server '%s' sent invalid JSON", name)
@@ -324,6 +324,7 @@ func (r *sdkMCPRegistry) handleControl(ctx context.Context, request map[string]a
 	serverName := str(request["server_name"])
 	message, ok := request["message"]
 	if serverName == "" || !ok || message == nil {
+		//lint:ignore ST1005 sent to the CLI verbatim, as the Python SDK does
 		return nil, errors.New("Missing server_name or message for MCP request")
 	}
 	raw, err := json.Marshal(message, jsonx.LegacyEncode)

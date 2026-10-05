@@ -101,7 +101,7 @@ type ReadAccountParams struct {
 // ReadAccount fetches the current account info.
 func (c *Client) ReadAccount(ctx context.Context, params ReadAccountParams) (*AccountInfo, error) {
 	var info AccountInfo
-	if err := c.call(ctx, "account/read", params, &info); err != nil {
+	if err := c.tr.Call(ctx, "account/read", params, &info); err != nil {
 		return nil, err
 	}
 	return &info, nil
@@ -113,7 +113,7 @@ func (c *Client) LoginAPIKey(ctx context.Context, apiKey string) error {
 		Type   string `json:"type"`
 		APIKey string `json:"apiKey"`
 	}{Type: AccountAPIKey, APIKey: apiKey}
-	return c.call(ctx, "account/login/start", params, nil)
+	return c.tr.Call(ctx, "account/login/start", params, nil)
 }
 
 // LoginChatGPT starts the managed ChatGPT browser flow. Await completion with
@@ -129,7 +129,7 @@ func (c *Client) LoginChatGPT(ctx context.Context, opts *ChatGPTLoginOptions) (*
 		params.AppBrand = opts.AppBrand
 	}
 	var login ChatGPTLogin
-	if err := c.call(ctx, "account/login/start", params, &login); err != nil {
+	if err := c.tr.Call(ctx, "account/login/start", params, &login); err != nil {
 		return nil, err
 	}
 	return &login, nil
@@ -141,7 +141,7 @@ func (c *Client) LoginChatGPTDeviceCode(ctx context.Context) (*DeviceCodeLogin, 
 		Type string `json:"type"`
 	}{Type: "chatgptDeviceCode"}
 	var login DeviceCodeLogin
-	if err := c.call(ctx, "account/login/start", params, &login); err != nil {
+	if err := c.tr.Call(ctx, "account/login/start", params, &login); err != nil {
 		return nil, err
 	}
 	return &login, nil
@@ -152,12 +152,12 @@ func (c *Client) CancelLogin(ctx context.Context, loginID string) error {
 	params := struct {
 		LoginID string `json:"loginId"`
 	}{LoginID: loginID}
-	return c.call(ctx, "account/login/cancel", params, nil)
+	return c.tr.Call(ctx, "account/login/cancel", params, nil)
 }
 
 // Logout signs out of the current account.
 func (c *Client) Logout(ctx context.Context) error {
-	return c.call(ctx, "account/logout", nil, nil)
+	return c.tr.Call(ctx, "account/logout", nil, nil)
 }
 
 // AccountUpdates iterates account/updated notifications received from the

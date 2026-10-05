@@ -127,7 +127,7 @@ func TestMCPInitializeAndPing(t *testing.T) {
 
 	// Without a version the default is offered.
 	reply = rpc(t, s, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "initialize"})
-	if reply["result"].(map[string]any)["protocolVersion"] != DefaultMCPProtocolVersion {
+	if reply["result"].(map[string]any)["protocolVersion"] != defaultMCPProtocolVersion {
 		t.Fatalf("result = %#v", reply["result"])
 	}
 

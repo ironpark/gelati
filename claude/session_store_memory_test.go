@@ -174,8 +174,8 @@ func TestInMemorySessionStoreBehavior(t *testing.T) {
 		appendEntries(t, s, key, b2...)
 		appendEntries(t, s, SessionKey{ProjectKey: "p", SessionID: "s", Subpath: "subagents/agent-1"}, SessionStoreEntry{"type": "custom-title", "customTitle": "sub"})
 
-		want := FoldSessionSummary(nil, key, b1)
-		want = FoldSessionSummary(&want, key, b2)
+		want := FoldSessionSummary(nil, key, b1, nil)
+		want = FoldSessionSummary(&want, key, b2, nil)
 		got, _ := s.ListSessionSummaries(ctx, "p")
 		if len(got) != 1 || !reflect.DeepEqual(got[0].Data, want.Data) {
 			t.Fatalf("summaries = %+v, want data %v", got, want.Data)

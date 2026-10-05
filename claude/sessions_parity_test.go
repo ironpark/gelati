@@ -583,7 +583,7 @@ func TestSessionParityWithTypeScript(t *testing.T) {
 			})
 		}
 		call(tsCall{Fn: "fold", Key: &key, Entries: entries, MTime: 1234}, func() any {
-			f := FoldSessionSummaryWithOptions(nil, key, entries, &FoldSessionOptions{MTime: 1234})
+			f := FoldSessionSummary(nil, key, entries, &FoldSessionOptions{MTime: 1234})
 			return map[string]any{"sessionId": f.SessionID, "mtime": f.MTime, "data": f.Data}
 		})
 	}

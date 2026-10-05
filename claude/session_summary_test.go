@@ -18,7 +18,7 @@ func TestSummaryFoldSessionSummary(t *testing.T) {
 
 	t.Run("init from nil", func(t *testing.T) {
 		t.Parallel()
-		s := FoldSessionSummary(nil, summaryTestKey, nil)
+		s := FoldSessionSummary(nil, summaryTestKey, nil, nil)
 		want := SessionSummaryEntry{SessionID: summaryTestKey.SessionID, MTime: 0, Data: map[string]any{}}
 		if !reflect.DeepEqual(s, want) {
 			t.Errorf("got %#v", s)
@@ -30,13 +30,13 @@ func TestSummaryFoldSessionSummary(t *testing.T) {
 		s := FoldSessionSummary(nil, summaryTestKey, []SessionStoreEntry{
 			{"type": "x", "timestamp": "2024-01-01T00:00:00.000Z", "cwd": "/a", "isSidechain": false},
 			{"type": "x", "timestamp": "2024-01-01T00:00:05.000Z", "cwd": "/b"},
-		})
+		}, nil)
 		if s.Data["createdAt"] != int64(1704067200000) || s.Data["cwd"] != "/a" || s.Data["isSidechain"] != false {
 			t.Fatalf("data = %v", s.Data)
 		}
 		s2 := FoldSessionSummary(&s, summaryTestKey, []SessionStoreEntry{
 			{"type": "x", "timestamp": "2024-01-02T00:00:00.000Z", "cwd": "/c", "isSidechain": true},
-		})
+		}, nil)
 		if s2.Data["createdAt"] != int64(1704067200000) || s2.Data["cwd"] != "/a" || s2.Data["isSidechain"] != false {
 			t.Errorf("data = %v", s2.Data)
 		}
@@ -47,13 +47,13 @@ func TestSummaryFoldSessionSummary(t *testing.T) {
 		s := FoldSessionSummary(nil, summaryTestKey, []SessionStoreEntry{
 			{"type": "x", "timestamp": "2024-01-01T00:00:00Z", "customTitle": "t1", "gitBranch": "main"},
 			{"type": "x", "timestamp": "2024-01-01T00:00:01Z", "customTitle": "t2"},
-		})
+		}, nil)
 		if s.Data["customTitle"] != "t2" || s.Data["gitBranch"] != "main" {
 			t.Fatalf("data = %v", s.Data)
 		}
 		s2 := FoldSessionSummary(&s, summaryTestKey, []SessionStoreEntry{
 			{"type": "x", "aiTitle": "ai", "lastPrompt": "lp", "summary": "sm", "gitBranch": "dev"},
-		})
+		}, nil)
 		want := map[string]any{"customTitle": "t2", "aiTitle": "ai", "lastPrompt": "lp", "summaryHint": "sm", "gitBranch": "dev"}
 		for k, v := range want {
 			if s2.Data[k] != v {
@@ -67,48 +67,48 @@ func TestSummaryFoldSessionSummary(t *testing.T) {
 		s := FoldSessionSummary(nil, summaryTestKey, []SessionStoreEntry{
 			{"type": "x", "timestamp": "2024-01-01T00:00:05.000Z"},
 			{"type": "x", "timestamp": "2024-01-01T00:00:01.000Z"},
-		})
+		}, nil)
 		if s.MTime != 0 {
 			t.Errorf("new mtime = %d", s.MTime)
 		}
 		prev := SessionSummaryEntry{SessionID: summaryTestKey.SessionID, MTime: 42, Data: map[string]any{}}
-		if s2 := FoldSessionSummary(&prev, summaryTestKey, []SessionStoreEntry{{"type": "x", "timestamp": "2024-01-01T00:00:10.000Z"}}); s2.MTime != 42 {
+		if s2 := FoldSessionSummary(&prev, summaryTestKey, []SessionStoreEntry{{"type": "x", "timestamp": "2024-01-01T00:00:10.000Z"}}, nil); s2.MTime != 42 {
 			t.Errorf("carried mtime = %d", s2.MTime)
 		}
 	})
 
 	t.Run("tag set and clear", func(t *testing.T) {
 		t.Parallel()
-		s := FoldSessionSummary(nil, summaryTestKey, []SessionStoreEntry{{"type": "tag", "tag": "wip"}})
+		s := FoldSessionSummary(nil, summaryTestKey, []SessionStoreEntry{{"type": "tag", "tag": "wip"}}, nil)
 		if s.Data["tag"] != "wip" {
 			t.Fatalf("data = %v", s.Data)
 		}
-		if s2 := FoldSessionSummary(&s, summaryTestKey, []SessionStoreEntry{{"type": "tag", "tag": ""}}); s2.Data["tag"] != nil {
+		if s2 := FoldSessionSummary(&s, summaryTestKey, []SessionStoreEntry{{"type": "tag", "tag": ""}}, nil); s2.Data["tag"] != nil {
 			t.Errorf("cleared: %v", s2.Data)
 		}
-		if s3 := FoldSessionSummary(&s, summaryTestKey, []SessionStoreEntry{{"type": "tag"}}); s3.Data["tag"] != nil {
+		if s3 := FoldSessionSummary(&s, summaryTestKey, []SessionStoreEntry{{"type": "tag"}}, nil); s3.Data["tag"] != nil {
 			t.Errorf("absent clears: %v", s3.Data)
 		}
-		if s4 := FoldSessionSummary(&s, summaryTestKey, []SessionStoreEntry{{"type": "user", "tag": "ignored"}}); s4.Data["tag"] != "wip" {
+		if s4 := FoldSessionSummary(&s, summaryTestKey, []SessionStoreEntry{{"type": "user", "tag": "ignored"}}, nil); s4.Data["tag"] != "wip" {
 			t.Errorf("non-tag entry: %v", s4.Data)
 		}
 	})
 
 	t.Run("sidechain latches on first entry", func(t *testing.T) {
 		t.Parallel()
-		s := FoldSessionSummary(nil, summaryTestKey, []SessionStoreEntry{{"type": "x", "timestamp": "2024-01-01T00:00:00Z", "isSidechain": true}})
+		s := FoldSessionSummary(nil, summaryTestKey, []SessionStoreEntry{{"type": "x", "timestamp": "2024-01-01T00:00:00Z", "isSidechain": true}}, nil)
 		if s.Data["isSidechain"] != true {
 			t.Errorf("data = %v", s.Data)
 		}
 		s = FoldSessionSummary(nil, summaryTestKey, []SessionStoreEntry{
 			{"type": "user", "isSidechain": true},
 			{"type": "x", "timestamp": "2024-01-01T00:00:00Z"},
-		})
+		}, nil)
 		if s.Data["isSidechain"] != true || s.Data["createdAt"] != int64(1704067200000) {
 			t.Errorf("data = %v", s.Data)
 		}
 		// Only a literal true counts.
-		s = FoldSessionSummary(nil, summaryTestKey, []SessionStoreEntry{{"type": "user", "isSidechain": "yes"}})
+		s = FoldSessionSummary(nil, summaryTestKey, []SessionStoreEntry{{"type": "user", "isSidechain": "yes"}}, nil)
 		if s.Data["isSidechain"] != false {
 			t.Errorf("truthy non-bool: %v", s.Data)
 		}
@@ -125,7 +125,7 @@ func TestSummaryFoldSessionSummary(t *testing.T) {
 			u([]any{map[string]any{"type": "tool_result", "tool_use_id": "x", "content": "res"}}),
 			u("real first"),
 			u("not me"),
-		})
+		}, nil)
 		if s.Data["firstPrompt"] != "real first" || s.Data["firstPromptLocked"] != true {
 			t.Errorf("data = %v", s.Data)
 		}
@@ -133,20 +133,20 @@ func TestSummaryFoldSessionSummary(t *testing.T) {
 		s = FoldSessionSummary(nil, summaryTestKey, []SessionStoreEntry{
 			u("<command-name>/init</command-name> stuff"),
 			u("<command-name>/second</command-name>"),
-		})
+		}, nil)
 		if s.Data["firstPromptLocked"] == true || s.Data["commandFallback"] != "/init" {
 			t.Errorf("command fallback: %v", s.Data)
 		}
-		s2 := FoldSessionSummary(&s, summaryTestKey, []SessionStoreEntry{u("now real")})
+		s2 := FoldSessionSummary(&s, summaryTestKey, []SessionStoreEntry{u("now real")}, nil)
 		if s2.Data["firstPrompt"] != "now real" || s2.Data["firstPromptLocked"] != true || s2.Data["commandFallback"] != "/init" {
 			t.Errorf("locked later: %v", s2.Data)
 		}
 
-		s = FoldSessionSummary(nil, summaryTestKey, []SessionStoreEntry{u("<local-command-stdout> some output"), u("hello")})
+		s = FoldSessionSummary(nil, summaryTestKey, []SessionStoreEntry{u("<local-command-stdout> some output"), u("hello")}, nil)
 		if s.Data["firstPrompt"] != "hello" {
 			t.Errorf("skip pattern: %v", s.Data)
 		}
-		s = FoldSessionSummary(nil, summaryTestKey, []SessionStoreEntry{u(strings.Repeat("x", 300))})
+		s = FoldSessionSummary(nil, summaryTestKey, []SessionStoreEntry{u(strings.Repeat("x", 300))}, nil)
 		if fp, _ := s.Data["firstPrompt"].(string); len([]rune(fp)) > 201 || !strings.HasSuffix(fp, "\u2026") {
 			t.Errorf("truncated: %q", fp)
 		}
@@ -156,7 +156,7 @@ func TestSummaryFoldSessionSummary(t *testing.T) {
 		t.Parallel()
 		prev := SessionSummaryEntry{SessionID: "a", MTime: 5, Data: map[string]any{"cwd": "/x"}}
 		before := maps.Clone(prev.Data)
-		s := FoldSessionSummary(&prev, summaryTestKey, []SessionStoreEntry{{"type": "x", "customTitle": "t"}})
+		s := FoldSessionSummary(&prev, summaryTestKey, []SessionStoreEntry{{"type": "x", "customTitle": "t"}}, nil)
 		if !reflect.DeepEqual(prev.Data, before) || prev.SessionID != "a" || prev.MTime != 5 {
 			t.Errorf("prev mutated: %#v", prev)
 		}
@@ -164,7 +164,7 @@ func TestSummaryFoldSessionSummary(t *testing.T) {
 			t.Errorf("result = %#v", s)
 		}
 		nilData := SessionSummaryEntry{SessionID: "b"}
-		if s := FoldSessionSummary(&nilData, summaryTestKey, []SessionStoreEntry{{"type": "x", "customTitle": "t"}}); s.Data["customTitle"] != "t" {
+		if s := FoldSessionSummary(&nilData, summaryTestKey, []SessionStoreEntry{{"type": "x", "customTitle": "t"}}, nil); s.Data["customTitle"] != "t" {
 			t.Errorf("nil prev data: %#v", s)
 		}
 	})
@@ -253,7 +253,7 @@ func TestSummaryLegacyKeys(t *testing.T) {
 	folded := FoldSessionSummary(&legacy, summaryTestKey, []SessionStoreEntry{
 		summaryUser("later prompt", "2024-01-01T00:00:00.000Z", "cwd", "/other", "isSidechain", true),
 		{"type": "x", "aiTitle": "ai"},
-	})
+	}, nil)
 	wantData := map[string]any{
 		"isSidechain": false, "createdAt": 50.0, "cwd": "/w", "firstPrompt": "fp", "firstPromptLocked": true,
 		"customTitle": "ct", "aiTitle": "ai", "gitBranch": "main", "tag": "wip",
@@ -280,11 +280,11 @@ func TestSummaryFoldOptionsAndRelocation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		prev := SessionSummaryEntry{SessionID: summaryTestKey.SessionID, MTime: tt.prevMTime, Data: map[string]any{}}
-		if got := FoldSessionSummaryWithOptions(&prev, summaryTestKey, nil, tt.opts); got.MTime != tt.wantMTime {
+		if got := FoldSessionSummary(&prev, summaryTestKey, nil, tt.opts); got.MTime != tt.wantMTime {
 			t.Errorf("%s: mtime = %d, want %d", tt.name, got.MTime, tt.wantMTime)
 		}
 	}
-	if got := FoldSessionSummaryWithOptions(nil, summaryTestKey, nil, &FoldSessionOptions{MTime: 3}); got.MTime != 3 {
+	if got := FoldSessionSummary(nil, summaryTestKey, nil, &FoldSessionOptions{MTime: 3}); got.MTime != 3 {
 		t.Errorf("new summary mtime = %d", got.MTime)
 	}
 
@@ -292,11 +292,11 @@ func TestSummaryFoldOptionsAndRelocation(t *testing.T) {
 		{"type": "user", "cwd": "/first"},
 		{"type": "relocated", "relocatedCwd": "/moved"},
 		{"type": "user", "cwd": "/ignored"},
-	})
+	}, nil)
 	if s.Data["cwd"] != "/moved" {
 		t.Errorf("relocated cwd = %v", s.Data["cwd"])
 	}
-	s = FoldSessionSummary(&s, summaryTestKey, []SessionStoreEntry{{"type": "relocated", "relocatedCwd": ""}})
+	s = FoldSessionSummary(&s, summaryTestKey, []SessionStoreEntry{{"type": "relocated", "relocatedCwd": ""}}, nil)
 	if s.Data["cwd"] != "/moved" {
 		t.Errorf("empty relocation changed cwd: %v", s.Data["cwd"])
 	}
@@ -309,7 +309,7 @@ func TestSummaryRoundTripsThroughJSON(t *testing.T) {
 	folded := FoldSessionSummary(nil, summaryTestKey, []SessionStoreEntry{
 		summaryUser("hello", "2024-01-01T00:00:00.123Z", "cwd", "/w"),
 		{"type": "tag", "tag": "wip"},
-	})
+	}, nil)
 	folded.MTime = 7
 	b, err := jsonx.Marshal(folded)
 	if err != nil {
@@ -362,8 +362,8 @@ func TestSummaryParityWithLiteParse(t *testing.T) {
 	}
 	for _, tt := range tests {
 		key := SessionKey{ProjectKey: storeTestKey, SessionID: tt.sid}
-		folded := FoldSessionSummary(nil, key, tt.entries[:tt.split])
-		folded = FoldSessionSummary(&folded, key, tt.entries[tt.split:])
+		folded := FoldSessionSummary(nil, key, tt.entries[:tt.split], nil)
+		folded = FoldSessionSummary(&folded, key, tt.entries[tt.split:], nil)
 		incremental := summaryEntryToSessionInfo(folded, tt.cwd)
 
 		batch := parseSessionInfoFromLite(tt.sid, jsonlToLite(entriesToJSONL(tt.entries), folded.MTime), tt.cwd, "")

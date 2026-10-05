@@ -56,7 +56,7 @@ func summaryValue(data map[string]any, key string) any {
 	return nil
 }
 
-// FoldSessionOptions configures FoldSessionSummaryWithOptions.
+// FoldSessionOptions configures FoldSessionSummary.
 type FoldSessionOptions struct {
 	// MTime, when non-zero, stamps the returned summary's MTime (Unix
 	// epoch milliseconds): the storage write time of the summary, on the
@@ -67,7 +67,7 @@ type FoldSessionOptions struct {
 // FoldSessionSummary folds a batch of appended entries into the running
 // summary for key and returns the updated summary. prev is the previous
 // summary for the same key, or nil for the first append; it is not
-// modified. It is FoldSessionSummaryWithOptions without options. Alpha.
+// modified. opts may be nil. Alpha.
 //
 // Stores call it from Append to maintain the summaries returned by
 // SessionSummaryLister. Do not call it for keys with a Subpath: subagent
@@ -89,13 +89,7 @@ type FoldSessionOptions struct {
 // either afterwards or through FoldSessionOptions.MTime. Entry timestamps
 // would make every batched sidecar look older than its session and defeat
 // the staleness check of ListSessionsFromStore.
-func FoldSessionSummary(prev *SessionSummaryEntry, key SessionKey, entries []SessionStoreEntry) SessionSummaryEntry {
-	return FoldSessionSummaryWithOptions(prev, key, entries, nil)
-}
-
-// FoldSessionSummaryWithOptions is FoldSessionSummary with options; opts
-// may be nil. Alpha.
-func FoldSessionSummaryWithOptions(prev *SessionSummaryEntry, key SessionKey, entries []SessionStoreEntry, opts *FoldSessionOptions) SessionSummaryEntry {
+func FoldSessionSummary(prev *SessionSummaryEntry, key SessionKey, entries []SessionStoreEntry, opts *FoldSessionOptions) SessionSummaryEntry {
 	summary := SessionSummaryEntry{SessionID: key.SessionID, Data: map[string]any{}}
 	if prev != nil {
 		summary.SessionID = prev.SessionID

@@ -34,8 +34,8 @@ type ConnectionError struct {
 	sentinel error
 }
 
-// NewConnectionError builds a ConnectionError with the given message.
-func NewConnectionError(msg string) *ConnectionError {
+// newConnectionError builds a ConnectionError with the given message.
+func newConnectionError(msg string) *ConnectionError {
 	return &ConnectionError{baseError: baseError{Msg: msg}}
 }
 
@@ -77,12 +77,9 @@ type CLINotFoundError struct {
 	CLIPath string
 }
 
-// NewCLINotFoundError builds a CLINotFoundError. An empty message defaults to
-// "Claude Code not found"; a non-empty cliPath is appended to it.
-func NewCLINotFoundError(msg, cliPath string) *CLINotFoundError {
-	if msg == "" {
-		msg = "Claude Code not found"
-	}
+// newCLINotFoundError builds a CLINotFoundError. A non-empty cliPath is
+// appended to msg.
+func newCLINotFoundError(msg, cliPath string) *CLINotFoundError {
 	if cliPath != "" {
 		msg = msg + ": " + cliPath
 	}
@@ -93,7 +90,7 @@ func NewCLINotFoundError(msg, cliPath string) *CLINotFoundError {
 // target matches as `except CLIConnectionError` does in Python, and
 // ErrCLINotFound.
 func (e *CLINotFoundError) Unwrap() []error {
-	return []error{NewConnectionError(e.Msg), ErrCLINotFound}
+	return []error{newConnectionError(e.Msg), ErrCLINotFound}
 }
 
 // ProcessError is returned when the CLI subprocess fails: it exited with a
@@ -110,8 +107,8 @@ type ProcessError struct {
 	Err error
 }
 
-// NewProcessError builds a ProcessError. exitCode and err may be nil.
-func NewProcessError(msg string, exitCode *int, stderr string, err error) *ProcessError {
+// newProcessError builds a ProcessError. exitCode and err may be nil.
+func newProcessError(msg string, exitCode *int, stderr string, err error) *ProcessError {
 	full := msg
 	if exitCode != nil {
 		full = fmt.Sprintf("%s (exit code: %d)", full, *exitCode)
@@ -149,8 +146,8 @@ type ResultError struct {
 	process *ProcessError
 }
 
-// NewResultError builds a ResultError from a raw result message payload.
-func NewResultError(msg string, data map[string]any, exitCode *int) *ResultError {
+// newResultError builds a ResultError from a raw result message payload.
+func newResultError(msg string, data map[string]any, exitCode *int) *ResultError {
 	full := msg
 	if exitCode != nil {
 		full = fmt.Sprintf("%s (exit code: %d)", full, *exitCode)
@@ -232,19 +229,6 @@ type JSONDecodeError struct {
 	Err error
 }
 
-// NewJSONDecodeError builds a JSONDecodeError for the given line.
-func NewJSONDecodeError(line string, err error) *JSONDecodeError {
-	trunc := line
-	if len(trunc) > 100 {
-		trunc = trunc[:100]
-	}
-	return &JSONDecodeError{
-		baseError: baseError{Msg: "Failed to decode JSON: " + trunc + "..."},
-		Line:      line,
-		Err:       err,
-	}
-}
-
 // Unwrap returns the underlying decoding error.
 func (e *JSONDecodeError) Unwrap() error { return e.Err }
 
@@ -256,7 +240,7 @@ type MessageParseError struct {
 	Data jsontext.Value
 }
 
-// NewMessageParseError builds a MessageParseError. data may be nil.
-func NewMessageParseError(msg string, data jsontext.Value) *MessageParseError {
+// newMessageParseError builds a MessageParseError. data may be nil.
+func newMessageParseError(msg string, data jsontext.Value) *MessageParseError {
 	return &MessageParseError{baseError{Msg: msg}, data}
 }

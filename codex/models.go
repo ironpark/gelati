@@ -45,7 +45,7 @@ type ListModelsResult struct {
 // ListModels returns one page of the models Codex can use.
 func (c *Client) ListModels(ctx context.Context, params ListModelsParams) (*ListModelsResult, error) {
 	var result ListModelsResult
-	if err := c.call(ctx, "model/list", params, &result); err != nil {
+	if err := c.tr.Call(ctx, "model/list", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

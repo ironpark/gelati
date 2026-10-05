@@ -160,12 +160,12 @@ type ContextUsageReport struct {
 	RawMaxTokens int     `json:"raw_max_tokens"`
 	Percentage   float64 `json:"percentage"`
 	// OverLimit is set when TotalTokens exceeds RawMaxTokens.
-	OverLimit   *ContextReportOverLimit   `json:"over_limit,omitzero"`
-	Categories  []ContextReportCategory   `json:"categories"`
-	MCPTools    []ContextReportMCPTool    `json:"mcp_tools"`
-	MemoryFiles []ContextReportMemoryFile `json:"memory_files"`
-	Agents      []ContextReportAgent      `json:"agents"`
-	Skills      []ContextReportSkill      `json:"skills,omitempty"`
+	OverLimit   *ContextReportOverLimit  `json:"over_limit,omitzero"`
+	Categories  []ContextReportCategory  `json:"categories"`
+	MCPTools    []ContextReportMCPTool   `json:"mcp_tools"`
+	MemoryFiles []ContextUsageMemoryFile `json:"memory_files"`
+	Agents      []ContextReportAgent     `json:"agents"`
+	Skills      []ContextReportSkill     `json:"skills,omitempty"`
 }
 
 // ContextReportOverLimit says by how much a context window is exceeded.
@@ -189,9 +189,6 @@ type ContextReportMCPTool struct {
 	ServerName string `json:"server_name"`
 	Tokens     int    `json:"tokens"`
 }
-
-// ContextReportMemoryFile is the context cost of one memory file.
-type ContextReportMemoryFile = ContextUsageMemoryFile
 
 // ContextReportAgent is the context cost of one custom agent.
 type ContextReportAgent struct {

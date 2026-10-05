@@ -71,7 +71,7 @@ func TestBuildCommandArgsOptions(t *testing.T) {
 	budget := 1.5
 	value := "v"
 	dash := "-x"
-	sources := []string{SettingSourceProject}
+	sources := []SettingSource{SettingSourceProject}
 	cases := []struct {
 		name string
 		opts Options
@@ -153,7 +153,7 @@ func TestBuildCommandArgsOptions(t *testing.T) {
 			[]string{"--json-schema", `{"type":"object"}`}, nil},
 		// Skills no longer force --setting-sources, as in the TypeScript SDK.
 		{"skillsKeepSources", Options{Skills: SkillsAll{}}, []string{"--allowedTools", "Skill"}, []string{"--setting-sources=user,project"}},
-		{"settingSourcesEmpty", Options{SettingSources: new([]string{})}, []string{"--setting-sources="}, nil},
+		{"settingSourcesEmpty", Options{SettingSources: new([]SettingSource{})}, []string{"--setting-sources="}, nil},
 		{"effort", Options{Effort: EffortHigh}, []string{"--effort", "high"}, nil},
 		{"mcpConfigPath", Options{MCPConfigPath: "/mcp.json"}, []string{"--mcp-config", "/mcp.json"}, nil},
 	}
