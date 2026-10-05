@@ -257,9 +257,9 @@ func TestProcessExitReportsStderr(t *testing.T) {
 		t.Skip("needs sh")
 	}
 	_, err := New(context.Background(), Options{
-		Binary: "sh",
-		Args:   []string{"-c", "echo boom >&2; exit 3"},
-		Stderr: io.Discard,
+		CLIPath: "sh",
+		Args:    []string{"-c", "echo boom >&2; exit 3"},
+		Stderr:  io.Discard,
 	})
 	exit, ok := errors.AsType[*ProcessError](err)
 	if !ok || exit.ExitCode == nil || *exit.ExitCode != 3 || !strings.Contains(exit.Stderr, "boom") {

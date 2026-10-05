@@ -307,14 +307,15 @@ func TestParseStreamEventDecodesEventOnce(t *testing.T) {
 	}
 }
 
-func TestParseUnknownTypeIsSkipped(t *testing.T) {
+func TestParseUnknownTypeIsKept(t *testing.T) {
 	t.Parallel()
 	msg, err := ParseMessage([]byte(`{"type":"brand_new_message","x":1}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if msg != nil {
-		t.Fatalf("got %T, want nil", msg)
+	u, ok := msg.(*UnknownMessage)
+	if !ok || u.Type != "brand_new_message" || u.Raw["x"] != float64(1) {
+		t.Fatalf("got %#v, want *UnknownMessage", msg)
 	}
 }
 
@@ -342,5 +343,18 @@ func TestParseMalformedMessages(t *testing.T) {
 				t.Fatalf("error should carry the offending payload: %q", pe.Data)
 			}
 		})
+	}
+}
+
+func TestStreamEventTextDelta(t *testing.T) {
+	t.Parallel()
+	se := &StreamEvent{Event: map[string]any{"type": "content_block_delta",
+		"delta": map[string]any{"type": "text_delta", "text": "hi"}}}
+	if text, ok := se.TextDelta(); !ok || text != "hi" {
+		t.Fatalf("TextDelta = %q, %v", text, ok)
+	}
+	se.Event["delta"] = map[string]any{"type": "input_json_delta", "partial_json": "{"}
+	if _, ok := se.TextDelta(); ok {
+		t.Fatal("TextDelta matched a non-text delta")
 	}
 }

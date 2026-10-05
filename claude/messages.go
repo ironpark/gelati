@@ -10,11 +10,12 @@ import (
 // its specializations, such as InitMessage, TaskStartedMessage or
 // HookEventMessage), ResultMessage, StreamEvent, RateLimitEvent,
 // ConversationResetMessage, ToolProgressMessage, ToolUseSummaryMessage,
-// AuthStatusMessage, PromptSuggestionMessage and ActiveGoalMessage.
+// AuthStatusMessage, PromptSuggestionMessage, ActiveGoalMessage and
+// UnknownMessage.
 //
 // Parsing is lenient, like the TypeScript SDK: a field the CLI leaves out is
 // left at its zero value instead of failing the stream. Unknown system subtypes
-// arrive as a plain *SystemMessage; unknown top-level types are skipped.
+// arrive as a plain *SystemMessage, unknown top-level types as *UnknownMessage.
 type Message interface {
 	isMessage()
 }
@@ -378,6 +379,20 @@ type StreamEvent struct {
 }
 
 func (*StreamEvent) isMessage() {}
+
+// TextDelta returns the text appended by a content_block_delta event carrying
+// a text_delta, the event IncludePartialMessages is usually enabled for.
+func (e *StreamEvent) TextDelta() (string, bool) {
+	if e.Event["type"] != "content_block_delta" {
+		return "", false
+	}
+	delta, _ := e.Event["delta"].(map[string]any)
+	if delta["type"] != "text_delta" {
+		return "", false
+	}
+	text, ok := delta["text"].(string)
+	return text, ok
+}
 
 // RateLimitInfo describes the rate limit state at the moment it changed.
 type RateLimitInfo struct {

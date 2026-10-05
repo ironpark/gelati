@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/ironpark/gelati/antigravity/internal/wire"
+	"github.com/ironpark/gelati/internal/logx"
 )
 
 // Config configures an Agent backed by the local harness (upstream
@@ -106,14 +107,14 @@ type Config struct {
 
 	// Env holds extra environment variables for the harness process.
 	Env map[string]string
-	// BinaryPath is the localharness executable. Empty uses
+	// CLIPath is the localharness executable. Empty uses
 	// ANTIGRAVITY_HARNESS_PATH (in Env, then the process environment), then
 	// localharness on PATH.
-	BinaryPath string
+	CLIPath string
 	// Stderr, when set, receives the harness's stderr output.
 	Stderr io.Writer
-	// Logger receives the SDK's diagnostics. Nil logs warnings and errors
-	// to stderr, as Python's logging does by default.
+	// Logger receives the SDK's diagnostics. Nil passes warnings and errors
+	// to slog's default logger, much as Python's logging does by default.
 	Logger *slog.Logger
 
 	// modelsResolved marks Models as already merged with the shorthand and
@@ -121,15 +122,8 @@ type Config struct {
 	modelsResolved bool
 }
 
-func defaultLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-}
-
 func (c *Config) logger() *slog.Logger {
-	if c.Logger != nil {
-		return c.Logger
-	}
-	return defaultLogger()
+	return logx.Or(c.Logger)
 }
 
 // clone returns a copy of c whose slices and nested configs are its own.

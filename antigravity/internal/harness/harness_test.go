@@ -154,7 +154,7 @@ func serveFake(c *websocket.Conn, mode string, in *wire.InputConfig) {
 
 func startFake(t *testing.T, mode string, opts Options) (*Harness, error) {
 	t.Helper()
-	opts.BinaryPath = os.Args[0]
+	opts.CLIPath = os.Args[0]
 	if opts.Env == nil {
 		opts.Env = map[string]string{}
 	}
@@ -270,7 +270,7 @@ func TestConnectRetry(t *testing.T) {
 func TestStartContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancel()
-	_, err := Start(ctx, Options{BinaryPath: os.Args[0], Env: map[string]string{fakeModeEnv: "hang"}})
+	_, err := Start(ctx, Options{CLIPath: os.Args[0], Env: map[string]string{fakeModeEnv: "hang"}})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Start = %v", err)
 	}

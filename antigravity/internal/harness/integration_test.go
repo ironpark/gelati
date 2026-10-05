@@ -23,7 +23,7 @@ func TestRealHarness(t *testing.T) {
 
 	var stderr strings.Builder
 	h, err := Start(ctx, Options{
-		BinaryPath:       bin,
+		CLIPath:          bin,
 		Env:              map[string]string{"GEMINI_API_KEY": "dummy-key"},
 		StorageDirectory: t.TempDir(),
 		Stderr:           &lockedWriter{w: &stderr},

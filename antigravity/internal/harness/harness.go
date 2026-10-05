@@ -76,9 +76,9 @@ var ErrClosed = errors.New("antigravity harness: closed")
 
 // Options configures [Start].
 type Options struct {
-	// BinaryPath is the localharness executable. When empty, [FindBinary]
+	// CLIPath is the localharness executable. When empty, [FindBinary]
 	// locates it.
-	BinaryPath string
+	CLIPath string
 	// Env holds extra environment variables. They are added to the inherited
 	// environment of the process and also sent in InputConfig.env, as
 	// upstream does. Nil inherits the environment unchanged.
@@ -130,7 +130,7 @@ type Harness struct {
 // the returned Harness. On failure the process is killed and the error
 // includes the harness's stderr output.
 func Start(ctx context.Context, opts Options) (*Harness, error) {
-	bin := opts.BinaryPath
+	bin := opts.CLIPath
 	if bin == "" {
 		var err error
 		if bin, err = FindBinary(opts.Env); err != nil {

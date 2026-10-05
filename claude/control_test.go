@@ -78,13 +78,15 @@ func TestEngineMessageStream(t *testing.T) {
 			kinds = append(kinds, "assistant")
 		case *ResultMessage:
 			kinds = append(kinds, "result")
+		case *UnknownMessage:
+			kinds = append(kinds, "unknown")
 		default:
 			t.Fatalf("unexpected message %T", msg)
 		}
 	}
-	// The unknown frame type and the non-object frames are skipped rather
-	// than surfaced or treated as fatal.
-	if len(kinds) != 3 || kinds[0] != "system" || kinds[2] != "result" {
+	// The unknown frame type is surfaced as is; the non-object frames are
+	// skipped rather than treated as fatal.
+	if len(kinds) != 4 || kinds[0] != "system" || kinds[1] != "unknown" || kinds[3] != "result" {
 		t.Fatalf("kinds = %q", kinds)
 	}
 }

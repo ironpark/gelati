@@ -5,7 +5,7 @@
 // loop runs in the localharness binary that ships with that SDK; this
 // package launches it, configures it, streams its steps, and runs custom
 // tools, hooks, policies and triggers in the Go process when the harness
-// calls back. The harness is located through Config.BinaryPath, the
+// calls back. The harness is located through Config.CLIPath, the
 // ANTIGRAVITY_HARNESS_PATH environment variable, or localharness on PATH.
 //
 // # Quick start

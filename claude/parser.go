@@ -9,10 +9,10 @@ import (
 //
 // Parsing is lenient, like the TypeScript SDK, which never validates frames: a
 // field that is missing or has an unexpected JSON type is left at its zero
-// value. It returns (nil, nil) for message types this SDK version does not
-// model (including a frame without a "type"), so that a newer CLI cannot break
-// an older SDK. A *MessageParseError is returned only when data is not a JSON
-// object.
+// value. A message type this SDK version does not model (including a frame
+// without a "type") becomes an *UnknownMessage, so that a newer CLI neither
+// breaks an older SDK nor loses data. A *MessageParseError is returned only
+// when data is not a JSON object.
 func ParseMessage(data []byte) (Message, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -29,10 +29,10 @@ func parseMessageMap(data map[string]any, src json.RawMessage) (Message, error) 
 	if data == nil {
 		return nil, NewMessageParseError("Invalid message data (expected object)", src)
 	}
-	parse, ok := messageParsers[str(data["type"])]
+	typ := str(data["type"])
+	parse, ok := messageParsers[typ]
 	if !ok {
-		// Forward-compatible: skip unrecognized (or missing) message types.
-		return nil, nil
+		return &UnknownMessage{Type: typ, Raw: data}, nil
 	}
 	return parse(data, src), nil
 }

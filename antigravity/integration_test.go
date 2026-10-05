@@ -42,7 +42,7 @@ func realHarnessAgent(t *testing.T, ctx context.Context, hooks ...antigravity.Ho
 	}
 	stderr := &syncBuffer{}
 	agent, err := antigravity.NewAgent(antigravity.Config{
-		BinaryPath:   bin,
+		CLIPath:      bin,
 		APIKey:       "invalid-key",
 		Workspaces:   []string{t.TempDir()},
 		SaveDir:      t.TempDir(),

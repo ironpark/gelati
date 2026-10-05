@@ -73,9 +73,13 @@ func (e *engine) handleControlRequest(ctx context.Context, requestID string, fra
 	}
 	reply := controlSuccessFrame(requestID, data)
 	if err != nil {
+		e.cfg.logger.Warn("claude: control request failed",
+			"subtype", str(request["subtype"]), "request_id", requestID, "error", err)
 		reply = controlErrorFrame(requestID, err.Error())
 	}
-	_ = e.writeFrame(ctx, reply)
+	if err := e.writeFrame(ctx, reply); err != nil {
+		e.cfg.logger.Debug("claude: control reply not written", "request_id", requestID, "error", err)
+	}
 }
 
 // dispatchControlRequest runs the handler for one control request subtype. A

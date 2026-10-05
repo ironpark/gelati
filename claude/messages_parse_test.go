@@ -17,8 +17,8 @@ func TestParseLenient(t *testing.T) {
 		check func(t *testing.T, m Message)
 	}{
 		{"missingType", `{"foo":"bar"}`, func(t *testing.T, m Message) {
-			if m != nil {
-				t.Fatalf("got %T, want nil", m)
+			if u, ok := m.(*UnknownMessage); !ok || u.Type != "" || u.Raw["foo"] != "bar" {
+				t.Fatalf("got %#v, want *UnknownMessage", m)
 			}
 		}},
 		{"userMissingMessage", `{"type":"user","uuid":"u1"}`, func(t *testing.T, m Message) {

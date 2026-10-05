@@ -1,9 +1,12 @@
 package claude
 
 import (
+	"log/slog"
 	"maps"
 	"slices"
 	"strconv"
+
+	"github.com/ironpark/gelati/internal/logx"
 )
 
 // engineConfig is the part of Options the engine consults while the session
@@ -31,6 +34,8 @@ type engineConfig struct {
 
 	// verbatimPrompts stamps every user message as client-composed.
 	verbatimPrompts bool
+
+	logger *slog.Logger
 }
 
 // newEngineConfig resolves opts for the engine. launch supplies the
@@ -47,6 +52,7 @@ func newEngineConfig(opts *Options, launch *launchConfig) engineConfig {
 		hooksWire:       hooksWire,
 		initFields:      launch.initFields,
 		verbatimPrompts: opts.VerbatimPrompts,
+		logger:          logx.Or(opts.Logger),
 	}
 }
 

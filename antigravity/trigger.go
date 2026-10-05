@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ironpark/gelati/internal/logx"
 )
 
 // Trigger is a long-running function that runs alongside a session and
@@ -60,7 +62,7 @@ type TriggerRunner struct {
 
 // NewTriggerRunner returns a runner for triggers sending through conn.
 func NewTriggerRunner(triggers []Trigger, conn TriggerConnection) *TriggerRunner {
-	return &TriggerRunner{triggers: slices.Clone(triggers), conn: conn, logger: defaultLogger()}
+	return &TriggerRunner{triggers: slices.Clone(triggers), conn: conn, logger: logx.Or(nil)}
 }
 
 // Start runs every trigger on its own goroutine, each with its own

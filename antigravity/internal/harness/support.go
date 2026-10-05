@@ -22,7 +22,7 @@ const BinaryName = "localharness"
 
 // ErrBinaryNotFound reports that no localharness binary could be located.
 var ErrBinaryNotFound = errors.New("antigravity harness: localharness binary not found; " +
-	"set Options.BinaryPath, the " + EnvBinaryPath + " environment variable, or put " + BinaryName + " on PATH")
+	"set Config.CLIPath, the " + EnvBinaryPath + " environment variable, or put " + BinaryName + " on PATH")
 
 // FindBinary locates the localharness binary in upstream's order, minus the
 // Python-wheel lookups: EnvBinaryPath in env (the extra variables passed to

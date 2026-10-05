@@ -14,6 +14,7 @@ import (
 
 	"github.com/ironpark/gelati/antigravity/internal/harness"
 	"github.com/ironpark/gelati/antigravity/internal/wire"
+	"github.com/ironpark/gelati/internal/logx"
 )
 
 // transport carries wire events to and from the harness. *harness.Harness
@@ -193,9 +194,7 @@ type connectionOptions struct {
 // newConnection wraps an initialized transport and starts reading from it.
 // The connection starts idle.
 func newConnection(tr transport, o connectionOptions) *Connection {
-	if o.logger == nil {
-		o.logger = defaultLogger()
-	}
+	o.logger = logx.Or(o.logger)
 	c := &Connection{
 		tr:             tr,
 		tools:          o.tools,

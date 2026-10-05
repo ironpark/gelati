@@ -242,6 +242,7 @@ func (e *engine) readLoop(ctx context.Context) {
 		if json.Unmarshal(raw, &frame) != nil || frame == nil {
 			// Frames that are not JSON objects carry no message; skip
 			// them like the TypeScript SDK instead of failing the run.
+			e.cfg.logger.Debug("claude: skipped non-object frame", "frame", raw)
 			continue
 		}
 		if done := e.route(ctx, frame, raw); done {
@@ -315,9 +316,6 @@ func (e *engine) route(ctx context.Context, frame map[string]any, raw json.RawMe
 	if err != nil {
 		e.failAll(err)
 		return true
-	}
-	if msg == nil {
-		return false
 	}
 	return !e.messages.push(messageOrError{msg: msg})
 }
@@ -393,6 +391,7 @@ func (e *engine) deliverControlResponse(response map[string]any) {
 	delete(e.pending, id)
 	e.mu.Unlock()
 	if !ok {
+		e.cfg.logger.Debug("claude: control response for unknown request", "request_id", id)
 		return
 	}
 	if p.subtype == "initialize" {

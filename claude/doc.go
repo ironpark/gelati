@@ -61,7 +61,7 @@
 // [ToolContent], [SystemPrompt], [ToolsConfig], [SkillsConfig]): switch on the
 // concrete type rather than inspecting maps. Parsing is lenient about
 // missing fields, so an older build of this package keeps working against a
-// newer CLI: unknown top-level message types are skipped, unknown system
+// newer CLI: unknown top-level message types arrive as *[UnknownMessage], unknown system
 // subtypes arrive as *[SystemMessage], and unknown content blocks arrive as
 // *[UnknownBlock]. Typed messages keep the raw payload (SystemMessage.Data,
 // Raw fields) for anything not modeled.

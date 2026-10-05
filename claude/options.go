@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"log/slog"
 	"time"
 )
 
@@ -623,6 +624,11 @@ type Options struct {
 
 	// Stderr receives the subprocess's standard error, line by line.
 	Stderr func(line string)
+
+	// Logger receives the SDK's own diagnostics, such as a failing or
+	// panicking callback or an unroutable control response. Nil passes
+	// warnings and errors to slog's default logger.
+	Logger *slog.Logger
 
 	// Debug enables CLI debug logging (--debug).
 	Debug bool

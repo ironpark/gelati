@@ -24,7 +24,7 @@ func fakeAgentConfig(t *testing.T) (cfg Config, recordPath, logPath string) {
 	recordPath = filepath.Join(dir, "harness_config.json")
 	logPath = filepath.Join(dir, "events.log")
 	return Config{
-		BinaryPath: os.Args[0],
+		CLIPath: os.Args[0],
 		Env: map[string]string{
 			fakeHarnessEnv: "1",
 			// The race runtime sleeps a second on exit by default.
@@ -460,8 +460,8 @@ func TestAgentPolicyGuard(t *testing.T) {
 	} {
 		base, _, _ := fakeAgentConfig(t)
 		cfg := tc.cfg
-		cfg.BinaryPath, cfg.Env, cfg.APIKey, cfg.Workspaces, cfg.SaveDir, cfg.AppDataDir, cfg.Logger =
-			base.BinaryPath, base.Env, base.APIKey, base.Workspaces, base.SaveDir, base.AppDataDir, base.Logger
+		cfg.CLIPath, cfg.Env, cfg.APIKey, cfg.Workspaces, cfg.SaveDir, cfg.AppDataDir, cfg.Logger =
+			base.CLIPath, base.Env, base.APIKey, base.Workspaces, base.SaveDir, base.AppDataDir, base.Logger
 		agent, err := NewAgent(cfg)
 		if tc.blocked {
 			if _, ok := errors.AsType[*ValidationError](err); !ok || !strings.Contains(err.Error(), guardErr) {
@@ -514,7 +514,7 @@ func TestAgentBeforeStartAndValidation(t *testing.T) {
 		t.Fatalf("Start without key = %v", err)
 	}
 	cfg.APIKey = "k"
-	cfg.BinaryPath = ""
+	cfg.CLIPath = ""
 	cfg.Env = map[string]string{}
 	t.Setenv("ANTIGRAVITY_HARNESS_PATH", "")
 	t.Setenv("PATH", t.TempDir())
@@ -526,7 +526,7 @@ func TestAgentBeforeStartAndValidation(t *testing.T) {
 
 func TestAgentStartFailureIsConnectionError(t *testing.T) {
 	cfg, _, _ := fakeAgentConfig(t)
-	cfg.BinaryPath = filepath.Join(t.TempDir(), "missing-binary")
+	cfg.CLIPath = filepath.Join(t.TempDir(), "missing-binary")
 	agent, _ := NewAgent(cfg)
 	err := agent.Start(t.Context())
 	if _, ok := errors.AsType[*ConnectionError](err); !ok {

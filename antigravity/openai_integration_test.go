@@ -29,7 +29,7 @@ func openAIAgent(t *testing.T, ctx context.Context, srv *httptest.Server, tools 
 	clearGeminiEnv(t)
 	stderr := &syncBuffer{}
 	agent, err := antigravity.NewAgent(antigravity.Config{
-		BinaryPath: bin,
+		CLIPath:    bin,
 		Model:      "test-model",
 		OpenAI:     &antigravity.OpenAIEndpoint{BaseURL: srv.URL + "/v1"},
 		Tools:      tools,

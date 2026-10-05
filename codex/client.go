@@ -11,10 +11,11 @@ import (
 	"sync"
 
 	"github.com/ironpark/gelati/internal/buildinfo"
+	"github.com/ironpark/gelati/internal/logx"
 	"github.com/ironpark/gelati/internal/tailbuf"
 )
 
-// DefaultBinary is the executable looked up on PATH when Options.Binary is
+// DefaultBinary is the executable looked up on PATH when Options.CLIPath is
 // empty.
 const DefaultBinary = "codex"
 
@@ -32,8 +33,8 @@ const (
 
 // Options configures a Client.
 type Options struct {
-	// Binary is the codex executable; it defaults to DefaultBinary on PATH.
-	Binary string
+	// CLIPath is the codex executable; it defaults to DefaultBinary on PATH.
+	CLIPath string
 	// Args replaces the default arguments, ConfigOverrides included
 	// ("--config", k=v, ..., "app-server").
 	Args []string
@@ -69,7 +70,8 @@ type Options struct {
 	// EventBuffer is the per-turn event channel capacity. It defaults to 64.
 	EventBuffer int
 
-	// Logger receives debug messages about dropped or unroutable events.
+	// Logger receives debug messages about dropped or unroutable events. Nil
+	// passes warnings and errors to slog's default logger.
 	Logger *slog.Logger
 }
 
@@ -97,7 +99,7 @@ type Client struct {
 // handshake, and returns a ready client. The context bounds the handshake
 // only; the client outlives it.
 func New(ctx context.Context, opts Options) (*Client, error) {
-	binary := opts.Binary
+	binary := opts.CLIPath
 	if binary == "" {
 		binary = DefaultBinary
 	}
@@ -119,10 +121,7 @@ func New(ctx context.Context, opts Options) (*Client, error) {
 // dial wires a client onto an existing byte stream. Tests use it to drive an
 // in-process fake app-server.
 func dial(ctx context.Context, opts Options, in io.Reader, out io.Writer, release func() error) (*Client, error) {
-	logger := opts.Logger
-	if logger == nil {
-		logger = slog.New(slog.DiscardHandler)
-	}
+	logger := logx.Or(opts.Logger)
 	c := &Client{
 		opts:    opts,
 		logger:  logger,

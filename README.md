@@ -20,11 +20,50 @@ The module depends only on the Go standard library and [`coder/websocket`](https
 - For `codex`: the `codex` CLI
 - For `antigravity`: the `localharness` binary from the
   [`google-antigravity`](https://pypi.org/project/google-antigravity/) wheel
-  (via `ANTIGRAVITY_HARNESS_PATH`, `PATH` or `Config.BinaryPath`), and a
+  (via `ANTIGRAVITY_HARNESS_PATH`, `PATH` or `Config.CLIPath`), and a
   `GEMINI_API_KEY` (or Vertex AI credentials, or a local OpenAI-compatible server)
 
 ```sh
 go get github.com/ironpark/gelati
+```
+
+## Common shape
+
+The three packages follow their upstream SDKs, so their lifecycles differ,
+but the pieces around them line up:
+
+| | `claude` | `codex` | `antigravity` |
+|---|---|---|---|
+| Create | `NewClient(*Options)` | `New(ctx, Options)` (starts the process) | `NewAgent(Config)` |
+| Start | `Connect(ctx)` | — | `Start(ctx)` |
+| Stop | `Disconnect()` | `Close()` | `Close()` |
+| One-shot | `claude.Run` / `Client.Run` → `*ResultMessage` | `Client.Run` → `*TurnResult` | `ChatResponse.WaitText` |
+| Streaming | `iter.Seq2[Message, error]` | `TurnStream.Events(ctx)` → `iter.Seq2[Event, error]` | `ChatResponse.Text` / `Chunks` / … → `iter.Seq2` |
+| Session end | `Done()` / `Err()` | `Done()` / `Err()` | `Done()` / `Err()` |
+| Executable | `Options.CLIPath` | `Options.CLIPath` | `Config.CLIPath` |
+| Diagnostics | `Options.Logger` | `Options.Logger` | `Config.Logger` |
+| Error marker | `claude.Error` | `codex.Error` | `antigravity.Error` |
+| Unmodeled data | `*UnknownMessage`, `*UnknownBlock` | `*UnknownItem`, `EventNotification` | — |
+
+`Done` is closed once the session ends for any reason, and `Err` then reports
+why (nil after an explicit stop). A nil `Logger` passes warnings and errors to
+`slog.Default()` and drops debug and info records.
+
+What happens to a tool call nobody approved differs, because each package keeps
+its upstream's model:
+
+| Package | Without an approval callback |
+|---|---|
+| `claude` | The CLI decides from `PermissionMode`, `AllowedTools` / `DisallowedTools` and its settings; set `CanUseTool` to answer the prompts it would show a user |
+| `codex` | Commands and file changes are declined, permission requests grant nothing and MCP elicitations are declined (upstream's Python SDK accepts); set `Options.Approvals` |
+| `antigravity` | Builtin tools run except `run_command`, which is denied; set `Config.Policies` |
+
+Each package has runnable programs under `examples/`:
+
+```sh
+go run ./claude/examples/hello_world
+go run ./codex/examples/streaming
+go run ./antigravity/examples/hooks
 ```
 
 ## claude
@@ -182,6 +221,12 @@ case tools.FileEditInput:
 The structs are generated from the TypeScript SDK's `sdk-tools.d.ts`; see
 [`claude/tools/doc.go`](./claude/tools/doc.go) for regeneration.
 
+### Examples
+
+[`claude/examples`](./claude/examples): `hello_world` (`Run`), `streaming`
+(partial messages and tool calls), `client` (a multi-turn session) and
+`permissions` (`CanUseTool`, a hook and an in-process MCP tool).
+
 ### Differences from the reference SDKs
 
 - `Options.Env` is merged into the parent environment (Python behaviour)
@@ -201,7 +246,7 @@ full Python/TypeScript-to-Go name mapping.
 protocol, following the official
 [Python SDK](https://github.com/openai/codex/tree/main/sdk/python) (with the
 [TypeScript SDK](https://github.com/openai/codex/tree/main/sdk/typescript)'s
-`run` naming). It needs the `codex` CLI on `PATH` (or `Options.Binary`) and a
+`run` naming). It needs the `codex` CLI on `PATH` (or `Options.CLIPath`) and a
 signed-in account.
 
 ```go
@@ -252,6 +297,9 @@ Approval prompts go to `Options.Approvals`; with none, commands and file
 changes are declined (upstream's Python SDK accepts them). Methods the package
 does not wrap are available through `Client.Call`.
 
+[`codex/examples`](./codex/examples): `hello_world` (`Run`), `streaming`
+(`StartTurn` events) and `approvals` (`ApprovalFuncs`).
+
 ## antigravity
 
 `antigravity` is a Go port of Google's
@@ -272,7 +320,7 @@ export ANTIGRAVITY_HARNESS_PATH=/tmp/ag/google/antigravity/bin/localharness
 export GEMINI_API_KEY=...
 ```
 
-Without `ANTIGRAVITY_HARNESS_PATH` (or `Config.BinaryPath`), `localharness` is
+Without `ANTIGRAVITY_HARNESS_PATH` (or `Config.CLIPath`), `localharness` is
 looked up on `PATH`. Set `Config.Vertex` (or `GOOGLE_GENAI_USE_VERTEXAI=true`)
 with a project and location or an API key to use Vertex AI instead.
 

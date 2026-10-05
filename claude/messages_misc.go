@@ -88,3 +88,15 @@ type ActiveGoal struct {
 	// LastReason is why the last check found the goal not yet met.
 	LastReason string `json:"last_reason,omitempty"`
 }
+
+// UnknownMessage is a top-level message type this SDK version does not model,
+// kept so a newer CLI loses nothing. Raw is the full frame, including its
+// "type" key.
+type UnknownMessage struct {
+	// Type is the wire discriminator; empty when the frame has none.
+	Type string
+	// Raw is the full message object.
+	Raw map[string]any
+}
+
+func (*UnknownMessage) isMessage() {}

@@ -30,7 +30,7 @@ var (
 	// from a single queue, so two readers would steal steps from each other.
 	ErrConcurrentReceive = errors.New("antigravity: concurrent ReceiveSteps calls are not supported on this connection")
 	// ErrBinaryNotFound reports that no localharness binary could be
-	// located; see Config.BinaryPath.
+	// located; see Config.CLIPath.
 	ErrBinaryNotFound = harness.ErrBinaryNotFound
 )
 

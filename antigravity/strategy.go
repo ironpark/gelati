@@ -44,7 +44,7 @@ func connectLocal(ctx context.Context, cc *compiledConfig) (*Connection, error) 
 		cc.logger.Info("no SaveDir specified; using a temporary directory", "dir", saveDir)
 	}
 	opts := harness.Options{
-		BinaryPath:       cfg.BinaryPath,
+		CLIPath:          cfg.CLIPath,
 		Env:              cfg.Env,
 		StorageDirectory: saveDir,
 		Stderr:           cfg.Stderr,
