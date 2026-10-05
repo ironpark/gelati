@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json/jsontext"
+	"errors"
 	"fmt"
 	"iter"
 
@@ -107,7 +108,8 @@ func (c *Client) ReadAccount(ctx context.Context, params ReadAccountParams) (*Ac
 	return &info, nil
 }
 
-// LoginAPIKey signs in with an OpenAI API key.
+// LoginAPIKey signs in with an OpenAI API key. The login has completed when
+// it returns: unlike the ChatGPT flows there is nothing to await.
 func (c *Client) LoginAPIKey(ctx context.Context, apiKey string) error {
 	params := struct {
 		Type   string `json:"type"`
@@ -171,12 +173,14 @@ func (c *Client) AccountUpdates(ctx context.Context) iter.Seq2[AccountUpdate, er
 	return c.accounts.seq(ctx, c.endErr)
 }
 
-// AwaitLogin waits for the account/login/completed notification matching
-// loginID. Use the empty string for flows with no login id, such as API-key
-// login. A completion for a non-empty loginID that arrived before the call is
-// kept for it, so the wait may start after the login does; for the empty id,
-// start waiting before the login.
+// AwaitLogin waits for the account/login/completed notification of the
+// ChatGPT login loginID. A completion that arrived before the call is kept
+// for it, so the wait may start after the login does. Logins without an id
+// (API key) complete when their call returns; an empty loginID is an error.
 func (c *Client) AwaitLogin(ctx context.Context, loginID string) (*LoginCompletedParams, error) {
+	if loginID == "" {
+		return nil, errors.New("codex: AwaitLogin needs a login id")
+	}
 	waiter := make(chan *LoginCompletedParams, 1)
 
 	c.mu.Lock()
@@ -237,12 +241,14 @@ func (c *Client) routeAccountNotification(method string, params jsontext.Value) 
 			c.logger.Debug("codex: bad login/completed payload", "error", err)
 			return
 		}
+		if payload.LoginID == "" {
+			// API-key logins: their call's response already reported it.
+			return
+		}
 		c.mu.Lock()
 		waiters := append([]chan *LoginCompletedParams(nil), c.logins[payload.LoginID]...)
-		if len(waiters) == 0 && payload.LoginID != "" {
-			// Keep it for an AwaitLogin that has not started yet. Logins
-			// without an id are not kept: a later wait could not tell a
-			// stale completion from its own.
+		if len(waiters) == 0 {
+			// Keep it for an AwaitLogin that has not started yet.
 			if len(c.loginResults) >= maxEarlyLogins {
 				// Make room by dropping one; which one does not matter.
 				for id := range c.loginResults {

@@ -11,11 +11,11 @@ import (
 
 // ErrNotFound is returned (wrapped) when a session or subagent transcript
 // does not exist.
-var ErrNotFound = errors.New("claude: session not found")
+var ErrNotFound = errors.New("sessions: session not found")
 
 // ErrInvalidID is returned (wrapped) when a session id is not a UUID.
 // Session ids are used as path components, so anything else is rejected.
-var ErrInvalidID = errors.New("claude: invalid session id")
+var ErrInvalidID = errors.New("sessions: invalid session id")
 
 // Key identifies a session transcript, or one of its subagent transcripts,
 // in a Store.

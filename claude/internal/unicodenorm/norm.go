@@ -58,7 +58,7 @@ var nfcTables = sync.OnceValue(func() *nfcData {
 		span, class, _ := strings.Cut(rec, ":")
 		k, err := strconv.Atoi(class)
 		if err != nil {
-			panic("claude: corrupt NFC table: " + rec)
+			panic("unicodenorm: corrupt NFC table: " + rec)
 		}
 		lo, hi, ok := strings.Cut(span, "-")
 		start := parseTableRune(lo, "NFC")
@@ -78,7 +78,7 @@ var nfcTables = sync.OnceValue(func() *nfcData {
 func parseTableRune(s, table string) rune {
 	n, err := strconv.ParseUint(s, 16, 32)
 	if err != nil {
-		panic("claude: corrupt " + table + " table: " + s)
+		panic("unicodenorm: corrupt " + table + " table: " + s)
 	}
 	return rune(n)
 }

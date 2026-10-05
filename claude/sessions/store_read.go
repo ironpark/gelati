@@ -139,7 +139,7 @@ func ListInStore(ctx context.Context, store Store, opts *ListOptions) ([]Info, e
 	}
 
 	if !hasList {
-		return nil, fmt.Errorf("claude: session store implements neither ListSessionSummaries nor ListSessions; "+
+		return nil, fmt.Errorf("sessions: session store implements neither ListSessionSummaries nor ListSessions; "+
 			"cannot list sessions: %w", errors.ErrUnsupported)
 	}
 	// Copy: the adapter may return its internal state.
@@ -311,7 +311,7 @@ func ListSubagentsInStore(ctx context.Context, store Store, sessionID, directory
 	}
 	subkeyLister, ok := store.(SubkeyLister)
 	if !ok {
-		return nil, fmt.Errorf("claude: session store does not implement ListSubkeys; "+
+		return nil, fmt.Errorf("sessions: session store does not implement ListSubkeys; "+
 			"cannot list subagents: %w", errors.ErrUnsupported)
 	}
 	subkeys, err := subkeyLister.ListSubkeys(ctx, ListSubkeysKey{

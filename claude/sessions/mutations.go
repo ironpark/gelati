@@ -54,20 +54,20 @@ func sessionNotFoundError(sessionID, directory string) error {
 }
 
 func noMessagesToForkError(sessionID string) error {
-	return fmt.Errorf("claude: session %s has no messages to fork", sessionID)
+	return fmt.Errorf("sessions: session %s has no messages to fork", sessionID)
 }
 
 // validateUpToMessageID checks ForkOptions.UpToMessageID.
 func validateUpToMessageID(id string) error {
 	if id != "" && !ids.IsUUID(id) {
-		return fmt.Errorf("claude: invalid up-to message id %q: not a UUID", id)
+		return fmt.Errorf("sessions: invalid up-to message id %q: not a UUID", id)
 	}
 	return nil
 }
 
 var (
-	errEmptySessionTitle = errors.New("claude: session title must be non-empty")
-	errEmptySessionTag   = errors.New(`claude: session tag must be non-empty after sanitization (pass "" to clear the tag)`)
+	errEmptySessionTitle = errors.New("sessions: session title must be non-empty")
+	errEmptySessionTag   = errors.New(`sessions: session tag must be non-empty after sanitization (pass "" to clear the tag)`)
 )
 
 // normalizeSessionTitle strips a title and rejects an empty result.
@@ -573,7 +573,7 @@ func buildForkLines(transcript []forkEntry, replacements []any, sessionID, upToM
 	if upToMessageID != "" {
 		cutoff := slices.IndexFunc(mainChain, func(e forkEntry) bool { return e.fields["uuid"] == upToMessageID })
 		if cutoff < 0 {
-			return "", nil, fmt.Errorf("claude: message %s not found in session %s", upToMessageID, sessionID)
+			return "", nil, fmt.Errorf("sessions: message %s not found in session %s", upToMessageID, sessionID)
 		}
 		mainChain = mainChain[:cutoff+1]
 	}
@@ -623,7 +623,7 @@ func buildForkLines(transcript []forkEntry, replacements []any, sessionID, upToM
 			{"forkedFrom", forkedFrom{SessionID: sessionID, MessageUUID: origUUID}},
 		}, forkDroppedKeys)
 		if err != nil {
-			return "", nil, fmt.Errorf("claude: fork session %s: %w", sessionID, err)
+			return "", nil, fmt.Errorf("sessions: fork session %s: %w", sessionID, err)
 		}
 		lines = append(lines, line)
 	}
@@ -690,7 +690,7 @@ func forkTrailerLines(sessionID, forkedID, now string, replacements []any, title
 			{"timestamp", now},
 		})
 		if err != nil {
-			return nil, fmt.Errorf("claude: fork session %s: %w", sessionID, err)
+			return nil, fmt.Errorf("sessions: fork session %s: %w", sessionID, err)
 		}
 		lines = append(lines, line)
 	}
@@ -843,7 +843,7 @@ func ForkInStore(ctx context.Context, store Store, sessionID string, opts *ForkO
 	entries := make([]Entry, len(lines))
 	for i, line := range lines {
 		if err := jsonx.Unmarshal([]byte(line), &entries[i]); err != nil {
-			return nil, fmt.Errorf("claude: fork session %s: %w", sessionID, err)
+			return nil, fmt.Errorf("sessions: fork session %s: %w", sessionID, err)
 		}
 	}
 	if err := store.Append(ctx, Key{ProjectKey: projectKey, SessionID: forkedID}, entries); err != nil {

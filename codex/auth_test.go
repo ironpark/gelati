@@ -105,32 +105,12 @@ func TestLoginAPIKeyFlow(t *testing.T) {
 	})
 
 	updates, _ := watchSeq(t, client.accounts, client.AccountUpdates(t.Context()))
-	// An API-key completion has no login id, so the wait must start before
-	// the login does.
-	ctx, cancel := context.WithTimeout(t.Context(), fakeTimeout)
-	defer cancel()
-	var completed *LoginCompletedParams
-	var err error
-	awaited := make(chan struct{})
-	go func() {
-		defer close(awaited)
-		completed, err = client.AwaitLogin(ctx, "")
-	}()
-	waitFor(t, func() bool {
-		client.mu.Lock()
-		defer client.mu.Unlock()
-		return len(client.logins[""]) > 0
-	})
-	if err := client.LoginAPIKey(ctx, "sk-test"); err != nil {
+	if err := client.LoginAPIKey(t.Context(), "sk-test"); err != nil {
 		t.Fatalf("LoginAPIKey: %v", err)
 	}
-	<-awaited
 	<-done
-	if err != nil {
-		t.Fatalf("AwaitLogin: %v", err)
-	}
-	if !completed.Success || completed.LoginID != "" {
-		t.Fatalf("completed = %+v", completed)
+	if _, err := client.AwaitLogin(t.Context(), ""); err == nil {
+		t.Fatal("AwaitLogin(\"\") succeeded")
 	}
 
 	select {
