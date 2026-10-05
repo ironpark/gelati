@@ -66,6 +66,12 @@ The child process is handled the same way everywhere:
 - A panic in a callback (hook, tool, approval handler) fails that call instead
   of the process.
 
+JSON goes through `encoding/json/v2`: raw JSON in the APIs (codex `Event.Params`,
+approval `Params`, `UnknownItem.Raw`, agy `Config.ResponseSchema`, …) is a
+`jsontext.Value`, and JSON decoded into your types (tool arguments, structured
+output) matches field names case-sensitively. What the CLIs write is decoded
+tolerantly: invalid UTF-8 and repeated keys do not fail a message.
+
 What happens to a tool call nobody approved differs, because each package keeps
 its upstream's model:
 
@@ -170,7 +176,7 @@ add := claude.NewTool("add", "Add two integers.", map[string]any{
 	},
 	"required": []any{"a", "b"},
 }, func(ctx context.Context, args addArgs) (claude.ToolResult, error) {
-	return claude.TextResult(strconv.Itoa(args.A + args.B)), nil
+	return claude.TextResult("%d", args.A+args.B), nil
 })
 
 opts := &claude.Options{
