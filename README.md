@@ -8,14 +8,20 @@ Go SDKs for driving coding agents from Go programs.
 | [`claude/tools`](./claude/tools) | Typed inputs and outputs for Claude Code's built-in tools (Bash, Read, Edit, Agent, …) |
 | [`claude/sessionstoretest`](./claude/sessionstoretest) | Conformance suite for custom `claude.SessionStore` adapters |
 | [`codex`](./codex) | Client for the Codex agent over the `codex app-server` JSON-RPC protocol |
+| [`antigravity`](./antigravity) | Port of Google's Antigravity Python SDK: drives the `localharness` agent runtime over WebSocket |
+| [`antigravity/policy`](./antigravity/policy) | Tool-call policy builders (allow/deny/ask-user, workspace-only, safe defaults) |
 
-The module uses only the Go standard library.
+The module depends only on the Go standard library and [`coder/websocket`](https://github.com/coder/websocket) (used by `antigravity`).
 
 ## Requirements
 
 - Go 1.27 or newer
 - For `claude`: the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) (`claude`) on `PATH`, or `Options.CLIPath`
 - For `codex`: the `codex` CLI
+- For `antigravity`: the `localharness` binary from the
+  [`google-antigravity`](https://pypi.org/project/google-antigravity/) wheel
+  (via `ANTIGRAVITY_HARNESS_PATH`, `PATH` or `Config.BinaryPath`), and a
+  `GEMINI_API_KEY` (or Vertex AI credentials, or a local OpenAI-compatible server)
 
 ```sh
 go get github.com/ironpark/gelati
@@ -205,6 +211,193 @@ for event := range stream.Events() {
 }
 ```
 
+## antigravity
+
+`antigravity` is a Go port of Google's
+[Antigravity Python SDK](https://pypi.org/project/google-antigravity/) (v0.1.20).
+The agent loop runs in the SDK's `localharness` binary; the package launches it,
+configures it, streams its steps over WebSocket, and runs custom tools, hooks,
+policies and triggers in your Go process when the harness calls back.
+
+### Requirements
+
+The harness ships inside the platform wheel of the Python package. Extract it
+once and point the SDK at it:
+
+```sh
+pip download google-antigravity==0.1.20 --no-deps --only-binary=:all: -d /tmp/ag
+unzip -o /tmp/ag/google_antigravity-*.whl 'google/antigravity/bin/*' -d /tmp/ag
+export ANTIGRAVITY_HARNESS_PATH=/tmp/ag/google/antigravity/bin/localharness
+export GEMINI_API_KEY=...
+```
+
+Without `ANTIGRAVITY_HARNESS_PATH` (or `Config.BinaryPath`), `localharness` is
+looked up on `PATH`. Set `Config.Vertex` (or `GOOGLE_GENAI_USE_VERTEXAI=true`)
+with a project and location or an API key to use Vertex AI instead.
+
+### Quickstart
+
+```go
+ctx := context.Background()
+agent, err := antigravity.NewAgent(antigravity.Config{
+	SystemInstructions: antigravity.TextSystemInstructions("Answer briefly."),
+})
+if err != nil {
+	log.Fatal(err)
+}
+if err := agent.Start(ctx); err != nil {
+	log.Fatal(err)
+}
+defer agent.Close()
+
+resp, err := agent.Chat(ctx, antigravity.Text("What is the capital of France?"))
+if err != nil {
+	log.Fatal(err)
+}
+text, err := resp.WaitText(ctx)
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(text)
+```
+
+The zero `Config` runs the default Gemini model with the default builtin tools,
+`run_command` denied, and the current directory as the workspace.
+
+### Streaming
+
+A `ChatResponse` streams one turn. `Text`, `Thoughts`, `ToolCalls` and
+`Chunks` are `iter.Seq2` sequences; each is an independent cursor, so a
+response can be read several times and from several goroutines.
+
+```go
+for thought, err := range resp.Thoughts(ctx) {
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Print(thought)
+}
+for delta, err := range resp.Text(ctx) {
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Print(delta)
+}
+fmt.Println(resp.StopReason(), resp.UsageMetadata())
+```
+
+`resp.Cancel` aborts the turn (the stream ends with `*antigravity.CancelledError`),
+and `Config.ResponseSchema` plus `resp.DecodeStructuredOutput` return typed
+structured output.
+
+### Tools
+
+`NewTool` turns a typed Go function into a custom tool; the parameter schema
+is derived from the input type (`json`, `description` and `enum` tags). Every
+call gets a `ToolContext` with session-scoped state.
+
+```go
+type weatherArgs struct {
+	City string `json:"city" description:"The city to look up."`
+}
+
+weather := antigravity.NewTool("get_weather", "Returns the weather for a city.",
+	func(ctx context.Context, tc *antigravity.ToolContext, in weatherArgs) (string, error) {
+		return "sunny in " + in.City, nil
+	})
+
+agent, err := antigravity.NewAgent(antigravity.Config{
+	Tools: []*antigravity.Tool{weather},
+	MCPServers: []antigravity.MCPServer{
+		&antigravity.MCPStdioServer{Name: "fs", Command: "npx", Args: []string{"-y", "@modelcontextprotocol/server-filesystem", "."}},
+	},
+})
+```
+
+Tools may return `Image`, `Document`, `Audio` or `Video` values (alone or
+inside slices and maps) to show media to the model. Builtin tools are chosen
+with `CapabilitiesConfig.EnabledTools` / `DisabledTools` and presets such as
+`ReadOnlyTools()`; static subagents are declared with `Config.Subagents`.
+
+### Hooks and policies
+
+Hooks are function types listed in `Config.Hooks`; policies (built with the
+`antigravity/policy` package) decide which tool calls run, are evaluated by
+the harness, and call back into Go for predicates and ask-user handlers.
+
+```go
+cfg := antigravity.Config{
+	Hooks: []antigravity.Hook{
+		antigravity.PreToolCallHook(func(ctx context.Context, hc *antigravity.HookContext,
+			call *antigravity.ToolCall) (antigravity.HookResult, error) {
+			log.Printf("tool call: %s %v", call.Name, call.Args)
+			return antigravity.HookResult{}, nil
+		}),
+		antigravity.StopHook(func(ctx context.Context, hc *antigravity.HookContext,
+			args antigravity.StopArgs) (antigravity.StopHookResult, error) {
+			if args.ContinuationCount == 0 && !strings.Contains(args.ResponseText, "DONE") {
+				return antigravity.StopHookResult{Decision: antigravity.StopDecisionContinue,
+					Reason: "Finish the task and end with DONE."}, nil
+			}
+			return antigravity.StopHookResult{}, nil
+		}),
+	},
+	Policies: []antigravity.Policy{
+		policy.DenyAll(),
+		policy.Allow("view_file"),
+		policy.AskUser("run_command", policy.Handler(confirm)),
+	},
+	Triggers: []antigravity.Trigger{
+		antigravity.Every(time.Hour, func(ctx context.Context, tc *antigravity.TriggerContext) error {
+			return tc.Send(ctx, "Hourly check: summarize anything new in the workspace.")
+		}),
+	},
+}
+```
+
+### Local models
+
+`Config.OpenAI` runs the session on an OpenAI-compatible server such as Ollama
+or LM Studio, with no Gemini credentials (upstream `LocalOpenAIAgentConfig`):
+
+```go
+cfg := antigravity.Config{
+	Model:  "gemma3",
+	OpenAI: &antigravity.OpenAIEndpoint{BaseURL: "http://localhost:11434/v1"},
+}.Lightweight()
+```
+
+### Examples
+
+[`antigravity/examples`](./antigravity/examples) ports upstream's
+getting-started examples as runnable programs: `hello_world`, `streaming`,
+`custom_tools`, `hooks`, `policies`, `structured_output`, `mcp_tools`,
+`subagents`, `persistence`, `multimodal`, `triggers`, `cancellation`, `vertex`
+and `local_models`.
+
+```sh
+go run ./antigravity/examples/hello_world
+```
+
+### Differences from upstream
+
+- Configuration is one `Config` struct (upstream `LocalAgentConfig`,
+  `LocalOpenAIAgentConfig`); `Lightweight` and `Eval` return modified copies.
+  Where Python distinguishes unset from empty, nil and empty slices differ, and
+  options whose upstream default is true are inverted (`DisableSubagents`).
+- Hooks are typed function values rather than decorated functions; every hook
+  receives a `HookContext`. `HookResult{Deny: true}` replaces `allow=False`.
+- Errors are `*ValidationError`, `*ExecutionError`, `*ConnectionError` and
+  `*CancelledError` (which also matches `context.Canceled`).
+- `OnFileChange` polls instead of using `watchfiles`; `Connection.Close` waits
+  at most a minute for session end hooks.
+- Not ported: the LiteRT backend (it needs upstream's Python LiteRT-LM
+  server), OpenTelemetry instrumentation, and the interactive terminal helpers.
+  `DebugConfig` is replaced by `Config.Logger`.
+
+The package documentation (`go doc github.com/ironpark/gelati/antigravity`)
+has the full Python-to-Go name mapping.
+
 ## Development
 
 ```sh
@@ -219,3 +412,5 @@ Optional suites:
 | `GELATI_CLAUDE_E2E=1` | End-to-end tests against the installed `claude` CLI (uses your credentials and costs a few cents) |
 | `GELATI_TS_SDK=/path/to/sdk.mjs` | Session parity tests against the real TypeScript SDK runtime (needs `node`) |
 | `GELATI_SDK_TOOLS_DTS=/path/to/sdk-tools.d.ts` | Checks that `claude/tools` is up to date with the given schema |
+| `GELATI_ANTIGRAVITY_HARNESS=/path/to/localharness` | Integration tests against the real Antigravity harness, with no credentials (an invalid API key and a fake OpenAI-compatible server) |
+| `GELATI_ANTIGRAVITY_E2E=1` | End-to-end test against Gemini through the real harness (needs `GEMINI_API_KEY` and the harness on `ANTIGRAVITY_HARNESS_PATH` or `PATH`; costs a little) |

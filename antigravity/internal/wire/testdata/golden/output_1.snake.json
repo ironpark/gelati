@@ -1,0 +1,1 @@
+{"seq_num": "-9007199254740993", "timestamp_micros": "-9007199254740993", "trajectory_state_update": {"trajectory_id": "trajectory_id-\u00e9<&>", "state": "STATE_WAITING_FOR_TASKS", "error": "error-\u00e9<&>", "stop_reason": "STOP_REASON_QUOTA_EXHAUSTED", "parent_trajectory_id": "parent_trajectory_id-\u00e9<&>", "depth": -7, "error_code": "error_code-\u00e9<&>"}}
