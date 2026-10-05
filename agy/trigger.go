@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ironpark/gelati/internal/logx"
+	"github.com/ironpark/gelati/internal/safecall"
 )
 
 // Trigger is a long-running function that runs alongside a session and
@@ -100,12 +101,10 @@ func (r *TriggerRunner) Start() error {
 
 func (r *TriggerRunner) run(ctx context.Context, t Trigger) {
 	name := triggerName(t)
-	defer func() {
-		if v := recover(); v != nil {
-			r.logger.Error("trigger panicked", "trigger", name, "panic", v)
-		}
+	err := func() (err error) {
+		defer safecall.Recover(&err, "trigger")
+		return t(ctx, &TriggerContext{conn: r.conn})
 	}()
-	err := t(ctx, &TriggerContext{conn: r.conn})
 	switch {
 	case ctx.Err() != nil:
 		r.logger.Info("trigger cancelled", "trigger", name)

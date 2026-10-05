@@ -43,6 +43,8 @@ but the pieces around them line up:
 | Streaming | `iter.Seq2[Message, error]` | `TurnStream.Events(ctx)` → `iter.Seq2[Event, error]` | `ChatResponse.Text` / `Chunks` / … → `iter.Seq2` |
 | Session end | `Done()` / `Err()` | `Done()` / `Err()` | `Done()` / `Err()` |
 | Executable | `Options.CLIPath` | `Options.CLIPath` | `Config.CLIPath` |
+| CLI missing | `ErrCLINotFound` | `ErrCLINotFound` | `ErrCLINotFound` |
+| Extra environment | `Options.Env` | `Options.Env` | `Config.Env` |
 | Diagnostics | `Options.Logger` | `Options.Logger` | `Config.Logger` |
 | Error marker | `claude.Error` | `codex.Error` | `agy.Error` |
 | Unmodeled data | `*UnknownMessage`, `*UnknownBlock` | `*UnknownItem`, `EventNotification` | — |
@@ -50,6 +52,19 @@ but the pieces around them line up:
 `Done` is closed once the session ends for any reason, and `Err` then reports
 why (nil after an explicit stop). A nil `Logger` passes warnings and errors to
 `slog.Default()` and drops debug and info records.
+
+The child process is handled the same way everywhere:
+
+- Without a `CLIPath`, the executable is looked up on `PATH`, then in the usual
+  install locations (`agy` checks `ANTIGRAVITY_HARNESS_PATH` first). When it
+  cannot be found or started, `errors.Is(err, pkg.ErrCLINotFound)` holds.
+- `Env` is a map merged over this process's environment.
+- The CLI runs in a process group of its own. Stopping it closes its stdin,
+  waits for it to exit, then sends SIGTERM and finally SIGKILL to the whole
+  group, so shells and MCP servers it started go with it. A terminal's Ctrl-C
+  reaches only your program, which then stops the CLI this way.
+- A panic in a callback (hook, tool, approval handler) fails that call instead
+  of the process.
 
 What happens to a tool call nobody approved differs, because each package keeps
 its upstream's model:

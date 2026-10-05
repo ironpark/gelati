@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -264,6 +265,23 @@ func TestApprovalHandlerErrorBecomesRPCError(t *testing.T) {
 	}
 	if reply.Error.Message != "ui unavailable" {
 		t.Fatalf("message = %q", reply.Error.Message)
+	}
+}
+
+func TestApprovalHandlerPanicBecomesRPCError(t *testing.T) {
+	_, server := connect(t, Options{
+		Approvals: ApprovalFuncs{
+			Command: func(ctx context.Context, req *CommandApprovalRequest) (Decision, error) {
+				panic("ui crashed")
+			},
+		},
+	})
+
+	replies := server.request("sr-11", MethodCommandApproval, map[string]any{"threadId": "thr_1"})
+	reply := server.awaitReply(replies)
+	if reply.Error == nil || reply.Error.Code != CodeInternalError ||
+		!strings.Contains(reply.Error.Message, "panicked: ui crashed") {
+		t.Fatalf("error = %+v", reply.Error)
 	}
 }
 

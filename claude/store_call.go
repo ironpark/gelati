@@ -3,8 +3,9 @@ package claude
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
+
+	"github.com/ironpark/gelati/internal/safecall"
 )
 
 // errStoreTimeout matches (errors.Is) a runStoreCall error caused by its
@@ -38,13 +39,10 @@ func runStoreCall[T any](parent context.Context, timeout time.Duration, call fun
 	}
 	done := make(chan result, 1)
 	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				done <- result{err: fmt.Errorf("SessionStore panic: %v", r)}
-			}
-		}()
-		v, err := call(ctx)
-		done <- result{v, err}
+		var r result
+		defer func() { done <- r }()
+		defer safecall.Recover(&r.err, "SessionStore")
+		r.v, r.err = call(ctx)
 	}()
 	select {
 	case r := <-done:

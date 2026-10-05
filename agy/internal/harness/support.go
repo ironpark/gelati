@@ -1,16 +1,18 @@
 package harness
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 
 	"github.com/coder/websocket"
+
 	"github.com/ironpark/gelati/agy/internal/wire"
 	"github.com/ironpark/gelati/internal/buildinfo"
+	"github.com/ironpark/gelati/internal/proc"
 )
 
 // EnvBinaryPath names the environment variable that points at the
@@ -20,8 +22,9 @@ const EnvBinaryPath = "ANTIGRAVITY_HARNESS_PATH"
 // BinaryName is the executable name looked up on PATH.
 const BinaryName = "localharness"
 
-// ErrBinaryNotFound reports that no localharness binary could be located.
-var ErrBinaryNotFound = errors.New("agy harness: localharness binary not found; " +
+// ErrCLINotFound reports that no localharness binary could be located or
+// started.
+var ErrCLINotFound = errors.New("agy harness: localharness binary not found; " +
 	"set Config.CLIPath, the " + EnvBinaryPath + " environment variable, or put " + BinaryName + " on PATH")
 
 // FindBinary locates the localharness binary in upstream's order, minus the
@@ -29,16 +32,13 @@ var ErrBinaryNotFound = errors.New("agy harness: localharness binary not found; 
 // the harness), then EnvBinaryPath in the process environment, then
 // BinaryName on PATH.
 func FindBinary(env map[string]string) (string, error) {
-	if p, ok := env[EnvBinaryPath]; ok && p != "" {
+	if p := cmp.Or(env[EnvBinaryPath], os.Getenv(EnvBinaryPath)); p != "" {
 		return p, nil
 	}
-	if p := os.Getenv(EnvBinaryPath); p != "" {
+	if p, ok := proc.Find(BinaryName); ok {
 		return p, nil
 	}
-	if p, err := exec.LookPath(BinaryName); err == nil {
-		return p, nil
-	}
-	return "", ErrBinaryNotFound
+	return "", ErrCLINotFound
 }
 
 // DefaultClientInfo describes this SDK the way upstream describes itself:

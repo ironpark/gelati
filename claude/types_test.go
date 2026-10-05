@@ -269,6 +269,9 @@ func TestErrorHierarchy(t *testing.T) {
 	if !errors.As(error(notFound), &sdkErr) {
 		t.Fatal("CLINotFoundError should satisfy claude.Error")
 	}
+	if !errors.Is(notFound, ErrCLINotFound) {
+		t.Fatal("CLINotFoundError should match ErrCLINotFound")
+	}
 
 	code := 2
 	proc := NewProcessError("Command failed", &code, "boom")

@@ -1,27 +1,16 @@
 package claude
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
+
+	"github.com/ironpark/gelati/internal/proc"
 )
 
 // findCLI locates the claude executable on PATH or in the usual install
 // locations.
 func findCLI() (string, error) {
-	name := "claude"
-	if runtime.GOOS == "windows" {
-		name = "claude.exe"
-	}
-	if path, err := exec.LookPath(name); err == nil {
+	if path, ok := proc.Find("claude", cliCandidatesFn()...); ok {
 		return path, nil
-	}
-	for _, c := range cliCandidatesFn() {
-		if info, err := os.Stat(c); err == nil && !info.IsDir() {
-			return c, nil
-		}
 	}
 	return "", NewCLINotFoundError(
 		"Claude Code not found. Install with:\n"+
@@ -37,27 +26,7 @@ var cliCandidatesFn = cliCandidates
 // cliCandidates lists the usual install locations for the CLI, in the order
 // they are probed.
 func cliCandidates() []string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = ""
-	}
-	if runtime.GOOS == "windows" {
-		if home == "" {
-			return nil
-		}
-		return []string{filepath.Join(home, ".local", "bin", "claude.exe")}
-	}
-	candidates := []string{"/usr/local/bin/claude"}
-	if home == "" {
-		return candidates
-	}
-	return append(candidates,
-		filepath.Join(home, ".npm-global", "bin", "claude"),
-		filepath.Join(home, ".local", "bin", "claude"),
-		filepath.Join(home, "node_modules", ".bin", "claude"),
-		filepath.Join(home, ".yarn", "bin", "claude"),
-		filepath.Join(home, ".claude", "local", "claude"),
-	)
+	return proc.InstallCandidates("claude", "node_modules/.bin", ".yarn/bin", ".claude/local")
 }
 
 // jsExtensions mark a CLI path that must run under a JavaScript runtime.

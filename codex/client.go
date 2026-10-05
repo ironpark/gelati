@@ -12,18 +12,20 @@ import (
 
 	"github.com/ironpark/gelati/internal/buildinfo"
 	"github.com/ironpark/gelati/internal/logx"
+	"github.com/ironpark/gelati/internal/proc"
+	"github.com/ironpark/gelati/internal/safecall"
 	"github.com/ironpark/gelati/internal/tailbuf"
 )
 
-// DefaultBinary is the executable looked up on PATH when Options.CLIPath is
-// empty.
+// DefaultBinary is the executable looked up on PATH, then in the usual
+// install locations, when Options.CLIPath is empty.
 const DefaultBinary = "codex"
 
 // defaultEventBuffer bounds each turn's event channel.
 const defaultEventBuffer = 64
 
 // stderrTailLines is how much subprocess stderr Err reports after an exit.
-const stderrTailLines = 40
+const stderrTailLines = 100
 
 // Default client identity, sent when Options.ClientInfo.Name is empty.
 const (
@@ -41,8 +43,9 @@ type Options struct {
 	// ConfigOverrides are "key=value" config.toml overrides, each passed as
 	// --config before the subcommand; values parse as TOML.
 	ConfigOverrides []string
-	// Env replaces the child process environment; nil inherits the parent's.
-	Env []string
+	// Env holds extra environment variables for the app-server, merged over
+	// this process's environment.
+	Env map[string]string
 	// Dir is the working directory of the subprocess.
 	Dir string
 	// Stderr receives the subprocess stderr; it defaults to os.Stderr. The
@@ -101,7 +104,11 @@ type Client struct {
 func New(ctx context.Context, opts Options) (*Client, error) {
 	binary := opts.CLIPath
 	if binary == "" {
-		binary = DefaultBinary
+		found, ok := proc.Find(DefaultBinary, proc.InstallCandidates(DefaultBinary)...)
+		if !ok {
+			return nil, ErrCLINotFound
+		}
+		binary = found
 	}
 	args := opts.Args
 	if args == nil {
@@ -111,11 +118,11 @@ func New(ctx context.Context, opts Options) (*Client, error) {
 		args = append(args, "app-server")
 	}
 	stderr := &tailbuf.Buffer{Tee: cmp.Or[io.Writer](opts.Stderr, os.Stderr), Max: stderrTailLines}
-	proc, err := startProcess(binary, args, opts.Env, opts.Dir, stderr)
+	p, err := startProcess(binary, args, opts.Env, opts.Dir, stderr)
 	if err != nil {
 		return nil, err
 	}
-	return dial(ctx, opts, proc.stdout, proc.stdin, proc.close)
+	return dial(ctx, opts, p.stdout, p.stdin, p.close)
 }
 
 // dial wires a client onto an existing byte stream. Tests use it to drive an
@@ -259,7 +266,9 @@ func routeIDs(params json.RawMessage) (threadID, turnID string) {
 // block, so every fan-out path uses buffered channels or dedicated goroutines.
 func (c *Client) handleNotification(method string, params json.RawMessage) {
 	if c.opts.OnNotification != nil {
-		c.opts.OnNotification(method, params)
+		if err := c.notifyUser(method, params); err != nil {
+			c.logger.Error("codex: notification callback failed", "method", method, "error", err)
+		}
 	}
 	switch method {
 	case MethodLoginCompleted, MethodAccountUpdated:
@@ -269,6 +278,14 @@ func (c *Client) handleNotification(method string, params json.RawMessage) {
 	// Thread and turn subscribers are registered by the thread and turn APIs
 	// and dispatched from here.
 	c.dispatchNotification(method, params)
+}
+
+// notifyUser calls Options.OnNotification, returning a panic there as an
+// error rather than letting it kill the reader.
+func (c *Client) notifyUser(method string, params json.RawMessage) (err error) {
+	defer safecall.Recover(&err, "OnNotification")
+	c.opts.OnNotification(method, params)
+	return nil
 }
 
 // dispatchNotification routes a notification to its subscribers.

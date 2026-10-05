@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -15,9 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"google.golang.org/protobuf/proto"
-
 	"github.com/coder/websocket"
+
 	"github.com/ironpark/gelati/agy/internal/wire"
 )
 
@@ -48,17 +46,9 @@ func fakeHarness(mode string) {
 		fmt.Fprintf(os.Stderr, "fake: "+format+"\n", args...)
 		os.Exit(2)
 	}
-	var lenBuf [4]byte
-	if _, err := io.ReadFull(os.Stdin, lenBuf[:]); err != nil {
-		fail("read length: %v", err)
-	}
-	buf := make([]byte, binary.LittleEndian.Uint32(lenBuf[:]))
-	if _, err := io.ReadFull(os.Stdin, buf); err != nil {
-		fail("read input config: %v", err)
-	}
 	in := &wire.InputConfig{}
-	if err := proto.Unmarshal(buf, in); err != nil {
-		fail("decode input config: %v", err)
+	if err := ReadFrame(os.Stdin, in); err != nil {
+		fail("read input config: %v", err)
 	}
 	fmt.Fprintf(os.Stderr, "fake harness starting in %s mode\n", mode)
 	switch mode {
@@ -77,8 +67,7 @@ func fakeHarness(mode string) {
 	if mode == "slow-listen" {
 		ln.Close()
 	}
-	out, _ := proto.Marshal(wire.OutputConfig_builder{Port: new(int32(port)), ApiKey: new(fakeAPIKey)}.Build())
-	os.Stdout.Write(append(binary.LittleEndian.AppendUint32(nil, uint32(len(out))), out...))
+	_ = WriteFrame(os.Stdout, wire.OutputConfig_builder{Port: new(int32(port)), ApiKey: new(fakeAPIKey)}.Build())
 	if mode == "slow-listen" {
 		time.Sleep(400 * time.Millisecond)
 		if ln, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port)); err != nil {
@@ -340,7 +329,7 @@ func TestFindBinary(t *testing.T) {
 	}
 	t.Setenv(EnvBinaryPath, "")
 	t.Setenv("PATH", t.TempDir())
-	if _, err := FindBinary(nil); !errors.Is(err, ErrBinaryNotFound) {
+	if _, err := FindBinary(nil); !errors.Is(err, ErrCLINotFound) {
 		t.Errorf("missing binary = %v", err)
 	}
 }

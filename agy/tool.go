@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+
+	"github.com/ironpark/gelati/internal/safecall"
 )
 
 // Tool is a custom tool that runs in this process when the model calls it.
@@ -80,11 +82,7 @@ func (t *Tool) Schema() map[string]any { return NormalizeSchema(t.schema).(map[s
 // Call runs the tool with the given arguments, recovering a panic as an
 // error. tc may be nil outside a session.
 func (t *Tool) Call(ctx context.Context, tc *ToolContext, args map[string]any) (result any, err error) {
-	defer func() {
-		if v := recover(); v != nil {
-			err = fmt.Errorf("tool %q panicked: %v", t.name, v)
-		}
-	}()
+	defer safecall.Recover(&err, fmt.Sprintf("tool %q", t.name))
 	return t.run(ctx, tc, args)
 }
 

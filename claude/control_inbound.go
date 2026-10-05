@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+
+	"github.com/ironpark/gelati/internal/safecall"
 )
 
 // errSuppressReply makes handleControlRequest write no reply. It covers the
@@ -87,11 +89,7 @@ func (e *engine) handleControlRequest(ctx context.Context, requestID string, fra
 // taking the process down.
 func (e *engine) dispatchControlRequest(ctx context.Context, requestID string, request map[string]any) (data map[string]any, err error) {
 	subtype := str(request["subtype"])
-	defer func() {
-		if r := recover(); r != nil {
-			data, err = nil, fmt.Errorf("%s callback panicked: %v", subtype, r)
-		}
-	}()
+	defer safecall.Recover(&err, subtype+" callback")
 	switch subtype {
 	case "remote_tool_call", "remote_plumbing_call", "remote_tools_probe", "remote_tools_reannounce":
 		// Meant for the machine that serves this session's tools, not for

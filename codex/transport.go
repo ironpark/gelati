@@ -13,6 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ironpark/gelati/internal/lifecycle"
+	"github.com/ironpark/gelati/internal/proc"
+	"github.com/ironpark/gelati/internal/safecall"
 	"github.com/ironpark/gelati/internal/tailbuf"
 )
 
@@ -71,17 +74,17 @@ type transport struct {
 
 	mu      sync.Mutex
 	pending map[int64]chan *wireMessage
-	closed  bool
-	err     error
+
+	// end records the fatal error that stopped the transport; it is never
+	// nil once the transport has stopped.
+	end lifecycle.Done
 
 	ctx     context.Context
 	cancel  context.CancelFunc
-	done    chan struct{}
 	handler sync.WaitGroup
 	reader  sync.WaitGroup
 
 	closeOnce sync.Once
-	fatalOnce sync.Once
 }
 
 // newTransport starts the reader goroutine and returns a ready transport.
@@ -92,7 +95,6 @@ func newTransport(cfg transportConfig) *transport {
 		pending: make(map[int64]chan *wireMessage),
 		ctx:     ctx,
 		cancel:  cancel,
-		done:    make(chan struct{}),
 	}
 	t.reader.Add(1)
 	go t.readLoop()
@@ -100,14 +102,10 @@ func newTransport(cfg transportConfig) *transport {
 }
 
 // Done returns a channel closed when the transport stops for any reason.
-func (t *transport) Done() <-chan struct{} { return t.done }
+func (t *transport) Done() <-chan struct{} { return t.end.C() }
 
 // Err returns the error that terminated the transport, or nil while running.
-func (t *transport) Err() error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.err
-}
+func (t *transport) Err() error { return t.end.Err() }
 
 // Call sends a request and waits for the matching response. result, when
 // non-nil, receives the decoded JSON result.
@@ -115,15 +113,12 @@ func (t *transport) Call(ctx context.Context, method string, params any, result 
 	id := t.nextID.Add(1)
 	ch := make(chan *wireMessage, 1)
 
-	t.mu.Lock()
-	if t.closed {
-		err := t.err
-		t.mu.Unlock()
-		if err == nil {
-			err = ErrClosed
-		}
+	if err := t.Err(); err != nil {
 		return err
 	}
+	// A transport that stops after the check above still releases this
+	// call through Done.
+	t.mu.Lock()
 	t.pending[id] = ch
 	t.mu.Unlock()
 
@@ -144,21 +139,14 @@ func (t *transport) Call(ctx context.Context, method string, params any, result 
 		delete(t.pending, id)
 		t.mu.Unlock()
 		return ctx.Err()
-	case <-t.done:
+	case <-t.Done():
 		t.mu.Lock()
 		delete(t.pending, id)
-		err := t.err
 		t.mu.Unlock()
-		if err == nil {
-			err = ErrClosed
-		}
-		return err
+		return t.Err()
 	case resp := <-ch:
 		if resp == nil {
-			if err := t.Err(); err != nil {
-				return err
-			}
-			return ErrClosed
+			return t.Err()
 		}
 		if resp.Error != nil {
 			return resp.Error
@@ -211,14 +199,8 @@ func (t *transport) write(v any) error {
 
 	t.writeMu.Lock()
 	defer t.writeMu.Unlock()
-	t.mu.Lock()
-	closed, cerr := t.closed, t.err
-	t.mu.Unlock()
-	if closed {
-		if cerr != nil {
-			return cerr
-		}
-		return ErrClosed
+	if err := t.Err(); err != nil {
+		return err
 	}
 	if _, err := t.cfg.out.Write(b); err != nil {
 		return fmt.Errorf("codex: write message: %w", err)
@@ -302,10 +284,18 @@ func (t *transport) handleServerRequest(msg *wireMessage) {
 		if t.cfg.onServerRequest == nil {
 			err = &RPCError{Code: CodeMethodNotFound, Message: "method not found: " + method}
 		} else {
-			result, err = t.cfg.onServerRequest(t.ctx, method, params)
+			result, err = t.serveRequest(method, params)
 		}
 		t.respond(id, result, err)
 	}()
+}
+
+// serveRequest runs the server-request handler, which calls user code (the
+// approval handlers): a panic becomes an internal-error reply instead of
+// taking the process down.
+func (t *transport) serveRequest(method string, params json.RawMessage) (result any, err error) {
+	defer safecall.Recover(&err, method+" handler")
+	return t.cfg.onServerRequest(t.ctx, method, params)
 }
 
 // respond writes the reply to a server-initiated request.
@@ -326,33 +316,37 @@ func (t *transport) respond(id json.RawMessage, result any, err error) {
 	_ = t.write(reply)
 }
 
-// fatal marks the transport dead and releases every waiting caller.
+// fatal marks the transport dead with err, which must not be nil, and
+// releases every waiting caller. Only the first call has an effect.
 func (t *transport) fatal(err error) {
-	t.fatalOnce.Do(func() {
-		t.mu.Lock()
-		t.closed = true
-		if t.err == nil {
-			t.err = err
-		}
-		pending := t.pending
-		t.pending = make(map[int64]chan *wireMessage)
-		t.mu.Unlock()
+	if !t.end.Finish(err) {
+		return
+	}
+	t.mu.Lock()
+	pending := t.pending
+	t.pending = make(map[int64]chan *wireMessage)
+	t.mu.Unlock()
 
-		for _, ch := range pending {
-			close(ch)
-		}
-		// Closing the input unblocks a peer that is still writing to us.
-		if closer, ok := t.cfg.in.(io.Closer); ok {
-			_ = closer.Close()
-		}
-		t.cancel()
-		close(t.done)
-	})
+	for _, ch := range pending {
+		close(ch)
+	}
+	// Closing the input unblocks a peer that is still writing to us.
+	if closer, ok := t.cfg.in.(io.Closer); ok {
+		_ = closer.Close()
+	}
+	t.cancel()
 }
 
 // exitWait bounds how long a stdout EOF waits for the process to exit
 // before it is reported without an exit status.
 const exitWait = 2 * time.Second
+
+// How long Close lets the app-server exit on its own after stdin closes, and
+// after SIGTERM, before escalating.
+const (
+	closeGrace     = 2 * time.Second
+	terminateGrace = 5 * time.Second
+)
 
 // processHandle holds the streams and lifecycle of a spawned app-server.
 type processHandle struct {
@@ -368,12 +362,11 @@ type processHandle struct {
 
 // startProcess spawns `codex app-server` (or the configured equivalent) with
 // piped stdin/stdout, keeping the tail of stderr for the exit error.
-func startProcess(bin string, args []string, env []string, dir string, stderr *tailbuf.Buffer) (*processHandle, error) {
+func startProcess(bin string, args []string, env map[string]string, dir string, stderr *tailbuf.Buffer) (*processHandle, error) {
 	cmd := exec.Command(bin, args...)
+	proc.NewGroup(cmd)
 	cmd.Dir = dir
-	if env != nil {
-		cmd.Env = env
-	}
+	cmd.Env = proc.Environ(env)
 	cmd.Stderr = stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -384,6 +377,9 @@ func startProcess(bin string, args []string, env []string, dir string, stderr *t
 		return nil, fmt.Errorf("codex: stdout pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
+		if proc.IsNotFound(err) {
+			return nil, fmt.Errorf("%w: %w", ErrCLINotFound, err)
+		}
 		return nil, fmt.Errorf("codex: start %s: %w", bin, err)
 	}
 	p := &processHandle{cmd: cmd, stdin: stdin, pipe: stdout, stderr: stderr, exited: make(chan struct{})}
@@ -405,9 +401,7 @@ func (r exitReader) Read(b []byte) (int, error) {
 	if err != io.EOF {
 		return n, err
 	}
-	select {
-	case <-r.p.exited:
-	case <-time.After(exitWait):
+	if !lifecycle.WaitClosed(r.p.exited, exitWait) {
 		return n, io.EOF
 	}
 	exit := &ProcessError{Stderr: r.p.stderr.String(), Err: r.p.waitErr}
@@ -420,13 +414,12 @@ func (r exitReader) Read(b []byte) (int, error) {
 // Close closes stdout so a blocked read returns.
 func (r exitReader) Close() error { return r.p.pipe.Close() }
 
-// close terminates the subprocess and waits for it to exit.
+// close asks the subprocess to exit by closing its stdin, escalating to
+// SIGTERM after closeGrace and to a kill after terminateGrace, and waits for
+// it to exit.
 func (p *processHandle) close() error {
 	_ = p.stdin.Close()
-	if p.cmd.Process != nil {
-		_ = p.cmd.Process.Kill()
-	}
-	<-p.exited
+	_ = proc.Stop(proc.Group(p.cmd.Process), p.exited, closeGrace, terminateGrace)
 	_ = p.pipe.Close()
 	return nil
 }

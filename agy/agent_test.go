@@ -519,7 +519,7 @@ func TestAgentBeforeStartAndValidation(t *testing.T) {
 	t.Setenv("ANTIGRAVITY_HARNESS_PATH", "")
 	t.Setenv("PATH", t.TempDir())
 	agent, _ = NewAgent(cfg)
-	if err := agent.Start(t.Context()); !errors.Is(err, ErrBinaryNotFound) {
+	if err := agent.Start(t.Context()); !errors.Is(err, ErrCLINotFound) {
 		t.Fatalf("Start without binary = %v", err)
 	}
 }
@@ -529,7 +529,7 @@ func TestAgentStartFailureIsConnectionError(t *testing.T) {
 	cfg.CLIPath = filepath.Join(t.TempDir(), "missing-binary")
 	agent, _ := NewAgent(cfg)
 	err := agent.Start(t.Context())
-	if _, ok := errors.AsType[*ConnectionError](err); !ok {
+	if _, ok := errors.AsType[*ConnectionError](err); !ok || !errors.Is(err, ErrCLINotFound) {
 		t.Fatalf("Start = %v (%T)", err, err)
 	}
 	if agent.IsStarted() {

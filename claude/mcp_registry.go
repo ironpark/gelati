@@ -8,6 +8,8 @@ import (
 	"maps"
 	"slices"
 	"sync"
+
+	"github.com/ironpark/gelati/internal/safecall"
 )
 
 // MCPHandler is an in-process MCP server as the SDK sees it: something that
@@ -240,11 +242,7 @@ func (r *sdkMCPRegistry) route(ctx context.Context, serverName string, message j
 		defer done()
 	}
 
-	defer func() {
-		if p := recover(); p != nil {
-			err = fmt.Errorf("MCP server '%s' panicked: %v", serverName, p)
-		}
-	}()
+	defer safecall.Recover(&err, "MCP server '"+serverName+"'")
 	return entry.config.Instance.HandleMCPMessage(ctx, message)
 }
 

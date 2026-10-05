@@ -10,13 +10,12 @@ import (
 	"io"
 	"iter"
 	"os"
-	"os/exec"
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
+	"github.com/ironpark/gelati/internal/proc"
 	"github.com/ironpark/gelati/internal/tailbuf"
 )
 
@@ -131,32 +130,32 @@ func (t *subprocessTransport) Connect(ctx context.Context) error {
 	t.cancel = cancel
 
 	command, argv := resolveCommand(cliPath, t.opts, t.launch.commandArgs(t.opts))
-	proc, err := spawn(runCtx, SpawnOptions{
+	child, err := spawn(runCtx, SpawnOptions{
 		Command: command,
 		Args:    argv,
 		Cwd:     t.opts.Cwd,
 		Env:     buildEnv(t.opts),
 	})
-	if err == nil && proc == nil {
+	if err == nil && child == nil {
 		err = errors.New("Options.Spawn returned no process")
 	}
 	if err != nil {
 		cancel()
-		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
+		if proc.IsNotFound(err) {
 			return NewCLINotFoundError("Claude Code not found at", cliPath)
 		}
 		return NewConnectionError("Failed to start Claude Code: " + err.Error())
 	}
 
-	stdin := proc.Stdin()
-	t.proc = proc
+	stdin := child.Stdin()
+	t.proc = child
 	t.stdin = stdin
-	t.stdout = proc.Stdout()
+	t.stdout = child.Stdout()
 	t.closeStdin = sync.OnceValue(stdin.Close)
 	t.exited = make(chan struct{})
 	t.ready = true
 	t.stderrDone = make(chan struct{})
-	if stderr := proc.Stderr(); stderr != nil {
+	if stderr := child.Stderr(); stderr != nil {
 		go t.pumpStderr(stderr)
 	} else {
 		close(t.stderrDone)
@@ -229,28 +228,9 @@ func (t *subprocessTransport) terminate() {
 			t.ready = false
 			t.mu.Unlock()
 			go func() { _ = t.wait() }()
-			if waitClosed(t.exited, t.gracefulTimeout) {
-				return
-			}
-			_ = t.proc.Signal(syscall.SIGTERM)
-			if waitClosed(t.exited, t.killTimeout) {
-				return
-			}
-			_ = t.proc.Kill()
+			_ = proc.Stop(t.proc, t.exited, t.gracefulTimeout, t.killTimeout)
 		}()
 	})
-}
-
-// waitClosed reports whether ch closes within d.
-func waitClosed(ch <-chan struct{}, d time.Duration) bool {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ch:
-		return true
-	case <-timer.C:
-		return false
-	}
 }
 
 // Write sends one frame to the CLI's stdin. mu is not held while writing,
@@ -341,9 +321,9 @@ func (t *subprocessTransport) Close() error {
 func (t *subprocessTransport) ReadMessages() iter.Seq2[json.RawMessage, error] {
 	return func(yield func(json.RawMessage, error) bool) {
 		t.mu.Lock()
-		stdout, proc := t.stdout, t.proc
+		stdout, child := t.stdout, t.proc
 		t.mu.Unlock()
-		if stdout == nil || proc == nil {
+		if stdout == nil || child == nil {
 			yield(nil, NewConnectionError("not connected"))
 			return
 		}

@@ -2,6 +2,7 @@ package claude
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -35,8 +36,14 @@ func NewConnectionError(msg string) *ConnectionError {
 	return &ConnectionError{baseError{Msg: msg}}
 }
 
+// ErrCLINotFound matches, with errors.Is, every error reporting that the
+// claude executable could not be located; the error itself is a
+// *CLINotFoundError.
+var ErrCLINotFound = errors.New("claude: Claude Code CLI not found")
+
 // CLINotFoundError is returned when the `claude` executable cannot be located.
-// It unwraps to a ConnectionError, mirroring the Python class hierarchy.
+// It unwraps to a ConnectionError, mirroring the Python class hierarchy, and
+// to ErrCLINotFound.
 type CLINotFoundError struct {
 	baseError
 	// CLIPath is the path that was searched for, when one was given.
@@ -55,9 +62,12 @@ func NewCLINotFoundError(msg, cliPath string) *CLINotFoundError {
 	return &CLINotFoundError{baseError{Msg: msg}, cliPath}
 }
 
-// Unwrap reports a ConnectionError so that errors.As with a *ConnectionError
-// target matches, as `except CLIConnectionError` does in Python.
-func (e *CLINotFoundError) Unwrap() error { return &ConnectionError{baseError{Msg: e.Msg}} }
+// Unwrap reports a ConnectionError, so that errors.As with a *ConnectionError
+// target matches as `except CLIConnectionError` does in Python, and
+// ErrCLINotFound.
+func (e *CLINotFoundError) Unwrap() []error {
+	return []error{&ConnectionError{baseError{Msg: e.Msg}}, ErrCLINotFound}
+}
 
 // ProcessError is returned when the CLI subprocess fails.
 type ProcessError struct {

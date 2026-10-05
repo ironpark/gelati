@@ -3,7 +3,10 @@
 // reason it ended, set together and only once.
 package lifecycle
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // Done records the end of a session. The zero value is a session that has
 // not ended. It is safe for concurrent use.
@@ -42,6 +45,13 @@ func (d *Done) C() <-chan struct{} {
 	return d.chLocked()
 }
 
+// Ended reports whether the session has ended.
+func (d *Done) Ended() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.over
+}
+
 // Err returns the error the session ended with, or nil while it runs.
 func (d *Done) Err() error {
 	d.mu.Lock()
@@ -59,3 +69,15 @@ var closed = func() chan struct{} {
 // Closed returns an already-closed channel, for Done methods called when no
 // session was ever started.
 func Closed() <-chan struct{} { return closed }
+
+// WaitClosed reports whether ch closes within d.
+func WaitClosed(ch <-chan struct{}, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ch:
+		return true
+	case <-timer.C:
+		return false
+	}
+}

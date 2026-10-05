@@ -44,9 +44,12 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/ironpark/gelati/agy/internal/wire"
-	"github.com/ironpark/gelati/internal/tailbuf"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/ironpark/gelati/agy/internal/wire"
+	"github.com/ironpark/gelati/internal/lifecycle"
+	"github.com/ironpark/gelati/internal/proc"
+	"github.com/ironpark/gelati/internal/tailbuf"
 )
 
 // APIKeyHeader is the request header carrying the key the harness reports in
@@ -63,13 +66,13 @@ const (
 	// sets no limit; this is a generous guard.
 	DefaultMaxMessageSize = 256 << 20
 
-	connectAttempts     = 5
-	connectBaseBackoff  = 100 * time.Millisecond
-	wsCloseTimeout      = 500 * time.Millisecond
-	terminateGrace      = time.Second
-	stderrTailLines     = 100
-	maxOutputConfigSize = 1 << 20
-	msgBuffer           = 16
+	connectAttempts    = 5
+	connectBaseBackoff = 100 * time.Millisecond
+	wsCloseTimeout     = 500 * time.Millisecond
+	terminateGrace     = time.Second
+	stderrTailLines    = 100
+	maxFrameSize       = 1 << 20
+	msgBuffer          = 16
 )
 
 // ErrClosed is returned by operations on a Harness after Close.
@@ -154,19 +157,11 @@ func Start(ctx context.Context, opts Options) (*Harness, error) {
 		ClientInfo:       clientInfo,
 		Env:              opts.Env,
 	}.Build()
-	payload, err := proto.Marshal(input)
-	if err != nil {
-		return nil, err
-	}
 
 	cmd := exec.Command(bin)
+	proc.NewGroup(cmd)
 	cmd.Dir = opts.Dir
-	if opts.Env != nil {
-		cmd.Env = os.Environ()
-		for k, v := range opts.Env {
-			cmd.Env = append(cmd.Env, k+"="+v)
-		}
-	}
+	cmd.Env = proc.Environ(opts.Env)
 	stderr := &tailbuf.Buffer{Tee: opts.Stderr, Max: stderrTailLines}
 	cmd.Stderr = stderr
 	// Children of the harness may inherit stderr; don't let them hold Wait.
@@ -184,6 +179,9 @@ func Start(ctx context.Context, opts Options) (*Harness, error) {
 	if err := cmd.Start(); err != nil {
 		stdoutR.Close()
 		stdoutW.Close()
+		if proc.IsNotFound(err) {
+			return nil, fmt.Errorf("%w: %w", ErrCLINotFound, err)
+		}
 		return nil, fmt.Errorf("agy harness: start %s: %w", bin, err)
 	}
 	stdoutW.Close()
@@ -202,7 +200,7 @@ func Start(ctx context.Context, opts Options) (*Harness, error) {
 		close(h.exited)
 	}()
 
-	out, err := h.handshake(ctx, payload)
+	out, err := h.handshake(ctx, input)
 	if err != nil {
 		return nil, h.abort(fmt.Errorf("agy harness: handshake: %w", err))
 	}
@@ -220,38 +218,51 @@ func Start(ctx context.Context, opts Options) (*Harness, error) {
 	return h, nil
 }
 
+// WriteFrame writes msg in the stdin/stdout handshake framing: its binary
+// encoding preceded by its length as a little-endian uint32.
+func WriteFrame(w io.Writer, msg proto.Message) error {
+	payload, err := proto.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(append(binary.LittleEndian.AppendUint32(nil, uint32(len(payload))), payload...))
+	return err
+}
+
+// ReadFrame reads one handshake frame (see WriteFrame) into msg. Frames over
+// maxFrameSize are rejected.
+func ReadFrame(r io.Reader, msg proto.Message) error {
+	var lenBuf [4]byte
+	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
+		return err
+	}
+	n := binary.LittleEndian.Uint32(lenBuf[:])
+	if n > maxFrameSize {
+		return fmt.Errorf("frame length %d too large", n)
+	}
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return err
+	}
+	return proto.Unmarshal(buf, msg)
+}
+
 // handshake writes the framed InputConfig to stdin and reads the framed
 // OutputConfig from stdout.
-func (h *Harness) handshake(ctx context.Context, payload []byte) (*wire.OutputConfig, error) {
+func (h *Harness) handshake(ctx context.Context, input *wire.InputConfig) (*wire.OutputConfig, error) {
 	type result struct {
 		out *wire.OutputConfig
 		err error
 	}
 	done := make(chan result, 1)
 	go func() {
-		frame := binary.LittleEndian.AppendUint32(nil, uint32(len(payload)))
-		if _, err := h.stdin.Write(append(frame, payload...)); err != nil {
+		if err := WriteFrame(h.stdin, input); err != nil {
 			done <- result{err: fmt.Errorf("write input config: %w", err)}
 			return
 		}
-		var lenBuf [4]byte
-		if _, err := io.ReadFull(h.stdout, lenBuf[:]); err != nil {
-			done <- result{err: fmt.Errorf("read output config length: %w", err)}
-			return
-		}
-		n := binary.LittleEndian.Uint32(lenBuf[:])
-		if n > maxOutputConfigSize {
-			done <- result{err: fmt.Errorf("output config length %d too large", n)}
-			return
-		}
-		buf := make([]byte, n)
-		if _, err := io.ReadFull(h.stdout, buf); err != nil {
-			done <- result{err: fmt.Errorf("read output config: %w", err)}
-			return
-		}
 		out := &wire.OutputConfig{}
-		if err := proto.Unmarshal(buf, out); err != nil {
-			done <- result{err: err}
+		if err := ReadFrame(h.stdout, out); err != nil {
+			done <- result{err: fmt.Errorf("read output config: %w", err)}
 			return
 		}
 		done <- result{out: out}
@@ -312,7 +323,7 @@ func (h *Harness) abort(err error) error {
 	if h.ws != nil {
 		_ = h.ws.CloseNow()
 	}
-	_ = h.cmd.Process.Kill()
+	_ = proc.Kill(h.cmd.Process)
 	_ = h.stdin.Close()
 	<-h.exited
 	_ = h.stdout.Close()
@@ -420,7 +431,7 @@ func (h *Harness) connErr(err error) error {
 	}
 	// The harness likely crashed: give it a moment to exit so its stderr is
 	// complete.
-	waitClosed(h.exited, time.Second)
+	lifecycle.WaitClosed(h.exited, time.Second)
 	code := websocket.CloseStatus(err)
 	if code < 0 {
 		code = websocket.StatusAbnormalClosure
@@ -442,7 +453,7 @@ func (h *Harness) shutdown() error {
 		_ = h.ws.Close(websocket.StatusNormalClosure, "")
 		close(closed)
 	}()
-	if !waitClosed(closed, wsCloseTimeout) {
+	if !lifecycle.WaitClosed(closed, wsCloseTimeout) {
 		_ = h.ws.CloseNow()
 		<-closed
 	}
@@ -453,32 +464,10 @@ func (h *Harness) shutdown() error {
 }
 
 func (h *Harness) waitOrKill() error {
-	if waitClosed(h.exited, h.opts.ShutdownTimeout) {
-		return nil
-	}
-	_ = terminate(h.cmd.Process)
-	if waitClosed(h.exited, terminateGrace) {
-		return nil
-	}
-	if err := h.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return fmt.Errorf("agy harness: kill: %w", err)
-	}
-	if !waitClosed(h.exited, terminateGrace) {
-		return errors.New("agy harness: process did not exit after kill")
+	if err := proc.Stop(proc.Group(h.cmd.Process), h.exited, h.opts.ShutdownTimeout, terminateGrace); err != nil {
+		return fmt.Errorf("agy harness: %w", err)
 	}
 	return nil
-}
-
-// waitClosed waits up to d for ch to be closed and reports whether it was.
-func waitClosed(ch <-chan struct{}, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ch:
-		return true
-	case <-t.C:
-		return false
-	}
 }
 
 // Port returns the harness's WebSocket port.

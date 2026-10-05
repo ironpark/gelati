@@ -5,6 +5,8 @@ import (
 	"iter"
 	"slices"
 	"time"
+
+	"github.com/ironpark/gelati/internal/lifecycle"
 )
 
 // Query runs a one-shot prompt and yields the messages it produces, ending with
@@ -100,7 +102,7 @@ func runQuery(ctx context.Context, sess *session, inputs iter.Seq[UserInput], yi
 		if stopped {
 			_ = eng.close()
 		}
-		waitClosed(writerDone, 5*time.Second)
+		lifecycle.WaitClosed(writerDone, 5*time.Second)
 	}()
 
 	for msg, err := range eng.receive(ctx) {

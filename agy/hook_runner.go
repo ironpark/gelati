@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ironpark/gelati/agy/internal/wire"
+	"github.com/ironpark/gelati/internal/safecall"
 )
 
 // hookRunner holds the registered hooks by kind and dispatches lifecycle
@@ -63,15 +64,8 @@ func each[H Hook](r *hookRunner) iter.Seq[H] {
 	}
 }
 
-// recoverHook turns a panic in a user hook into an error.
-func recoverHook(err *error) {
-	if v := recover(); v != nil {
-		*err = fmt.Errorf("agy: hook panicked: %v", v)
-	}
-}
-
 func callInspect(fn func() error) (err error) {
-	defer recoverHook(&err)
+	defer safecall.Recover(&err, "agy: hook")
 	return fn()
 }
 

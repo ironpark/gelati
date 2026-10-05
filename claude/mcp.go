@@ -8,6 +8,8 @@ import (
 	"maps"
 	"slices"
 	"sync"
+
+	"github.com/ironpark/gelati/internal/safecall"
 )
 
 // DefaultMCPProtocolVersion is offered when the client does not name one.
@@ -518,12 +520,10 @@ func (s *MCPServer) callTool(ctx context.Context, params json.RawMessage) (resul
 		return ErrorResult("Input validation error: %s", err)
 	}
 
-	defer func() {
-		if r := recover(); r != nil {
-			result = ErrorResult("Tool '%s' panicked: %v", call.Name, r)
-		}
+	out, err := func() (out ToolResult, err error) {
+		defer safecall.Recover(&err, "Tool '"+call.Name+"'")
+		return tool.Handler(ctx, call.Arguments)
 	}()
-	out, err := tool.Handler(ctx, call.Arguments)
 	if err != nil {
 		return ErrorResult("%s", err.Error())
 	}

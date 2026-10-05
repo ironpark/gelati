@@ -946,7 +946,7 @@ func TestMaterializeResumeErrors(t *testing.T) {
 		f := newResumeFixture(t)
 		store := &resumeStoreFake{loadHook: func(context.Context, SessionKey) ([]SessionStoreEntry, error) { panic("boom") }}
 		_, err := materializeResumeSession(t.Context(), &Options{Cwd: f.cwd, SessionStore: store, Resume: resumeSID}, f.env)
-		if err == nil || !strings.Contains(err.Error(), "panic: boom") {
+		if err == nil || !strings.Contains(err.Error(), "SessionStore panicked: boom") {
 			t.Fatalf("error = %v", err)
 		}
 	})

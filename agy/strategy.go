@@ -3,7 +3,6 @@ package agy
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -51,9 +50,7 @@ func connectLocal(ctx context.Context, cc *compiledConfig) (*Connection, error) 
 	}
 	h, err := harness.Start(ctx, opts)
 	if err != nil {
-		if errors.Is(err, harness.ErrBinaryNotFound) {
-			return nil, err
-		}
+		// Also for a missing binary, which still matches ErrCLINotFound.
 		return nil, connectionErrorFrom(err)
 	}
 	resp, err := h.Initialize(ctx, hc)

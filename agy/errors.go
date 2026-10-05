@@ -29,9 +29,10 @@ var (
 	// a Connection's steps while another is still reading them. Steps come
 	// from a single queue, so two readers would steal steps from each other.
 	ErrConcurrentReceive = errors.New("agy: concurrent ReceiveSteps calls are not supported on this connection")
-	// ErrBinaryNotFound reports that no localharness binary could be
-	// located; see Config.CLIPath.
-	ErrBinaryNotFound = harness.ErrBinaryNotFound
+	// ErrCLINotFound reports that no localharness binary could be located
+	// or started; see Config.CLIPath. Start returns it inside a
+	// *ConnectionError.
+	ErrCLINotFound = harness.ErrCLINotFound
 )
 
 // ConnectionError reports that a connection to the agent backend could not

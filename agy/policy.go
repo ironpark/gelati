@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/ironpark/gelati/agy/internal/wire"
+	"github.com/ironpark/gelati/internal/safecall"
 )
 
 // Decision is the outcome a Policy produces when it matches.
@@ -154,7 +155,7 @@ func evaluatePredicate(ctx context.Context, p *Policy, call ToolCall) (matched b
 	if p.When == nil {
 		return true, nil
 	}
-	defer recoverHook(&err)
+	defer safecall.Recover(&err, "agy: hook")
 	return p.When(ctx, call)
 }
 
@@ -163,7 +164,7 @@ func executeAskUser(ctx context.Context, p *Policy, call ToolCall, reason string
 	if p.AskUser == nil {
 		return false, fmt.Errorf("policy %q has no ask_user handler", p.label())
 	}
-	defer recoverHook(&err)
+	defer safecall.Recover(&err, "agy: hook")
 	return p.AskUser(ctx, call, reason)
 }
 

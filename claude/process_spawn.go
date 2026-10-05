@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+
+	"github.com/ironpark/gelati/internal/proc"
 )
 
 // SpawnOptions describes the CLI process the SDK wants to start. It is passed
@@ -48,10 +50,13 @@ type SpawnedProcess interface {
 
 // SpawnLocalProcess starts opts as a local child process. It is the default
 // for Options.Spawn, and a building block for a custom spawner that only
-// rewrites the command, e.g. to prefix it with a wrapper. The process is
-// killed when ctx is cancelled.
+// rewrites the command, e.g. to prefix it with a wrapper. The process runs in
+// a process group of its own: Signal and Kill reach whatever the CLI started
+// too (shells, MCP servers), and a terminal's Ctrl-C reaches only this
+// program. The group is killed when ctx is cancelled.
 func SpawnLocalProcess(ctx context.Context, opts SpawnOptions) (SpawnedProcess, error) {
 	cmd := exec.CommandContext(ctx, opts.Command, opts.Args...)
+	proc.NewGroup(cmd)
 	cmd.Dir = opts.Cwd
 	cmd.Env = opts.Env
 	stdin, err := cmd.StdinPipe()
@@ -84,9 +89,9 @@ func (p *localProcess) Stdin() io.WriteCloser { return p.stdin }
 func (p *localProcess) Stdout() io.Reader     { return p.stdout }
 func (p *localProcess) Stderr() io.Reader     { return p.stderr }
 func (p *localProcess) Wait() error           { return p.cmd.Wait() }
-func (p *localProcess) Kill() error           { return p.cmd.Process.Kill() }
+func (p *localProcess) Kill() error           { return proc.Kill(p.cmd.Process) }
 
-func (p *localProcess) Signal(sig os.Signal) error { return p.cmd.Process.Signal(sig) }
+func (p *localProcess) Signal(sig os.Signal) error { return proc.Signal(p.cmd.Process, sig) }
 
 // exitCoder is implemented by process errors that carry an exit status, such
 // as *exec.ExitError.

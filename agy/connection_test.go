@@ -733,7 +733,7 @@ func TestCloseSkipsSessionEndWhenHarnessGone(t *testing.T) {
 	tr := newFakeTransport()
 	c := newConnection(tr, connectionOptions{hooks: hooks, logger: quietLogger()})
 	tr.hangUp()
-	<-c.readerDone
+	<-c.Done()
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}

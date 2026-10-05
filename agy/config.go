@@ -105,7 +105,9 @@ type Config struct {
 	// ignored. Explicit Models are still sent alongside.
 	OpenAI *OpenAIEndpoint
 
-	// Env holds extra environment variables for the harness process.
+	// Env holds extra environment variables for the harness process, merged
+	// over this process's environment. The harness also receives them in its
+	// input config, as upstream sends them.
 	Env map[string]string
 	// CLIPath is the localharness executable. Empty uses
 	// ANTIGRAVITY_HARNESS_PATH (in Env, then the process environment), then

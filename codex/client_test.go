@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -212,6 +213,26 @@ func TestClientOnNotificationHook(t *testing.T) {
 	}
 }
 
+func TestClientOnNotificationPanicIsContained(t *testing.T) {
+	seen := make(chan string, 8)
+	_, server := connect(t, Options{
+		OnNotification: func(method string, params json.RawMessage) {
+			seen <- method
+			panic("callback bug")
+		},
+	})
+
+	// The reader survives the panic and keeps delivering.
+	for range 2 {
+		server.notify(MethodThreadStarted, map[string]any{"thread": map[string]any{"id": "thr_1"}})
+		select {
+		case <-seen:
+		case <-time.After(fakeTimeout):
+			t.Fatal("no notification delivered")
+		}
+	}
+}
+
 func TestRouteIDs(t *testing.T) {
 	tests := []struct {
 		params     string
@@ -249,6 +270,13 @@ func TestClientCloseStopsGoroutines(t *testing.T) {
 	}
 	if got := runtime.NumGoroutine(); got > before+4 {
 		t.Fatalf("goroutines leaked: before=%d after=%d", before, got)
+	}
+}
+
+func TestMissingCLI(t *testing.T) {
+	_, err := New(context.Background(), Options{CLIPath: filepath.Join(t.TempDir(), "codex")})
+	if !errors.Is(err, ErrCLINotFound) {
+		t.Fatalf("New = %v, want ErrCLINotFound", err)
 	}
 }
 

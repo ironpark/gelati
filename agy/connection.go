@@ -14,6 +14,7 @@ import (
 
 	"github.com/ironpark/gelati/agy/internal/harness"
 	"github.com/ironpark/gelati/agy/internal/wire"
+	"github.com/ironpark/gelati/internal/lifecycle"
 	"github.com/ironpark/gelati/internal/logx"
 )
 
@@ -156,7 +157,8 @@ type Connection struct {
 	bgCancel context.CancelFunc
 	bg       sync.WaitGroup
 
-	readerDone     chan struct{}
+	// end is finished when the reader exits, with the error Err reports.
+	end            lifecycle.Done
 	sessionEndDone chan struct{}
 	sessionEndOnce sync.Once
 	closing        atomic.Bool
@@ -174,9 +176,6 @@ type Connection struct {
 	// streamErr is set once the event stream ended; turns started later
 	// end with it at once.
 	streamErr error
-	// doneErr is what Err reports once readerDone is closed: streamErr,
-	// unless the stream ended because of Close.
-	doneErr error
 }
 
 type connectionOptions struct {
@@ -203,7 +202,6 @@ func newConnection(tr transport, o connectionOptions) *Connection {
 		logger:         o.logger,
 		initialHistory: o.initialHistory,
 		sandbox:        o.sandbox,
-		readerDone:     make(chan struct{}),
 		sessionEndDone: make(chan struct{}),
 		idle:           true,
 		idleCh:         make(chan struct{}),
@@ -400,7 +398,7 @@ func (c *Connection) WaitForIdle(ctx context.Context) error {
 	c.mu.Unlock()
 	select {
 	case <-ch:
-	case <-c.readerDone:
+	case <-c.end.C():
 		if !c.IsIdle() {
 			return &ConnectionError{Message: "agy: the harness connection closed before the agent went idle"}
 		}
@@ -538,7 +536,6 @@ func (c *Connection) setBusyLocked() {
 // readLoop reads harness events until the stream ends, then ends the
 // current turn.
 func (c *Connection) readLoop() {
-	defer close(c.readerDone)
 	var streamErr error
 	defer func() {
 		c.mu.Lock()
@@ -547,10 +544,14 @@ func (c *Connection) readLoop() {
 		if c.streamErr == nil {
 			c.streamErr = &ConnectionError{Message: "agy: the harness connection is closed"}
 		}
+		// Err reports the stream error unless the stream ended because of
+		// Close.
+		var doneErr error
 		if !c.closing.Load() {
-			c.doneErr = c.streamErr
+			doneErr = c.streamErr
 		}
 		c.mu.Unlock()
+		c.end.Finish(doneErr)
 	}()
 	for {
 		// The reader runs until the transport is closed; cancelling a
@@ -573,7 +574,7 @@ func (c *Connection) readLoop() {
 // Done returns a channel closed when the session ends for any reason:
 // Close was called, the harness process exited, or the harness connection
 // was lost. After Close it is closed once the harness has been shut down.
-func (c *Connection) Done() <-chan struct{} { return c.readerDone }
+func (c *Connection) Done() <-chan struct{} { return c.end.C() }
 
 // Err returns the error that ended the session: nil while it runs and nil
 // when it ended because of Close (whose own result Close returns). When
@@ -581,23 +582,7 @@ func (c *Connection) Done() <-chan struct{} { return c.readerDone }
 // connection or an exited harness process it carries the WebSocket close
 // code and the tail of the harness's stderr. Once Done is closed, Err no
 // longer changes.
-func (c *Connection) Err() error {
-	if !c.readerFinished() {
-		return nil
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.doneErr
-}
-
-func (c *Connection) readerFinished() bool {
-	select {
-	case <-c.readerDone:
-		return true
-	default:
-		return false
-	}
-}
+func (c *Connection) Err() error { return c.end.Err() }
 
 // goBackground runs fn on its own goroutine with the connection's
 // background context.
@@ -911,7 +896,7 @@ func (c *Connection) close() error {
 	// session end handshake as expected.
 	c.closing.Store(true)
 	var hookErr error
-	if c.hooks != nil && c.hooks.has(hookSessionEnd) && !c.readerFinished() {
+	if c.hooks != nil && c.hooks.has(hookSessionEnd) && !c.end.Ended() {
 		c.logger.Debug("requesting session end")
 		ctx, cancel := context.WithTimeout(context.Background(), sessionEndTimeout)
 		if err := c.send(ctx, wire.InputEvent_builder{SessionEndRequest: new(true)}.Build()); err != nil {
@@ -919,7 +904,7 @@ func (c *Connection) close() error {
 		} else {
 			select {
 			case <-c.sessionEndDone:
-			case <-c.readerDone:
+			case <-c.end.C():
 			case <-ctx.Done():
 				hookErr = &ConnectionError{Message: "timed out waiting for the session end hooks"}
 			}
@@ -932,13 +917,11 @@ func (c *Connection) close() error {
 		c.bg.Wait()
 		close(drained)
 	}()
-	select {
-	case <-drained:
-	case <-time.After(backgroundDrainTimeout):
+	if !lifecycle.WaitClosed(drained, backgroundDrainTimeout) {
 		c.logger.Warn("tool calls or hooks still running after close")
 	}
 	closeErr := c.tr.Close()
-	<-c.readerDone
+	<-c.end.C()
 	if hookErr != nil {
 		return hookErr
 	}

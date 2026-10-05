@@ -2,7 +2,6 @@ package agy
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,9 +13,8 @@ import (
 	"sync"
 	"testing"
 
-	"google.golang.org/protobuf/proto"
-
 	"github.com/coder/websocket"
+
 	"github.com/ironpark/gelati/agy/internal/harness"
 	"github.com/ironpark/gelati/agy/internal/wire"
 )
@@ -49,20 +47,14 @@ func runFakeHarness() {
 		fmt.Fprintf(os.Stderr, "fake harness: "+format+"\n", args...)
 		os.Exit(2)
 	}
-	var lenBuf [4]byte
-	if _, err := io.ReadFull(os.Stdin, lenBuf[:]); err != nil {
-		fail("read length: %v", err)
-	}
-	buf := make([]byte, binary.LittleEndian.Uint32(lenBuf[:]))
-	if _, err := io.ReadFull(os.Stdin, buf); err != nil {
+	if err := harness.ReadFrame(os.Stdin, &wire.InputConfig{}); err != nil {
 		fail("read input config: %v", err)
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		fail("listen: %v", err)
 	}
-	out, _ := proto.Marshal(wire.OutputConfig_builder{Port: new(int32(ln.Addr().(*net.TCPAddr).Port)), ApiKey: new(fakeKey)}.Build())
-	os.Stdout.Write(append(binary.LittleEndian.AppendUint32(nil, uint32(len(out))), out...))
+	_ = harness.WriteFrame(os.Stdout, wire.OutputConfig_builder{Port: new(int32(ln.Addr().(*net.TCPAddr).Port)), ApiKey: new(fakeKey)}.Build())
 	go func() {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		os.Exit(0)

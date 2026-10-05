@@ -702,7 +702,7 @@ func (e *engine) close() error {
 		err = e.transport.Close()
 		// A transport whose Close leaves the reader blocked must not wedge
 		// the caller; the goroutine ends when its stream does.
-		waitClosed(e.readerDone, 5*time.Second)
+		lifecycle.WaitClosed(e.readerDone, 5*time.Second)
 		e.handlers.Wait()
 		if mirror != nil {
 			// Final flush of whatever the reader enqueued while stopping;
