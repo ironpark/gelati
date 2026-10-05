@@ -8,11 +8,8 @@ import (
 	"sync"
 
 	"github.com/ironpark/gelati/internal/jsonx"
+	"github.com/ironpark/gelati/internal/lifecycle"
 )
-
-// ErrTurnAbandoned is reported by Wait when the caller closed the stream
-// before the turn reached a terminal status.
-var ErrTurnAbandoned = errors.New("codex: turn stream abandoned")
 
 // EventKind classifies a turn event.
 type EventKind string
@@ -78,24 +75,31 @@ type Event struct {
 
 // TurnStream delivers a turn's events in arrival order. Iterate them with
 // Events, or call Result to wait for the turn and collect what it produced.
+//
 // The stream ends once the turn reaches a terminal status, the caller calls
-// Close, or the client shuts down.
+// Close, or the client shuts down. The rules shared by every gelati SDK:
+//
+//   - Close stops reading and never interrupts the turn. Close on a turn that
+//     already ended is a no-op, and Result still returns its result. Events
+//     and Result on a stream closed before its turn ended report ErrClosed.
+//   - Cancel interrupts the turn while it is still running, also after Close.
+//     Once the turn has ended it is a no-op that returns nil.
+//   - Result returns the turn's result whenever one exists, together with the
+//     error when the turn failed.
 type TurnStream struct {
 	client   *Client
 	threadID string
 	events   chan Event
-	done     chan struct{}
+	// done ends when the stream does, with ErrClosed after Close or a client
+	// shutdown, and with nil when the turn completed.
+	done lifecycle.Done
 
-	mu       sync.Mutex
-	turnID   string
-	finished bool
-	final    *Turn
-	err      error
-	items    []ThreadItem      // completed items, for Result
-	usage    *ThreadTokenUsage // latest usage update, for Result
-
-	doneOnce  sync.Once
-	closeOnce sync.Once
+	mu     sync.Mutex
+	turnID string
+	closed bool              // Close ended the stream before the turn ended
+	final  *Turn             // set by turn/completed, also after Close
+	items  []ThreadItem      // completed items, for Result
+	usage  *ThreadTokenUsage // latest usage update, for Result
 }
 
 // ThreadID returns the thread the turn belongs to.
@@ -111,23 +115,32 @@ func (s *TurnStream) TurnID() string {
 // Events iterates the turn's events in arrival order until the turn reaches
 // a terminal status, the stream is closed, or the client shuts down. When the
 // stream ends abnormally, or ctx ends first, the last pair carries the error
-// (ErrTurnAbandoned, ErrClosed, or ctx's error) and a zero Event; a failed
-// turn ends normally with its EventTurnCompleted, and Result or Wait report
-// its *TurnError.
+// (ErrClosed after Close or a client shutdown, or ctx's error) and a zero
+// Event; a failed or interrupted turn ends normally with its
+// EventTurnCompleted, and Result reports a failure's *TurnError.
 //
 // Breaking out of the loop leaves the stream open: call Result to finish
 // collecting it, or Close to abandon it. Events and Result consume one queue,
 // so do not read the same stream from two goroutines.
 func (s *TurnStream) Events(ctx context.Context) iter.Seq2[Event, error] {
 	return func(yield func(Event, error) bool) {
+		done := s.done.C()
 		for {
 			select {
 			case <-ctx.Done():
 				yield(Event{}, ctx.Err())
 				return
+			case <-done:
+				if err := s.endErr(); err != nil {
+					yield(Event{}, err)
+					return
+				}
+				// The turn completed: the pump closes the event channel
+				// right after its buffered events.
+				done = nil
 			case event, ok := <-s.events:
-				if !ok {
-					if err := s.terminalErr(); err != nil {
+				if !ok || s.isClosed() {
+					if err := s.endErr(); err != nil {
 						yield(Event{}, err)
 					}
 					return
@@ -135,96 +148,90 @@ func (s *TurnStream) Events(ctx context.Context) iter.Seq2[Event, error] {
 				if !yield(event, nil) {
 					return
 				}
-			case <-s.done:
-				// An abandoned or failed stream may never see its channel
-				// closed, so stop on done. A completed turn's events are all
-				// buffered by then: drain them first.
-				if err := s.terminalErr(); err != nil {
-					yield(Event{}, err)
-					return
-				}
-				for {
-					select {
-					case event, ok := <-s.events:
-						if !ok || !yield(event, nil) {
-							return
-						}
-					default:
-						return
-					}
-				}
 			}
 		}
 	}
 }
 
-// terminalErr returns the error the stream ended with, or nil.
-func (s *TurnStream) terminalErr() error {
+// isClosed reports whether Close ended the stream.
+func (s *TurnStream) isClosed() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.err
+	return s.closed
 }
 
-// Done returns a channel closed when the turn ends for any reason.
-func (s *TurnStream) Done() <-chan struct{} { return s.done }
+// endErr returns the error the stream ended with, or nil.
+func (s *TurnStream) endErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.endErrLocked()
+}
 
-// Wait blocks until the turn reaches a terminal status and returns the final
-// turn. It returns an error when the context ends first, when the client shut
-// down, or when the stream was abandoned. Wait does not consume events, so
-// use it after iterating Events; to wait without reading them, use Result.
-func (s *TurnStream) Wait(ctx context.Context) (*Turn, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-s.done:
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		if s.err != nil {
-			return s.final, s.err
-		}
-		return s.final, nil
+// endErrLocked is endErr with s.mu held.
+func (s *TurnStream) endErrLocked() error {
+	if s.closed {
+		return ErrClosed
 	}
+	return s.done.Err()
 }
 
-// Close abandons the stream. Pending and future events for this turn are
-// discarded; the turn itself keeps running on the server until it completes or
-// is interrupted.
-func (s *TurnStream) Close() {
-	s.finish(nil, ErrTurnAbandoned)
+// Done returns a channel closed when the stream ends for any reason.
+func (s *TurnStream) Done() <-chan struct{} { return s.done.C() }
+
+// Cancel asks the server to interrupt the turn (turn/interrupt). It does not
+// close the stream: the turn then ends with status TurnInterrupted, which
+// Events delivers as its EventTurnCompleted and Result returns with a nil
+// error. Cancel also interrupts a turn whose stream was closed while it was
+// still running. It returns nil once the turn has ended.
+func (s *TurnStream) Cancel(ctx context.Context) error {
+	s.mu.Lock()
+	ended := s.final != nil || (s.done.Ended() && !s.closed)
+	turnID := s.turnID
+	s.mu.Unlock()
+	if ended || s.client.Err() != nil {
+		return nil // a shut-down client has no turn left to interrupt
+	}
+	return s.client.InterruptTurn(ctx, s.threadID, turnID)
 }
 
-// finish records the terminal state and releases everyone waiting. The event
-// channel is closed by the owning thread pump, which is the only goroutine
-// that sends on it.
+// Close stops reading the stream without interrupting the turn, which keeps
+// running on the server until it completes or is cancelled. Pending and
+// future events for this turn are discarded, and Events and Result report
+// ErrClosed. Close on a stream whose turn already ended does nothing. Close is
+// idempotent and always returns nil.
+func (s *TurnStream) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.done.Ended() {
+		s.closed = true
+		s.done.Finish(ErrClosed)
+	}
+	return nil
+}
+
+// finish records the terminal state and releases everyone waiting. The first
+// terminal state wins, except that a turn completing after Close still
+// records its final turn, so Cancel knows there is nothing left to stop. The
+// event channel is closed by the owning thread pump, the only goroutine that
+// sends on it.
 func (s *TurnStream) finish(final *Turn, err error) {
 	s.mu.Lock()
-	if !s.finished {
-		s.finished = true
+	defer s.mu.Unlock()
+	if !s.done.Ended() {
 		s.final = final
-		s.err = err
+		s.done.Finish(err)
+	} else if s.closed && final != nil {
+		s.final = final
 	}
-	s.mu.Unlock()
-	s.doneOnce.Do(func() { close(s.done) })
-}
-
-// closeEvents closes the event channel exactly once.
-func (s *TurnStream) closeEvents() {
-	s.closeOnce.Do(func() { close(s.events) })
 }
 
 // deliver sends an event, waiting for the consumer. It returns false when the
-// stream was abandoned or the client shut down, in which case the event and
-// every later one is dropped.
+// stream ended or the subscription closed, dropping the event.
 func (s *TurnStream) deliver(event Event, quit <-chan struct{}) bool {
-	select {
-	case <-s.done:
-		return false // abandoned: do not buffer more
-	default:
-	}
 	select {
 	case s.events <- event:
 		return true
-	case <-s.done:
+	case <-s.done.C():
 		return false
 	case <-quit:
 		return false
@@ -245,7 +252,6 @@ func (s *threadSubscription) newStream(c *Client, threadID string) *TurnStream {
 		client:   c,
 		threadID: threadID,
 		events:   make(chan Event, c.eventBuffer()),
-		done:     make(chan struct{}),
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -266,24 +272,27 @@ func (s *threadSubscription) bindTurnID(stream *TurnStream, turnID string) {
 
 // endStream records the stream's terminal state, drops it, and closes its
 // event channel. Only the pump calls it, since the pump is the only sender on
-// that channel; other goroutines call finish, and the pump ends the stream the
-// next time it sees it. finish keeps the first terminal state.
+// that channel; other goroutines call finish. The channel is closed only by
+// the call that removed the stream, so it is closed at most once.
 func (s *threadSubscription) endStream(stream *TurnStream, final *Turn, err error) {
 	stream.finish(final, err)
-	s.removeStream(stream)
-	stream.closeEvents()
+	if s.removeStream(stream) {
+		close(stream.events)
+	}
 }
 
-// removeStream drops a stream from the subscription.
-func (s *threadSubscription) removeStream(target *TurnStream) {
+// removeStream drops a stream from the subscription, reporting whether it
+// was there.
+func (s *threadSubscription) removeStream(target *TurnStream) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for index, stream := range s.streams {
 		if stream == target {
 			s.streams = append(s.streams[:index], s.streams[index+1:]...)
-			return
+			return true
 		}
 	}
+	return false
 }
 
 // streamFor resolves the stream a notification belongs to. A pending stream
@@ -325,10 +334,7 @@ func (s *threadSubscription) activeStreams() []*TurnStream {
 // enqueue hands a notification to the thread's pump. It never blocks the
 // transport reader: when the queue is full the notification is dropped.
 func (s *threadSubscription) enqueue(c *Client, note queuedNotification) {
-	s.mu.Lock()
-	closed := s.closed
-	s.mu.Unlock()
-	if closed {
+	if s.quit.Ended() {
 		return
 	}
 	select {
@@ -348,7 +354,7 @@ func (s *threadSubscription) pump(c *Client) {
 	}()
 	for {
 		select {
-		case <-s.quit:
+		case <-s.quit.C():
 			return
 		case note := <-s.queue:
 			c.deliverTurnEvent(s, note)
@@ -376,16 +382,17 @@ func (c *Client) deliverTurnEvent(sub *threadSubscription, note queuedNotificati
 	}
 	stream.record(event)
 
-	if !stream.deliver(event, sub.quit) {
-		// The consumer abandoned the stream or the subscription closed.
+	// A closed stream stays registered, its events discarded, until its turn
+	// completes, so Cancel still knows whether the turn is running.
+	if !stream.isClosed() && !stream.deliver(event, sub.quit.C()) && sub.quit.Ended() {
 		sub.endStream(stream, nil, ErrClosed)
 		return
 	}
-	if event.Kind == EventTurnStarted {
+	switch event.Kind {
+	case EventTurnStarted:
 		// A new turn clears prompts left over from the previous one.
 		c.pending.cancelTurn(turnKey(event.ThreadID, event.TurnID))
-	}
-	if event.Kind == EventTurnCompleted {
+	case EventTurnCompleted:
 		// Pending approval prompts for this turn can no longer be answered.
 		c.pending.cancelTurn(turnKey(event.ThreadID, event.TurnID))
 		sub.endStream(stream, event.Turn, nil)
@@ -541,7 +548,8 @@ func (c *Client) soleSubscription() *threadSubscription {
 }
 
 // StartTurn adds user input to a thread, begins Codex generation, and returns
-// a stream of the turn's events. Close the stream or drain it to completion.
+// a stream of the turn's events. Read the stream to completion (Events or
+// Result) or Close it.
 func (c *Client) StartTurn(ctx context.Context, threadID string, input []InputItem, opts *TurnOptions) (*TurnStream, error) {
 	return c.startTurn(ctx, StartTurnParams{ThreadID: threadID, Input: input}, opts)
 }
@@ -562,8 +570,7 @@ func (c *Client) startTurn(ctx context.Context, params StartTurnParams, opts *Tu
 	var result StartTurnResult
 	if err := c.call(ctx, "turn/start", params, &result); err != nil {
 		// Only the pump closes the event channel. Nobody holds this stream,
-		// so finishing it is enough; a pump delivering to it sees it is done
-		// and ends it.
+		// so dropping and finishing it is enough.
 		sub.removeStream(stream)
 		stream.finish(nil, err)
 		return nil, err

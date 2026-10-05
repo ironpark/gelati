@@ -280,7 +280,7 @@ func (s *Step) clone() *Step {
 	return &o
 }
 
-// Chunk is one item of a ChatResponse stream: *TextChunk, *ThoughtChunk or
+// Chunk is one event of a TurnStream: *TextChunk, *ThoughtChunk or
 // *ToolCall.
 type Chunk interface{ chunk() }
 

@@ -4,7 +4,7 @@ import "context"
 
 // Hooks intercept, observe and modify the agent at points of its lifecycle.
 // A hook is one of the function types below converted to Hook, listed in
-// Config.Hooks:
+// Options.Hooks:
 //
 //	Hooks: []agy.Hook{
 //		agy.PreToolCallHook(func(ctx context.Context, hc *agy.HookContext, call *agy.ToolCall) (agy.HookResult, error) {

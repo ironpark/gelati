@@ -56,7 +56,7 @@ var recordFruit = agy.NewTool("record_fruit", "Records the count of fruits by SK
 
 func main() {
 	ctx := context.Background()
-	agent, err := agy.NewAgent(agy.Config{
+	agent, err := agy.NewAgent(agy.Options{
 		Tools: []*agy.Tool{lookupFruitSKU, recordFruit},
 		SystemInstructions: agy.TextSystemInstructions("You keep track of fruit inventory. " +
 			"To record fruits, you MUST first look up the fruit's SKU using lookup_fruit_sku, " +
@@ -86,13 +86,13 @@ func main() {
 
 func chat(ctx context.Context, agent *agy.Agent, prompt string) {
 	fmt.Printf("\n  User: %s\n", prompt)
-	resp, err := agent.Chat(ctx, agy.Text(prompt))
+	stream, err := agent.Chat(ctx, agy.Text(prompt))
 	if err != nil {
 		log.Fatal(err)
 	}
-	text, err := resp.WaitText(ctx)
+	res, err := stream.Result(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("  Agent:", text)
+	fmt.Println("  Agent:", res.Text())
 }

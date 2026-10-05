@@ -54,7 +54,7 @@ func TestMalformedServerOutputIsSkipped(t *testing.T) {
 	server.notify(MethodTurnCompleted, map[string]any{"threadId": "thr_1",
 		"turn": map[string]any{"id": "turn_1", "status": "completed"}})
 
-	final, err := stream.Wait(context.Background())
+	final, err := turnOf(stream.Result(context.Background()))
 	if err != nil || final.Status != TurnCompleted {
 		t.Fatalf("malformed line broke the stream: %+v %v", final, err)
 	}
@@ -83,7 +83,7 @@ func TestServerErrorMapsToRPCError(t *testing.T) {
 		req := server.expect("thread/read")
 		server.respondError(req, CodeInvalidParams, "unknown thread")
 	})
-	_, err := client.ReadThread(context.Background(), "thr_missing", false)
+	_, err := client.ReadThread(context.Background(), ReadThreadParams{ThreadID: "thr_missing"})
 	<-done
 
 	var rpcErr *RPCError
@@ -135,8 +135,8 @@ func TestProcessExitFailsActiveTurns(t *testing.T) {
 	server.close()
 
 	for _, stream := range []*TurnStream{first, other} {
-		if _, err := stream.Wait(context.Background()); !errors.Is(err, ErrClosed) {
-			t.Fatalf("Wait = %v, want ErrClosed", err)
+		if _, err := turnOf(stream.Result(context.Background())); !errors.Is(err, ErrClosed) {
+			t.Fatalf("Result = %v, want ErrClosed", err)
 		}
 	}
 	if client.Err() == nil {
@@ -166,7 +166,7 @@ func TestUnknownItemTypeSurvivesStreaming(t *testing.T) {
 	if !ok || unknown.Type != "someFutureItem" {
 		t.Fatalf("item = %#v", event.Item.Item)
 	}
-	if final, err := stream.Wait(context.Background()); err != nil || final.Status != TurnCompleted {
-		t.Fatalf("Wait = %+v, %v", final, err)
+	if final, err := turnOf(stream.Result(context.Background())); err != nil || final.Status != TurnCompleted {
+		t.Fatalf("Result = %+v, %v", final, err)
 	}
 }

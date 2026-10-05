@@ -41,7 +41,7 @@ func realHarnessAgent(t *testing.T, ctx context.Context, hooks ...agy.Hook) (*ag
 		t.Skip("set GELATI_AGY_HARNESS=/path/to/localharness to run")
 	}
 	stderr := &syncBuffer{}
-	agent, err := agy.NewAgent(agy.Config{
+	agent, err := agy.NewAgent(agy.Options{
 		CLIPath:      bin,
 		APIKey:       "invalid-key",
 		Workspaces:   []string{t.TempDir()},
@@ -67,7 +67,7 @@ func wantTurnError(t *testing.T, ctx context.Context, agent *agy.Agent, prompt s
 	t.Helper()
 	resp, err := agent.Chat(ctx, agy.Text(prompt))
 	if err == nil {
-		_, err = resp.WaitText(ctx)
+		_, err = resp.Result(ctx)
 	}
 	var connErr *agy.ConnectionError
 	var execErr *agy.ExecutionError

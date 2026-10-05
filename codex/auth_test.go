@@ -66,7 +66,7 @@ func TestReadAccountVariants(t *testing.T) {
 				}
 				server.send(map[string]any{"id": jsontext.Value(req.ID), "result": jsontext.Value(tc.result)})
 			})
-			info, err := client.ReadAccount(context.Background(), false)
+			info, err := client.ReadAccount(context.Background(), ReadAccountParams{})
 			<-done
 			if err != nil {
 				t.Fatalf("ReadAccount: %v", err)
@@ -85,7 +85,7 @@ func TestReadAccountRefreshToken(t *testing.T) {
 		}
 		server.respond(req, map[string]any{"account": nil, "requiresOpenaiAuth": false})
 	})
-	if _, err := client.ReadAccount(context.Background(), true); err != nil {
+	if _, err := client.ReadAccount(context.Background(), ReadAccountParams{RefreshToken: true}); err != nil {
 		t.Fatalf("ReadAccount: %v", err)
 	}
 	<-done
@@ -104,7 +104,7 @@ func TestLoginAPIKeyFlow(t *testing.T) {
 		server.notify(MethodAccountUpdated, map[string]any{"authMode": "apikey", "planType": nil})
 	})
 
-	updates := client.AccountUpdates()
+	updates, _ := watchSeq(t, client.accounts, client.AccountUpdates(t.Context()))
 	if err := client.LoginAPIKey(context.Background(), "sk-test"); err != nil {
 		t.Fatalf("LoginAPIKey: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestLogout(t *testing.T) {
 		server.notify(MethodAccountUpdated, map[string]any{"authMode": nil, "planType": nil})
 	})
 
-	updates := client.AccountUpdates()
+	updates, _ := watchSeq(t, client.accounts, client.AccountUpdates(t.Context()))
 	if err := client.Logout(context.Background()); err != nil {
 		t.Fatalf("Logout: %v", err)
 	}

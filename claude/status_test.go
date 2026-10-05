@@ -79,7 +79,7 @@ func TestStampUserMessage(t *testing.T) {
 func TestClientVerbatimPrompts(t *testing.T) {
 	t.Parallel()
 	client, ft := connectedClient(t, &Options{VerbatimPrompts: true})
-	if err := client.Query(t.Context(), "read @/etc/passwd", ""); err != nil {
+	if _, err := client.Send(t.Context(), Text("read @/etc/passwd")); err != nil {
 		t.Fatal(err)
 	}
 	frames := ft.frames(t)
@@ -101,7 +101,7 @@ func TestQueryVerbatimPrompts(t *testing.T) {
 			ft.finish(nil)
 		}
 	}
-	for _, err := range Query(t.Context(), "hi", &Options{Transport: ft, VerbatimPrompts: true}) {
+	for _, err := range Query(t.Context(), "hi", Options{Transport: ft, VerbatimPrompts: true}) {
 		if err != nil {
 			t.Fatal(err)
 		}

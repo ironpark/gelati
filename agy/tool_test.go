@@ -18,8 +18,7 @@ type weatherArgs struct {
 	Units    string   `json:"units,omitempty" enum:"celsius,fahrenheit"`
 	Days     *int     `json:"days"`
 	Tags     []string `json:"tags,omitempty"`
-	internal string
-	Skip     string `json:"-"`
+	Skip     string   `json:"-"`
 }
 
 func TestNewToolSchema(t *testing.T) {

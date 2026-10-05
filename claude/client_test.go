@@ -35,7 +35,7 @@ func connectedClient(t *testing.T, opts *Options) (*Client, *fakeTransport) {
 		opts = &Options{}
 	}
 	opts.Transport = ft
-	client := NewClient(opts)
+	client := NewClient(*opts)
 	if err := client.Connect(t.Context()); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -64,88 +64,286 @@ func TestClientConnectAndServerInfo(t *testing.T) {
 	}
 }
 
-func TestClientConnectWithInitialPrompt(t *testing.T) {
+func TestClientSendAttributesSessions(t *testing.T) {
 	t.Parallel()
-	ft := newFakeTransport()
-	initResponder(ft, nil)
-	client := NewClient(&Options{Transport: ft})
-	if err := client.Connect(t.Context(), UserInput{Content: "hello"}); err != nil {
-		t.Fatalf("connect: %v", err)
+	client, ft := connectedClient(t, nil)
+	if _, err := client.Send(t.Context(), Text("a"), UserInput{Content: "b", SessionID: "own"}); err != nil {
+		t.Fatalf("send: %v", err)
 	}
-	defer client.Disconnect()
-
 	frames := ft.frames(t)
-	if len(frames) != 2 || frames[1]["type"] != "user" {
+	if len(frames) != 3 || frames[1]["type"] != "user" {
 		t.Fatalf("frames = %#v", frames)
 	}
-	if frames[1]["session_id"] != DefaultSessionID {
-		t.Fatalf("session = %#v", frames[1])
+	if frames[1]["session_id"] != DefaultSessionID || frames[2]["session_id"] != "own" {
+		t.Fatalf("frames = %#v", frames[1:])
+	}
+	if _, err := client.Send(t.Context()); err == nil {
+		t.Fatal("an empty Send should fail")
 	}
 }
 
-func TestClientMultiTurnReceiveResponse(t *testing.T) {
+// turnTexts collects the assistant texts of a turn's events.
+func turnTexts(t *testing.T, turn *TurnStream) []string {
+	t.Helper()
+	var texts []string
+	for msg, err := range turn.Events(t.Context()) {
+		if err != nil {
+			t.Fatalf("events: %v", err)
+		}
+		if am, ok := msg.(*AssistantMessage); ok {
+			texts = append(texts, am.Content[0].(*TextBlock).Text)
+		}
+	}
+	return texts
+}
+
+func TestClientTurnStreams(t *testing.T) {
 	t.Parallel()
 	client, ft := connectedClient(t, nil)
 
-	if err := client.Query(t.Context(), "first", ""); err != nil {
-		t.Fatalf("query: %v", err)
+	first, err := client.Send(t.Context(), Text("first"))
+	if err != nil {
+		t.Fatalf("send: %v", err)
 	}
 	ft.push(assistantFrame("one"))
 	ft.push(resultFrame())
 	// The second turn's messages are queued behind the first result and must
-	// not be consumed by the first ReceiveResponse.
+	// not be consumed by the first turn.
 	ft.push(assistantFrame("two"))
 	ft.push(resultFrame())
 
-	var texts []string
-	for msg, err := range client.ReceiveResponse(t.Context()) {
-		if err != nil {
-			t.Fatalf("receive: %v", err)
-		}
-		if am, ok := msg.(*AssistantMessage); ok {
-			texts = append(texts, am.Content[0].(*TextBlock).Text)
-		}
-	}
-	if len(texts) != 1 || texts[0] != "one" {
+	if texts := turnTexts(t, first); len(texts) != 1 || texts[0] != "one" {
 		t.Fatalf("first turn = %q", texts)
 	}
+	// The ended turn yields nothing more, and its result stays available.
+	if texts := turnTexts(t, first); texts != nil {
+		t.Fatalf("first turn again = %q", texts)
+	}
+	if res, err := first.Result(t.Context()); err != nil || res.SessionID != "s1" {
+		t.Fatalf("result = %+v, %v", res, err)
+	}
 
-	if err := client.Query(t.Context(), "second", "sess-2"); err != nil {
-		t.Fatalf("query: %v", err)
+	second, err := client.Send(t.Context(), Text("second"))
+	if err != nil {
+		t.Fatalf("send: %v", err)
 	}
-	texts = nil
-	for msg, err := range client.ReceiveResponse(t.Context()) {
-		if err != nil {
-			t.Fatalf("receive: %v", err)
-		}
-		if am, ok := msg.(*AssistantMessage); ok {
-			texts = append(texts, am.Content[0].(*TextBlock).Text)
-		}
-	}
-	if len(texts) != 1 || texts[0] != "two" {
+	if texts := turnTexts(t, second); len(texts) != 1 || texts[0] != "two" {
 		t.Fatalf("second turn = %q", texts)
-	}
-
-	frames := ft.frames(t)
-	last := frames[len(frames)-1]
-	if last["session_id"] != "sess-2" {
-		t.Fatalf("session = %#v", last)
 	}
 }
 
-func TestClientQueryStream(t *testing.T) {
+func TestClientTurnSkipsUnreadEarlierTurn(t *testing.T) {
 	t.Parallel()
 	client, ft := connectedClient(t, nil)
-	err := client.QueryStream(t.Context(), func(yield func(UserInput) bool) {
-		yield(UserInput{Content: "a"})
-		yield(UserInput{Content: "b", SessionID: "own"})
-	}, "shared")
+	first, err := client.Send(t.Context(), Text("first"))
 	if err != nil {
-		t.Fatalf("query stream: %v", err)
+		t.Fatal(err)
 	}
-	frames := ft.frames(t)
-	if frames[1]["session_id"] != "shared" || frames[2]["session_id"] != "own" {
-		t.Fatalf("frames = %#v", frames[1:])
+	second, err := client.Send(t.Context(), Text("second"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ft.push(assistantFrame("one"))
+	ft.push(map[string]any{"type": "result", "subtype": "success", "is_error": false, "session_id": "s1", "result": "r1"})
+	ft.push(assistantFrame("two"))
+	ft.push(map[string]any{"type": "result", "subtype": "success", "is_error": false, "session_id": "s1", "result": "r2"})
+
+	// Reading the second turn first skips the rest of the first.
+	if texts := turnTexts(t, second); len(texts) != 1 || texts[0] != "two" {
+		t.Fatalf("second turn = %q", texts)
+	}
+	if res, err := second.Result(t.Context()); err != nil || res.Text() != "r2" {
+		t.Fatalf("second result = %+v, %v", res, err)
+	}
+	if res, err := first.Result(t.Context()); err != nil || res.Text() != "r1" {
+		t.Fatalf("first result = %+v, %v", res, err)
+	}
+
+	// A closed turn fails with ErrClosed, and its unread messages are
+	// skipped by the next turn.
+	third, err := client.Send(t.Context(), Text("third"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ft.push(assistantFrame("three"))
+	ft.push(resultFrame())
+	for msg, err := range third.Events(t.Context()) {
+		if err != nil || msg == nil {
+			t.Fatalf("events: %v", err)
+		}
+		break
+	}
+	if err := third.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := third.Result(t.Context()); !errors.Is(err, ErrClosed) {
+		t.Fatalf("result after close = %v", err)
+	}
+	fourth, err := client.Send(t.Context(), Text("fourth"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ft.push(assistantFrame("four"))
+	ft.push(resultFrame())
+	if texts := turnTexts(t, fourth); len(texts) != 1 || texts[0] != "four" {
+		t.Fatalf("fourth turn = %q", texts)
+	}
+}
+
+// interrupts counts the interrupt requests written to ft.
+func interrupts(t *testing.T, ft *fakeTransport) int {
+	t.Helper()
+	n := 0
+	for _, frame := range ft.frames(t) {
+		if req, ok := frame["request"].(map[string]any); ok && req["subtype"] == "interrupt" {
+			n++
+		}
+	}
+	return n
+}
+
+func TestClientTurnCloseAndCancelRules(t *testing.T) {
+	t.Parallel()
+	client, ft := connectedClient(t, nil)
+
+	// Close on a turn that has ended is a no-op: its result stays.
+	first, err := client.Send(t.Context(), Text("first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ft.push(map[string]any{"type": "result", "subtype": "success", "is_error": false, "session_id": "s1", "result": "r1"})
+	if _, err := first.Result(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := first.Result(t.Context()); err != nil || res.Text() != "r1" {
+		t.Fatalf("result after close = %+v, %v", res, err)
+	}
+	for _, err := range first.Events(t.Context()) {
+		t.Fatalf("events after close of an ended turn: %v", err)
+	}
+
+	// A turn ended by reading a later one keeps its result after Close too.
+	second, err := client.Send(t.Context(), Text("second"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := client.Send(t.Context(), Text("third"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ft.push(map[string]any{"type": "result", "subtype": "success", "is_error": false, "session_id": "s1", "result": "r2"})
+	ft.push(map[string]any{"type": "result", "subtype": "success", "is_error": false, "session_id": "s1", "result": "r3"})
+	if res, err := third.Result(t.Context()); err != nil || res.Text() != "r3" {
+		t.Fatalf("third result = %+v, %v", res, err)
+	}
+	_ = second.Close()
+	if res, err := second.Result(t.Context()); err != nil || res.Text() != "r2" {
+		t.Fatalf("second result after close = %+v, %v", res, err)
+	}
+
+	// Cancel interrupts a running turn after Close; Close never does.
+	fourth, err := client.Send(t.Context(), Text("fourth"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := interrupts(t, ft)
+	_ = fourth.Close()
+	if n := interrupts(t, ft); n != before {
+		t.Fatalf("close sent %d interrupts", n-before)
+	}
+	if _, err := fourth.Result(t.Context()); !errors.Is(err, ErrClosed) {
+		t.Fatalf("result of a closed, running turn = %v", err)
+	}
+	if err := fourth.Cancel(t.Context()); err != nil {
+		t.Fatalf("cancel after close: %v", err)
+	}
+	if n := interrupts(t, ft); n != before+1 {
+		t.Fatalf("cancel after close sent %d interrupts", n-before)
+	}
+
+	// The closed turn's messages are skipped by the next turn, which ends
+	// the closed one; Cancel is then a no-op.
+	fifth, err := client.Send(t.Context(), Text("fifth"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ft.push(assistantFrame("four"))
+	ft.push(map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true, "session_id": "s1"})
+	ft.push(assistantFrame("five"))
+	ft.push(resultFrame())
+	if texts := turnTexts(t, fifth); len(texts) != 1 || texts[0] != "five" {
+		t.Fatalf("fifth turn = %q", texts)
+	}
+	if err := fourth.Cancel(t.Context()); err != nil {
+		t.Fatalf("cancel after end: %v", err)
+	}
+	if n := interrupts(t, ft); n != before+1 {
+		t.Fatal("cancel after end should not interrupt")
+	}
+	// The error result is returned with its error, even after Close.
+	var resErr *ResultError
+	if res, err := fourth.Result(t.Context()); res == nil || !errors.As(err, &resErr) {
+		t.Fatalf("fourth result = %+v, %v", res, err)
+	}
+}
+
+func TestClientTurnErrors(t *testing.T) {
+	t.Parallel()
+	client, ft := connectedClient(t, nil)
+	turn, err := client.Send(t.Context(), Text("hi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := turn.Cancel(t.Context()); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	var interrupted bool
+	for _, frame := range ft.frames(t) {
+		if req, ok := frame["request"].(map[string]any); ok && req["subtype"] == "interrupt" {
+			interrupted = true
+		}
+	}
+	if !interrupted {
+		t.Fatal("cancel should send an interrupt")
+	}
+	ft.push(map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true, "session_id": "s1"})
+	res, err := turn.Result(t.Context())
+	var resErr *ResultError
+	if res == nil || !errors.As(err, &resErr) || resErr.Subtype != "error_during_execution" {
+		t.Fatalf("result = %+v, %v", res, err)
+	}
+	// Cancel is a no-op once the turn has ended.
+	if err := turn.Cancel(t.Context()); err != nil {
+		t.Fatalf("cancel after end: %v", err)
+	}
+
+	// A cancelled ctx does not end the turn: a later read resumes it.
+	next, err := client.Send(t.Context(), Text("again"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := next.Result(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("result with cancelled ctx = %v", err)
+	}
+	ft.push(resultFrame())
+	if _, err := next.Result(t.Context()); err != nil {
+		t.Fatalf("result after resume = %v", err)
+	}
+
+	// A stream that ends without a result is a ConnectionError.
+	last, err := client.Send(t.Context(), Text("last"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ft.finish(nil)
+	var connErr *ConnectionError
+	if _, err := last.Result(t.Context()); !errors.As(err, &connErr) {
+		t.Fatalf("result = %v", err)
 	}
 }
 
@@ -201,22 +399,22 @@ func TestClientControlMethods(t *testing.T) {
 
 func TestClientUseBeforeConnect(t *testing.T) {
 	t.Parallel()
-	client := NewClient(nil)
+	client := NewClient(Options{})
 	ctx := t.Context()
 	checks := map[string]error{
-		"query":       client.Query(ctx, "hi", ""),
-		"interrupt":   client.Interrupt(ctx),
-		"setMode":     client.SetPermissionMode(ctx, PermissionModePlan),
-		"setModel":    client.SetModel(ctx, "opus"),
-		"reconnect":   client.ReconnectMCPServer(ctx, "fs"),
-		"toggle":      client.ToggleMCPServer(ctx, "fs", true),
-		"stopTask":    client.StopTask(ctx, "t1"),
-		"queryStream": client.QueryStream(ctx, func(yield func(UserInput) bool) { yield(UserInput{}) }, ""),
+		"interrupt": client.Interrupt(ctx),
+		"setMode":   client.SetPermissionMode(ctx, PermissionModePlan),
+		"setModel":  client.SetModel(ctx, "opus"),
+		"reconnect": client.ReconnectMCPServer(ctx, "fs"),
+		"toggle":    client.ToggleMCPServer(ctx, "fs", true),
+		"stopTask":  client.StopTask(ctx, "t1"),
 	}
+	_, checks["send"] = client.Send(ctx, Text("hi"))
+	_, checks["run"] = client.Run(ctx, Text("hi"))
 	for name, err := range checks {
 		var connErr *ConnectionError
-		if !errors.As(err, &connErr) {
-			t.Errorf("%s: error = %T (%v), want *ConnectionError", name, err, err)
+		if !errors.As(err, &connErr) || !errors.Is(err, ErrNotConnected) {
+			t.Errorf("%s: error = %T (%v), want *ConnectionError matching ErrNotConnected", name, err, err)
 		}
 	}
 	if _, err := client.MCPServerStatus(ctx); err == nil {
@@ -293,8 +491,11 @@ func TestClientDisconnectIsIdempotent(t *testing.T) {
 	if err := client.Disconnect(); err != nil {
 		t.Fatalf("second disconnect: %v", err)
 	}
-	if err := client.Query(t.Context(), "hi", ""); err == nil {
-		t.Fatal("query after disconnect should fail")
+	if _, err := client.Send(t.Context(), Text("hi")); !errors.Is(err, ErrClosed) {
+		t.Fatalf("send after disconnect = %v, want ErrClosed", err)
+	}
+	if err := client.Interrupt(t.Context()); !errors.Is(err, ErrClosed) {
+		t.Fatalf("interrupt after disconnect = %v, want ErrClosed", err)
 	}
 }
 
@@ -331,7 +532,7 @@ func TestClientConnectFailurePropagates(t *testing.T) {
 			"subtype": "error", "request_id": frame["request_id"], "error": "handshake refused"}})
 	}
 	ft.mu.Unlock()
-	client := NewClient(&Options{Transport: ft})
+	client := NewClient(Options{Transport: ft})
 	err := client.Connect(t.Context())
 	var ctrlErr *ControlError
 	if !errors.As(err, &ctrlErr) {

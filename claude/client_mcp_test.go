@@ -41,7 +41,7 @@ func TestClientSetMCPServers(t *testing.T) {
 			"subtype": "success", "request_id": frame["request_id"], "response": payload}})
 	}
 	ft.mu.Unlock()
-	client := NewClient(&Options{Transport: ft, MCPServers: map[string]MCPServerConfig{"initial": initial}})
+	client := NewClient(Options{Transport: ft, MCPServers: map[string]MCPServerConfig{"initial": initial}})
 	if err := client.Connect(t.Context()); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestClientSetMCPServers(t *testing.T) {
 
 func TestClientSetMCPServersNotConnected(t *testing.T) {
 	t.Parallel()
-	if _, err := NewClient(nil).SetMCPServers(t.Context(), nil); err == nil {
+	if _, err := NewClient(Options{}).SetMCPServers(t.Context(), nil); err == nil {
 		t.Fatal("want an error before Connect")
 	}
 }
@@ -146,7 +146,7 @@ func TestClientReinitializeDeclaresLiveMCPServers(t *testing.T) {
 			"subtype": "success", "request_id": frame["request_id"], "response": map[string]any{}}})
 	}
 	ft.mu.Unlock()
-	client := NewClient(&Options{Transport: ft, MCPServers: map[string]MCPServerConfig{"initial": initial}})
+	client := NewClient(Options{Transport: ft, MCPServers: map[string]MCPServerConfig{"initial": initial}})
 	if err := client.Connect(t.Context()); err != nil {
 		t.Fatalf("connect: %v", err)
 	}

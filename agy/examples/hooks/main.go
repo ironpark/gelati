@@ -90,7 +90,7 @@ var brokenTool = agy.NewTool("broken_tool", "Fails always.",
 
 func main() {
 	ctx := context.Background()
-	agent, err := agy.NewAgent(agy.Config{
+	agent, err := agy.NewAgent(agy.Options{
 		Hooks:        hooks,
 		Tools:        []*agy.Tool{greet, brokenTool},
 		Capabilities: &agy.CapabilitiesConfig{AgentBehavior: agy.AgentBehaviorInteractive},
@@ -111,12 +111,12 @@ func main() {
 		"Tell me 3 interesting facts about Mars.",
 	} {
 		fmt.Printf("\n  --- Prompt %d: %s ---\n", i+1, prompt)
-		resp, err := agent.Chat(ctx, agy.Text(prompt))
+		stream, err := agent.Chat(ctx, agy.Text(prompt))
 		if err != nil {
 			log.Fatal(err)
 		}
 		fmt.Print("  Agent: ")
-		for delta, err := range resp.Text(ctx) {
+		for delta, err := range stream.Text(ctx) {
 			if err != nil {
 				log.Fatal(err)
 			}

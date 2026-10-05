@@ -405,11 +405,11 @@ func (r exitReader) Read(b []byte) (int, error) {
 	if !lifecycle.WaitClosed(r.p.exited, exitWait) {
 		return n, io.EOF
 	}
-	exit := &ProcessError{Stderr: r.p.stderr.String(), Err: r.p.waitErr}
-	if code := r.p.cmd.ProcessState.ExitCode(); code >= 0 {
-		exit.ExitCode = &code
+	return n, &ProcessError{
+		ExitCode: proc.ExitCode(r.p.cmd.ProcessState),
+		Stderr:   r.p.stderr.String(),
+		Err:      r.p.waitErr,
 	}
-	return n, exit
 }
 
 // Close closes stdout so a blocked read returns.

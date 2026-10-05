@@ -49,7 +49,7 @@ func (tc *TriggerContext) Send(ctx context.Context, content string) error {
 }
 
 // TriggerRunner starts triggers as goroutines and stops them. An Agent
-// runs its Config.Triggers with one.
+// runs its Options.Triggers with one.
 type TriggerRunner struct {
 	triggers []Trigger
 	conn     TriggerConnection

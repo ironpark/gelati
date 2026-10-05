@@ -234,9 +234,16 @@ func TestWaitForIdleFailsWhenHarnessGone(t *testing.T) {
 	}
 }
 
+// lastStopReason returns why the most recent turn stopped.
+func lastStopReason(c *Connection) StopReason {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cur.stopReason
+}
+
 func TestStopReasonTrackedPerTurn(t *testing.T) {
 	c, tr := newTestConnection(t, connectionOptions{})
-	if got := c.LastTurnStopReason(); got != StopReasonUnspecified {
+	if got := lastStopReason(c); got != StopReasonUnspecified {
 		t.Fatalf("initial stop reason %s", got)
 	}
 	startTurn(c)
@@ -245,11 +252,11 @@ func TestStopReasonTrackedPerTurn(t *testing.T) {
 		State:        new(wire.TrajectoryStateUpdate_STATE_FULLY_IDLE),
 		StopReason:   new(wire.TrajectoryStateUpdate_STOP_REASON_QUOTA_EXHAUSTED),
 	}.Build()}.Build())
-	waitFor(t, "stop reason", func() bool { return c.LastTurnStopReason() == StopReasonQuotaExhausted })
+	waitFor(t, "stop reason", func() bool { return lastStopReason(c) == StopReasonQuotaExhausted })
 	if err := c.Send(t.Context(), Text("again")); err != nil {
 		t.Fatal(err)
 	}
-	if got := c.LastTurnStopReason(); got != StopReasonUnspecified {
+	if got := lastStopReason(c); got != StopReasonUnspecified {
 		t.Fatalf("stop reason after send = %s", got)
 	}
 }
@@ -1016,8 +1023,8 @@ func TestHarnessStartedTurn(t *testing.T) {
 	if err != nil || len(steps) != 1 || steps[0].Content != "triggered" {
 		t.Fatalf("steps %+v, err %v", steps, err)
 	}
-	if c.turnStopReason(first) != StopReasonQuotaExhausted || c.LastTurnStopReason() != StopReasonUnspecified {
-		t.Fatalf("stop reasons %s / %s", c.turnStopReason(first), c.LastTurnStopReason())
+	if c.turnStopReason(first) != StopReasonQuotaExhausted || lastStopReason(c) != StopReasonUnspecified {
+		t.Fatalf("stop reasons %s / %s", c.turnStopReason(first), lastStopReason(c))
 	}
 }
 

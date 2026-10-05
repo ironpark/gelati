@@ -102,7 +102,7 @@ func (e *GeminiAPIEndpoint) Validate() error {
 		return nil
 	}
 	if e.APIKey == "" && os.Getenv("GEMINI_API_KEY") == "" {
-		return validationErrorf("A Gemini API key is required. Set it via GEMINI_API_KEY environment variable or via Config.APIKey.")
+		return validationErrorf("A Gemini API key is required. Set it via GEMINI_API_KEY environment variable or via Options.APIKey.")
 	}
 	return nil
 }
@@ -161,7 +161,7 @@ func (e *VertexEndpoint) Validate() error {
 
 // OpenAIEndpoint routes model calls to a server speaking the OpenAI chat
 // completions API, such as Ollama, LM Studio, llama.cpp or vLLM (upstream
-// LocalOpenAIAgentConfig.base_url). Set it as Config.OpenAI to run the whole
+// LocalOpenAIAgentConfig.base_url). Set it as Options.OpenAI to run the whole
 // session on such a server, or use it in a ModelTarget.
 type OpenAIEndpoint struct {
 	// BaseURL is the server's API base URL, including the version path,

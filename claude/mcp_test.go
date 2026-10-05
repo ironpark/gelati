@@ -311,7 +311,7 @@ func TestEngineRoutesMCPMessageToServer(t *testing.T) {
 	ft := newFakeTransport()
 	initResponder(ft, nil)
 	opts.Transport = ft
-	client := NewClient(opts)
+	client := NewClient(*opts)
 	if err := client.Connect(t.Context()); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestSDKMCPServerHoldsInputOpen(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for range Query(t.Context(), "hi", opts) {
+		for range Query(t.Context(), "hi", *opts) {
 		}
 	}()
 	select {

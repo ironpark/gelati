@@ -40,13 +40,13 @@ func main() {
 	ctx := context.Background()
 
 	fmt.Println("\n  --- Stdio transport ---")
-	run(ctx, agy.Config{MCPServers: []agy.MCPServer{stdioServer()}},
+	run(ctx, agy.Options{MCPServers: []agy.MCPServer{stdioServer()}},
 		"Use the pirate_multiply tool to multiply 5 and 7.")
 
 	fmt.Println("\n  --- Tool filtering (DisabledTools) ---")
 	filtered := stdioServer()
 	filtered.DisabledTools = []string{"pirate_divide"}
-	run(ctx, agy.Config{MCPServers: []agy.MCPServer{filtered}},
+	run(ctx, agy.Options{MCPServers: []agy.MCPServer{filtered}},
 		"Use the pirate_multiply tool to multiply 6 and 8.",
 		"Use the pirate_divide tool to divide 10 by 2.")
 
@@ -55,7 +55,7 @@ func main() {
 	policies := []agy.Policy{policy.DenyAll()}
 	policies = append(policies, policy.AllowMCP(server, []string{"pirate_multiply"})...)
 	policies = append(policies, policy.DenyMCP(server, []string{"pirate_divide"})...)
-	run(ctx, agy.Config{MCPServers: []agy.MCPServer{server}, Policies: policies},
+	run(ctx, agy.Options{MCPServers: []agy.MCPServer{server}, Policies: policies},
 		"Multiply 4 and 9 using the pirate_multiply tool.",
 		"Divide 12 by 3 using the pirate_divide tool.")
 
@@ -67,13 +67,13 @@ func main() {
 	go http.Serve(ln, http.HandlerFunc(serveMCPHTTP))
 	defer ln.Close()
 	httpServer := &agy.MCPStreamableHTTPServer{Name: "pirate_math", URL: fmt.Sprintf("http://%s/mcp", ln.Addr())}
-	run(ctx, agy.Config{MCPServers: []agy.MCPServer{httpServer}},
+	run(ctx, agy.Options{MCPServers: []agy.MCPServer{httpServer}},
 		"Use the pirate_multiply tool to multiply 5 and 7.")
 }
 
-// run starts a session with cfg and sends each prompt in turn.
-func run(ctx context.Context, cfg agy.Config, prompts ...string) {
-	agent, err := agy.NewAgent(cfg)
+// run starts a session with opts and sends each prompt in turn.
+func run(ctx context.Context, opts agy.Options, prompts ...string) {
+	agent, err := agy.NewAgent(opts)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -83,14 +83,14 @@ func run(ctx context.Context, cfg agy.Config, prompts ...string) {
 	defer agent.Close()
 	for _, prompt := range prompts {
 		fmt.Println("  User:", prompt)
-		resp, err := agent.Chat(ctx, agy.Text(prompt))
+		stream, err := agent.Chat(ctx, agy.Text(prompt))
 		if err != nil {
 			log.Fatal(err)
 		}
-		text, err := resp.WaitText(ctx)
+		res, err := stream.Result(ctx)
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Println("  Agent:", text)
+		fmt.Println("  Agent:", res.Text())
 	}
 }

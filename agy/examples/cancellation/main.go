@@ -1,4 +1,4 @@
-// Command cancellation aborts turns in two ways: ChatResponse.Cancel, which
+// Command cancellation aborts turns in two ways: TurnStream.Cancel, which
 // ends the stream with *agy.CancelledError, and cancelling the
 // context the stream is read with (upstream
 // examples/getting_started/cancellation.py, where the second case is
@@ -15,17 +15,17 @@ import (
 	"github.com/ironpark/gelati/agy"
 )
 
-// render streams the thoughts and the answer of resp.
-func render(ctx context.Context, resp *agy.ChatResponse) error {
+// render streams the thoughts and the answer of stream.
+func render(ctx context.Context, stream *agy.TurnStream) error {
 	fmt.Print("  Agent thoughts: ")
-	for thought, err := range resp.Thoughts(ctx) {
+	for thought, err := range stream.Thoughts(ctx) {
 		if err != nil {
 			return err
 		}
 		fmt.Print(thought)
 	}
 	fmt.Print("\n  Agent response: ")
-	for delta, err := range resp.Text(ctx) {
+	for delta, err := range stream.Text(ctx) {
 		if err != nil {
 			return err
 		}
@@ -53,7 +53,7 @@ func report(err error) {
 
 func main() {
 	ctx := context.Background()
-	agent, err := agy.NewAgent(agy.Config{})
+	agent, err := agy.NewAgent(agy.Options{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -62,32 +62,32 @@ func main() {
 	}
 	defer agent.Close()
 
-	fmt.Println("\n=== Scenario 1: programmatic cancellation (ChatResponse.Cancel) ===")
-	resp, err := agent.Chat(ctx, agy.Text("Write a very long story about a character named cancellation."))
+	fmt.Println("\n=== Scenario 1: programmatic cancellation (TurnStream.Cancel) ===")
+	stream, err := agent.Chat(ctx, agy.Text("Write a very long story about a character named cancellation."))
 	if err != nil {
 		log.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- render(ctx, resp) }()
+	go func() { done <- render(ctx, stream) }()
 	time.Sleep(2 * time.Second)
-	fmt.Println("\n  [Aborting the turn via resp.Cancel]")
-	if err := resp.Cancel(ctx); err != nil {
+	fmt.Println("\n  [Aborting the turn via stream.Cancel]")
+	if err := stream.Cancel(ctx); err != nil {
 		log.Fatal(err)
 	}
 	report(<-done)
 
 	fmt.Println("\n=== Scenario 2: context cancellation ===")
-	resp, err = agent.Chat(ctx, agy.Text("Write a very long poem about a character named interruption."))
+	stream, err = agent.Chat(ctx, agy.Text("Write a very long poem about a character named interruption."))
 	if err != nil {
 		log.Fatal(err)
 	}
 	readCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	time.AfterFunc(2*time.Second, cancel)
-	report(render(readCtx, resp))
+	report(render(readCtx, stream))
 	// Cancelling the reader's context stops reading but not the turn; stop
 	// it too before the session closes.
-	if err := resp.Cancel(ctx); err != nil {
+	if err := stream.Cancel(ctx); err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println("\n  Finished cancellation example.")

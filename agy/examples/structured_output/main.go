@@ -38,7 +38,7 @@ var fetchNotes = agy.NewTool("fetch_unstructured_meeting_notes", "Retrieves the 
 
 func main() {
 	ctx := context.Background()
-	agent, err := agy.NewAgent(agy.Config{
+	agent, err := agy.NewAgent(agy.Options{
 		Tools:          []*agy.Tool{fetchNotes},
 		ResponseSchema: MeetingSummary{},
 	})
@@ -50,16 +50,19 @@ func main() {
 	}
 	defer agent.Close()
 
-	resp, err := agent.Chat(ctx, agy.Text("Use the fetch_unstructured_meeting_notes tool to retrieve notes for "+
+	stream, err := agent.Chat(ctx, agy.Text("Use the fetch_unstructured_meeting_notes tool to retrieve notes for "+
 		"'meeting-2026-05' and return the meeting summary with the appropriate action item list. "+
 		"Ensure each action item includes 'assignee', 'task', and 'deadline'."))
 	if err != nil {
 		log.Fatal(err)
 	}
+	res, err := stream.Result(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
 	var summary MeetingSummary
-	if err := resp.DecodeStructuredOutput(ctx, &summary); err != nil {
-		text, _ := resp.WaitText(ctx)
-		log.Fatalf("no structured summary (%v); final text: %s", err, text)
+	if err := res.DecodeStructuredOutput(&summary); err != nil {
+		log.Fatalf("no structured summary (%v); final text: %s", err, res.Text())
 	}
 	fmt.Println("  === Structured Meeting Action Items ===")
 	for _, item := range summary.ActionItems {

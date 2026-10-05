@@ -40,7 +40,8 @@ type SpawnedProcess interface {
 	// Wait blocks until the process exits. The SDK calls it once, after
 	// Stdout and Stderr reach EOF or while shutting down. A non-nil error
 	// that has an ExitCode() int method, such as *exec.ExitError, reports
-	// a failed exit.
+	// a failed exit; a negative code means the process was ended by a
+	// signal.
 	Wait() error
 	// Signal asks the process to stop. An error is ignored.
 	Signal(sig os.Signal) error

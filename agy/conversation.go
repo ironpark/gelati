@@ -15,7 +15,7 @@ const DefaultMaxHistorySize = 10_000
 // Conversation is a stateful session over a Connection: it records the step
 // history (noting where the context was compacted), counts turns, tracks
 // per-turn usage, and offers Chat, which sends a prompt and returns a
-// streaming ChatResponse. Agent.Conversation returns the agent's
+// streaming TurnStream. Agent.Conversation returns the agent's
 // conversation; its methods are safe for concurrent use.
 type Conversation struct {
 	conn *Connection
@@ -29,7 +29,7 @@ type Conversation struct {
 	compactions    []int
 	maxHistory     int
 	turnStartUsage *UsageMetadata
-	last           *ChatResponse
+	last           *TurnStream
 }
 
 func newConversation(conn *Connection, history []*Step) *Conversation {
@@ -84,7 +84,7 @@ func (c *Conversation) enforceMaxLocked() {
 
 // Send starts a turn. If the previous turn is still running, its remaining
 // steps are drained into the history first (through the previous
-// ChatResponse when there is one), and Send waits for the agent to go idle;
+// TurnStream when there is one), and Send waits for the agent to go idle;
 // when another goroutine is reading the steps, Send only waits. Errors that
 // end the previous turn belong to that turn and are not returned here
 // (upstream raises them from send).
@@ -99,7 +99,7 @@ func (c *Conversation) send(ctx context.Context, content []Content) (*turn, erro
 		prev := c.last
 		c.mu.Unlock()
 		if prev != nil {
-			_, _ = prev.Resolve(ctx)
+			_, _ = prev.drain(ctx)
 		}
 		for _, err := range c.ReceiveSteps(ctx) {
 			if err != nil {
@@ -128,33 +128,16 @@ func (c *Conversation) ReceiveSteps(ctx context.Context) iter.Seq2[*Step, error]
 	return c.conn.receiveSteps(ctx, c.record)
 }
 
-// ReceiveChunks yields the current turn as stream chunks: text and thought
-// deltas of model steps directed at the user, and each tool call once.
-func (c *Conversation) ReceiveChunks(ctx context.Context) iter.Seq2[Chunk, error] {
-	return func(yield func(Chunk, error) bool) {
-		src := c.newChunkSource(nil)
-		defer src.release()
-		for {
-			ch, ok, err := src.next(ctx)
-			if err != nil {
-				yield(nil, err)
-				return
-			}
-			if !ok || !yield(ch, nil) {
-				return
-			}
-		}
-	}
-}
-
-// Chat sends a prompt and returns the turn's response stream at once.
-func (c *Conversation) Chat(ctx context.Context, content ...Content) (*ChatResponse, error) {
+// Chat sends a prompt and returns the turn's stream at once. It is Send
+// followed by reading the turn as chunks; the steps behind them are
+// recorded in the history as they are read.
+func (c *Conversation) Chat(ctx context.Context, content ...Content) (*TurnStream, error) {
 	t, err := c.send(ctx, content)
 	if err != nil {
 		return nil, err
 	}
 	src := c.newChunkSource(t)
-	resp := newChatResponse(src.next)
+	resp := newTurnStream(src.next)
 	resp.conv, resp.turn, resp.onDone = c, t, src.release
 	c.mu.Lock()
 	c.last = resp
@@ -308,7 +291,7 @@ func (c *Conversation) Connection() *Connection { return c.conn }
 func (c *Conversation) IsIdle() bool { return c.conn.IsIdle() }
 
 // ConversationID returns the conversation identifier assigned by the
-// runtime; pass it as Config.ConversationID to resume the session later.
+// runtime; pass it as Options.ConversationID to resume the session later.
 func (c *Conversation) ConversationID() string { return c.conn.ConversationID() }
 
 // SandboxStatus returns the OS command sandbox status reported at the
@@ -337,9 +320,6 @@ func (c *Conversation) LastTurnUsage() *UsageMetadata {
 	}
 	return &diff
 }
-
-// LastTurnStopReason returns why the most recent turn stopped.
-func (c *Conversation) LastTurnStopReason() StopReason { return c.conn.LastTurnStopReason() }
 
 // Cancel halts the current turn.
 func (c *Conversation) Cancel(ctx context.Context) error { return c.conn.Cancel(ctx) }

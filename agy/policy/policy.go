@@ -1,7 +1,7 @@
 // Package policy builds tool call policies for antigravity agents, mirroring
 // the upstream google.antigravity.hooks.policy module:
 //
-//	cfg := agy.Config{
+//	opts := agy.Options{
 //		Policies: []agy.Policy{
 //			policy.DenyAll(),
 //			policy.Allow("view_file"),
@@ -178,13 +178,13 @@ func SafeDefaults(handler agy.AskUserHandler) []agy.Policy {
 
 // ConfirmRunCommand allows every tool except run_command, which is denied,
 // or, with a non-nil handler, confirmed through it. This is the default
-// policy set of agy.Config.
+// policy set of agy.Options.
 func ConfirmRunCommand(handler agy.AskUserHandler) []agy.Policy {
 	return agy.ConfirmRunCommandPolicies(handler)
 }
 
 // WorkspaceOnly confines the file tools to the session's workspace
-// directories. The harness enforces it natively against Config.Workspaces,
+// directories. The harness enforces it natively against agy.Options.Workspaces,
 // so workspaces is informational, as upstream.
 func WorkspaceOnly(workspaces ...string) []agy.Policy {
 	_ = workspaces

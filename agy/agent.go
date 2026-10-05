@@ -9,10 +9,10 @@ import (
 	"github.com/ironpark/gelati/internal/lifecycle"
 )
 
-// Agent is the high-level API: it starts a harness session from a Config
+// Agent is the high-level API: it starts a harness session from Options
 // and chats with it.
 //
-//	agent, err := agy.NewAgent(agy.Config{})
+//	agent, err := agy.NewAgent(agy.Options{})
 //	if err != nil {
 //		return err
 //	}
@@ -20,18 +20,18 @@ import (
 //		return err
 //	}
 //	defer agent.Close()
-//	resp, err := agent.Chat(ctx, agy.Text("Hello"))
+//	stream, err := agent.Chat(ctx, agy.Text("Hello"))
 //	if err != nil {
 //		return err
 //	}
-//	for delta, err := range resp.Text(ctx) {
+//	for delta, err := range stream.Text(ctx) {
 //		...
 //	}
 //
 // Start and Close stand in for Python's "async with Agent(...)". An Agent
 // is safe for concurrent use; it runs one session at a time.
 type Agent struct {
-	cfg Config
+	opts Options
 
 	mu       sync.Mutex
 	starting bool
@@ -42,15 +42,16 @@ type Agent struct {
 	last *Connection
 }
 
-// NewAgent validates cfg (see Config.Validate, including its safety policy
-// guard) and returns an unstarted agent. The agent keeps its own copy of
-// cfg; tools, hooks, policies and triggers keep their identity.
-func NewAgent(cfg Config) (*Agent, error) {
-	cfg = cfg.clone()
-	if err := cfg.Validate(); err != nil {
+// NewAgent validates opts (see Options.Validate, including its safety
+// policy guard) and returns an unstarted agent. The zero Options is valid.
+// The agent keeps its own copy of opts; tools, hooks, policies and triggers
+// keep their identity.
+func NewAgent(opts Options) (*Agent, error) {
+	opts = opts.clone()
+	if err := opts.Validate(); err != nil {
 		return nil, err
 	}
-	return &Agent{cfg: cfg}, nil
+	return &Agent{opts: opts}, nil
 }
 
 // Start launches the harness and opens the session: it registers the hooks
@@ -78,8 +79,8 @@ func (a *Agent) Start(ctx context.Context) error {
 }
 
 func (a *Agent) start(ctx context.Context) (*Conversation, *TriggerRunner, error) {
-	cfg := &a.cfg
-	cc, err := cfg.compile()
+	opts := &a.opts
+	cc, err := opts.compile()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -90,9 +91,9 @@ func (a *Agent) start(ctx context.Context) (*Conversation, *TriggerRunner, error
 	conv := newConversation(conn, conn.InitialHistory())
 
 	var triggers *TriggerRunner
-	if len(cfg.Triggers) > 0 {
-		triggers = NewTriggerRunner(cfg.Triggers, conn)
-		triggers.logger = cfg.logger()
+	if len(opts.Triggers) > 0 {
+		triggers = NewTriggerRunner(opts.Triggers, conn)
+		triggers.logger = opts.logger()
 		if err := triggers.Start(); err != nil {
 			_ = conn.Close()
 			return nil, nil, err
@@ -138,7 +139,8 @@ func (a *Agent) Done() <-chan struct{} {
 
 // Err returns the error that ended the latest session (see
 // Connection.Err): nil while it runs or when it ended because of Close,
-// a *ConnectionError when the harness exited or the connection was lost.
+// a *ConnectionError when the harness exited (wrapping a *ProcessError) or
+// the connection was lost.
 // Before the first Start it returns ErrNotStarted.
 func (a *Agent) Err() error {
 	a.mu.Lock()
@@ -150,9 +152,10 @@ func (a *Agent) Err() error {
 	return last.Err()
 }
 
-// Chat sends a prompt and returns the turn's streaming response. The prompt
-// must not be empty: at least one part, and not only blank text.
-func (a *Agent) Chat(ctx context.Context, content ...Content) (*ChatResponse, error) {
+// Chat sends a prompt and returns the turn's stream; see
+// Conversation.Chat. The prompt must not be empty: at least one part, and
+// not only blank text.
+func (a *Agent) Chat(ctx context.Context, content ...Content) (*TurnStream, error) {
 	if len(content) == 0 {
 		return nil, validationErrorf("Chat requires non-empty message content.")
 	}
@@ -190,7 +193,7 @@ func (a *Agent) Conversation() *Conversation {
 
 // ConversationID returns the conversation identifier assigned by the
 // runtime, available once a turn has started. Pass it as
-// Config.ConversationID to resume the session later. It is "" before.
+// Options.ConversationID to resume the session later. It is "" before.
 func (a *Agent) ConversationID() string {
 	if conv := a.Conversation(); conv != nil {
 		return conv.ConversationID()

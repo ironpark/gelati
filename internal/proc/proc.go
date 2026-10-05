@@ -73,3 +73,15 @@ func Environ(overrides map[string]string) []string {
 	}
 	return env
 }
+
+// ExitCode returns the exit status of a process that has exited, or nil when
+// it has not, or was ended by a signal.
+func ExitCode(state *os.ProcessState) *int {
+	if state == nil {
+		return nil
+	}
+	if code := state.ExitCode(); code >= 0 {
+		return &code
+	}
+	return nil
+}

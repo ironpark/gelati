@@ -68,7 +68,7 @@ func collectMessages(t *testing.T, seq func(func(Message, error) bool)) (int, er
 func TestStartupWarmQuery(t *testing.T) {
 	t.Parallel()
 	ft := warmCLI(map[string]map[string]any{"initialize": {"output_style": "warm"}})
-	warm, err := Startup(t.Context(), &Options{Transport: ft})
+	warm, err := Startup(t.Context(), Options{Transport: ft})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestStartupWarmQuery(t *testing.T) {
 func TestStartupCloseWithoutQuery(t *testing.T) {
 	t.Parallel()
 	ft := warmCLI(nil)
-	warm, err := Startup(t.Context(), &Options{Transport: ft})
+	warm, err := Startup(t.Context(), Options{Transport: ft})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestStartupCloseWithoutQuery(t *testing.T) {
 func TestStartupInitializeFailure(t *testing.T) {
 	t.Parallel()
 	ft := warmCLI(map[string]map[string]any{"initialize": {"error": "not logged in"}})
-	if _, err := Startup(t.Context(), &Options{Transport: ft}); err == nil || !strings.Contains(err.Error(), "not logged in") {
+	if _, err := Startup(t.Context(), Options{Transport: ft}); err == nil || !strings.Contains(err.Error(), "not logged in") {
 		t.Fatalf("error = %v", err)
 	}
 	if !ft.closed {
@@ -214,7 +214,7 @@ func TestPrewarmSettingsRefused(t *testing.T) {
 
 func TestPrewarmRejections(t *testing.T) {
 	t.Parallel()
-	if _, err := Prewarm(t.Context(), &Options{Resume: "abc"}); err == nil {
+	if _, err := Prewarm(t.Context(), Options{Resume: "abc"}); err == nil {
 		t.Fatal("Prewarm with Resume should fail")
 	}
 

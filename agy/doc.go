@@ -5,12 +5,12 @@
 // loop runs in the localharness binary that ships with that SDK; this
 // package launches it, configures it, streams its steps, and runs custom
 // tools, hooks, policies and triggers in the Go process when the harness
-// calls back. The harness is located through Config.CLIPath, the
+// calls back. The harness is located through Options.CLIPath, the
 // ANTIGRAVITY_HARNESS_PATH environment variable, or localharness on PATH.
 //
 // # Quick start
 //
-//	agent, err := agy.NewAgent(agy.Config{
+//	agent, err := agy.NewAgent(agy.Options{
 //		SystemInstructions: agy.TextSystemInstructions("Answer briefly."),
 //	})
 //	if err != nil {
@@ -21,24 +21,24 @@
 //	}
 //	defer agent.Close()
 //
-//	resp, err := agent.Chat(ctx, agy.Text("What is the capital of France?"))
+//	stream, err := agent.Chat(ctx, agy.Text("What is the capital of France?"))
 //	if err != nil {
 //		return err
 //	}
-//	for delta, err := range resp.Text(ctx) {
+//	for delta, err := range stream.Text(ctx) {
 //		if err != nil {
 //			return err
 //		}
 //		fmt.Print(delta)
 //	}
 //
-// The zero Config runs DefaultModel on the Gemini API with the key from
-// GEMINI_API_KEY (or Config.APIKey), with the default builtin tools enabled
+// The zero Options runs DefaultModel on the Gemini API with the key from
+// GEMINI_API_KEY (or Options.APIKey), with the default builtin tools enabled
 // and run_command denied. Set Vertex (or GOOGLE_GENAI_USE_VERTEXAI) to use
 // Vertex AI instead. Set OpenAI to run on a local OpenAI-compatible
 // server (Ollama, LM Studio, vLLM) without Gemini credentials:
 //
-//	cfg := agy.Config{
+//	opts := agy.Options{
 //		Model:  "gemma3",
 //		OpenAI: &agy.OpenAIEndpoint{BaseURL: "http://localhost:11434/v1"},
 //	}.Lightweight()
@@ -56,10 +56,15 @@
 // closed when the session ends (Close, the harness exiting or the
 // connection dropping), and Err, the error that ended it.
 //
-// A ChatResponse streams one turn. Text, Thoughts, ToolCalls and Chunks are
-// iter.Seq2 sequences; each is an independent cursor over a shared buffer,
-// so a response can be read several times and from several goroutines.
-// Resolve, WaitText and StructuredOutput block until the turn ends.
+// A TurnStream streams one turn. Events (every chunk), Text, Thoughts and
+// ToolCalls are iter.Seq2 sequences; each is an independent cursor over a
+// shared buffer, so a turn can be read several times and from several
+// goroutines. Result waits for the turn to end and returns a TurnResult:
+// the chunks, the full text (TurnResult.Text), the structured output, the
+// stop reason and the token usage. Cancel halts the turn; Close stops
+// reading it and gives up the connection's step reader without cancelling
+// it. Conversation.Send and ReceiveSteps are the lower-level, step-based
+// alternative to Chat.
 //
 // # Tools, hooks, policies and triggers
 //
@@ -70,7 +75,7 @@
 // StateStore.
 //
 // Hooks are function types (PreToolCallHook, PostTurnHook, StopHook, ...)
-// listed in Config.Hooks. Policies (see the policy subpackage) decide which
+// listed in Options.Hooks. Policies (see the policy subpackage) decide which
 // tool calls run; they are evaluated by the harness, calling back into this
 // process for predicates and ask-user handlers. Triggers (Every,
 // OnFileChange) run alongside the session and push messages to the agent.
@@ -78,14 +83,18 @@
 // # Errors
 //
 // Errors this package originates implement Error. Turn failures end a
-// response stream with *ExecutionError (the agent loop failed),
+// turn stream with *ExecutionError (the agent loop failed),
 // *ConnectionError (a fatal HTTP 400/401/403 model error, or the harness
 // went away) or *CancelledError (after Cancel; it matches
 // context.Canceled). Invalid configuration and input yield
 // *ValidationError. A session that ends on its own (the harness exited or
 // the connection dropped) closes Done, and Err then returns a
 // *ConnectionError carrying the harness's stderr tail; Err is nil after a
-// Close.
+// Close. When the harness process exited, during Start or mid-session, the
+// *ConnectionError wraps a *ProcessError with its exit status, so
+// errors.As(err, &processErr) tells a crash from other connection
+// failures. ErrNotStarted reports an Agent used before Start, ErrClosed a
+// closed Connection or TurnStream.
 //
 // # Name mapping
 //
@@ -93,9 +102,9 @@
 //
 //	Agent(config), async with          -> NewAgent, Agent.Start, Agent.Close
 //	agent.chat(prompt)                 -> Agent.Chat(ctx, content...)
-//	LocalAgentConfig, AgentConfig      -> Config
-//	LocalOpenAIAgentConfig(model, base_url) -> Config{Model: model, OpenAI: &OpenAIEndpoint{BaseURL: base_url}}
-//	config.lightweight(), .eval()      -> Config.Lightweight, Config.Eval
+//	LocalAgentConfig, AgentConfig      -> Options
+//	LocalOpenAIAgentConfig(model, base_url) -> Options{Model: model, OpenAI: &OpenAIEndpoint{BaseURL: base_url}}
+//	config.lightweight(), .eval()      -> Options.Lightweight, Options.Eval
 //	str prompt, Content sequence       -> Text, ...Content
 //	SlashCommand(name=PLAN)            -> SlashCommandPlan
 //	from_file, from_bytes              -> FromFile, FromBytes (and ImageFromFile, ...)
@@ -106,17 +115,22 @@
 //	RetryConfig.benchmark()            -> BenchmarkRetryConfig
 //	McpStdioServer                     -> MCPStdioServer
 //	McpStreamableHttpServer            -> MCPStreamableHTTPServer
-//	ChatResponse.__aiter__, .text()    -> ChatResponse.Text, ChatResponse.WaitText
-//	ChatResponse.chunks/.thoughts      -> ChatResponse.Chunks, ChatResponse.Thoughts
-//	ChatResponse.resolve()             -> ChatResponse.Resolve
+//	ChatResponse                       -> TurnStream
+//	ChatResponse.__aiter__             -> TurnStream.Text
+//	ChatResponse.chunks/.thoughts      -> TurnStream.Events, TurnStream.Thoughts
+//	ChatResponse.text(), .resolve()    -> TurnStream.Result, then TurnResult.Text, TurnResult.Chunks
+//	ChatResponse.structured_output()   -> TurnResult.StructuredOutput, TurnResult.DecodeStructuredOutput
+//	ChatResponse.usage_metadata, .stop_reason -> TurnResult.Usage, TurnResult.StopReason
+//	ChatResponse.cancel()              -> TurnStream.Cancel
+//	Conversation.receive_chunks()      -> Conversation.Chat, then TurnStream.Events
 //	Text, Thought (stream chunks)      -> TextChunk, ThoughtChunk
 //	UsageMetadata +, -, *, sum()       -> UsageMetadata.Add, Sub, Scale, SumUsage
 //	HookResult(allow=False)            -> HookResult{Deny: true}
-//	@pre_tool_call_decide etc.         -> PreToolCallHook(...) etc. in Config.Hooks
+//	@pre_tool_call_decide etc.         -> PreToolCallHook(...) etc. in Options.Hooks
 //	PreToolCallDecideHook              -> PreToolCallHook
 //	HookContext/SessionContext/...     -> HookContext with HookContext.Scope
 //	ToolWithSchema(fn, schema)         -> NewToolWithSchema
-//	ToolRunner, HookRunner             -> unexported; configure through Config
+//	ToolRunner, HookRunner             -> unexported; configure through Options
 //	StateStore.get_state/set_state     -> StateStore.GetState, SetState, UpdateState
 //	with ctx: (state lock)             -> StateStore.Atomically
 //	policy.allow/deny/ask_user(...)    -> policy.Allow/Deny/AskUser (MCP: AllowMCP, ...)
@@ -131,13 +145,13 @@
 //	RuntimeError("Concurrent receive_steps()") -> ErrConcurrentReceive
 //
 // Upstream raises ValueError from many validators; here they return
-// *ValidationError, from NewAgent and Config.Validate for configuration and
+// *ValidationError, from NewAgent and Options.Validate for configuration and
 // the safety policy guard, and from Agent.Start for endpoint credentials.
 //
 // # Differences from upstream
 //
 // Where Python distinguishes "unset" from "empty", nil and empty slices
-// differ (Config.Policies, Config.Workspaces, EnabledTools, DisabledTools).
+// differ (Options.Policies, Options.Workspaces, EnabledTools, DisabledTools).
 // Boolean options whose upstream default is true are inverted
 // (DisableSubagents). Lightweight and Eval therefore cannot tell an
 // explicit false from an unset option and always apply their preset there.
@@ -149,7 +163,7 @@
 //
 // Conversation.Send drains a still-running previous turn like upstream,
 // but does not report that turn's errors (they stay with its
-// ChatResponse), and waits for the agent to be idle before sending, so the
+// TurnStream), and waits for the agent to be idle before sending, so the
 // previous turn's final events cannot be mistaken for the new turn's.
 //
 // OpenAIEndpoint is also a ModelEndpoint, so an OpenAI-compatible model
@@ -165,13 +179,13 @@
 // The LiteRT backend (LiteRTAgentConfig, LiteRTBackend, litert_server.py)
 // is not supported: it runs the model in a Python LiteRT-LM server that
 // the SDK spawns next to the harness, which has no Go equivalent. Point
-// Config.OpenAI at any OpenAI-compatible local server instead. If it is
+// Options.OpenAI at any OpenAI-compatible local server instead. If it is
 // ported, connectLocal (strategy.go) is the seam it plugs into.
 //
 // OpenTelemetry instrumentation (utils/otel) and the interactive terminal
 // helpers (utils/interactive, such as AskQuestionHook and the ask-user
 // handler) are not ported; OnInteractionHook and policy.Handler take their
-// place. DebugConfig is replaced by Config.Logger. Tool results containing
+// place. DebugConfig is replaced by Options.Logger. Tool results containing
 // genai Content protos have no Go equivalent; media results use Image,
 // Document, Audio and Video instead.
 package agy

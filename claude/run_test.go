@@ -12,7 +12,7 @@ func TestRunReturnsResult(t *testing.T) {
 	result := resultFrame()
 	result["result"] = "4"
 	ft := scriptedCLI(t, assistantFrame("4"), result)
-	res, err := Run(t.Context(), "What is 2+2?", &Options{Transport: ft})
+	res, err := Run(t.Context(), "What is 2+2?", Options{Transport: ft})
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -34,9 +34,9 @@ func TestRunReportsStreamError(t *testing.T) {
 		ft.push(map[string]any{"type": "control_response", "response": map[string]any{
 			"subtype": "success", "request_id": frame["request_id"], "response": map[string]any{}}})
 		ft.push(resultFrame())
-		ft.finish(NewProcessError("Command failed", &code, ""))
+		ft.finish(NewProcessError("Command failed", &code, "", nil))
 	}
-	res, err := Run(t.Context(), "hi", &Options{Transport: ft})
+	res, err := Run(t.Context(), "hi", Options{Transport: ft})
 	if _, ok := errors.AsType[*ProcessError](err); !ok {
 		t.Fatalf("error = %T (%v), want *ProcessError", err, err)
 	}
@@ -51,7 +51,7 @@ func TestRunErrorResult(t *testing.T) {
 	result["is_error"] = true
 	result["subtype"] = "error_max_turns"
 	ft := scriptedCLI(t, result)
-	res, err := Run(t.Context(), "hi", &Options{Transport: ft})
+	res, err := Run(t.Context(), "hi", Options{Transport: ft})
 	rerr, ok := errors.AsType[*ResultError](err)
 	if !ok || rerr.Subtype != "error_max_turns" {
 		t.Fatalf("error = %T (%v), want *ResultError", err, err)
@@ -64,7 +64,7 @@ func TestRunErrorResult(t *testing.T) {
 func TestRunWithoutResult(t *testing.T) {
 	t.Parallel()
 	ft := scriptedCLI(t, assistantFrame("partial"))
-	res, err := Run(t.Context(), "hi", &Options{Transport: ft})
+	res, err := Run(t.Context(), "hi", Options{Transport: ft})
 	if _, ok := errors.AsType[*ConnectionError](err); !ok || res != nil {
 		t.Fatalf("Run = %+v, %v; want nil and a *ConnectionError", res, err)
 	}
@@ -86,11 +86,11 @@ func TestClientRun(t *testing.T) {
 			return
 		}
 	}()
-	res, err := client.Run(t.Context(), "ping", "")
+	res, err := client.Run(t.Context(), Text("ping"))
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if res.Result != "pong" {
+	if res.Text() != "pong" {
 		t.Fatalf("result = %+v", res)
 	}
 }
@@ -109,7 +109,7 @@ func TestClientDoneOnDisconnect(t *testing.T) {
 	t.Parallel()
 	ft := newFakeTransport()
 	initResponder(ft, nil)
-	client := NewClient(&Options{Transport: ft})
+	client := NewClient(Options{Transport: ft})
 	waitDone(t, client.Done()) // no session yet
 	if _, ok := errors.AsType[*ConnectionError](client.Err()); !ok {
 		t.Fatalf("Err before Connect = %v", client.Err())
@@ -159,7 +159,7 @@ func TestClientDoneOnProcessExit(t *testing.T) {
 	t.Parallel()
 	client, ft := connectedClient(t, nil)
 	code := 1
-	ft.finish(NewProcessError("Command failed", &code, "boom"))
+	ft.finish(NewProcessError("Command failed", &code, "boom", nil))
 	waitDone(t, client.Done())
 	if _, ok := errors.AsType[*ProcessError](client.Err()); !ok {
 		t.Fatalf("Err = %T (%v), want *ProcessError", client.Err(), client.Err())
@@ -185,7 +185,7 @@ func TestClientDoneOnContextCancel(t *testing.T) {
 	t.Parallel()
 	ft := newFakeTransport()
 	initResponder(ft, nil)
-	client := NewClient(&Options{Transport: ft})
+	client := NewClient(Options{Transport: ft})
 	ctx, cancel := context.WithCancel(t.Context())
 	if err := client.Connect(ctx); err != nil {
 		t.Fatalf("connect: %v", err)

@@ -41,6 +41,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer stream.Close()
 	for event, err := range stream.Events(ctx) {
 		if err != nil {
 			log.Fatal(err)

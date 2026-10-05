@@ -25,7 +25,7 @@ const BinaryName = "localharness"
 // ErrCLINotFound reports that no localharness binary could be located or
 // started.
 var ErrCLINotFound = errors.New("agy harness: localharness binary not found; " +
-	"set Config.CLIPath, the " + EnvBinaryPath + " environment variable, or put " + BinaryName + " on PATH")
+	"set Options.CLIPath, the " + EnvBinaryPath + " environment variable, or put " + BinaryName + " on PATH")
 
 // FindBinary locates the localharness binary in upstream's order, minus the
 // Python-wheel lookups: EnvBinaryPath in env (the extra variables passed to
@@ -61,6 +61,9 @@ type StartError struct {
 	Err error
 	// Stderr is the tail of the harness's stderr output.
 	Stderr string
+	// Exit describes the process's exit when it exited on its own during
+	// the launch (rather than being killed after the failure), or nil.
+	Exit *ProcessExit
 }
 
 func (e *StartError) Error() string {
@@ -84,7 +87,19 @@ type ConnectionError struct {
 	Code websocket.StatusCode
 	// Stderr is the tail of the harness's stderr output.
 	Stderr string
-	Err    error
+	// Exit describes the process's exit when it had exited by the time the
+	// connection dropped, or nil.
+	Exit *ProcessExit
+	Err  error
+}
+
+// ProcessExit describes how the harness process exited.
+type ProcessExit struct {
+	// Code is the exit status, or nil when the process was killed by a
+	// signal.
+	Code *int
+	// Err is the error cmd.Wait reported (nil for a clean exit).
+	Err error
 }
 
 func (e *ConnectionError) Error() string {

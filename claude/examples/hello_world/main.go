@@ -20,11 +20,11 @@ func main() {
 
 	// Run drains the stream and returns the ResultMessage; an error result
 	// or a failed exit comes back as the error.
-	res, err := claude.Run(ctx, prompt, &claude.Options{MaxTurns: new(1)})
+	res, err := claude.Run(ctx, prompt, claude.Options{MaxTurns: new(1)})
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("  Claude:", res.Result)
+	fmt.Println("  Claude:", res.Text())
 	if res.TotalCostUSD != nil {
 		fmt.Printf("  (cost: $%.4f)\n", *res.TotalCostUSD)
 	}

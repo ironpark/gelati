@@ -148,11 +148,11 @@ type CapabilitiesConfig struct {
 	// DisabledTools is a denylist subtracted from DefaultTools; mutually
 	// exclusive with EnabledTools.
 	DisabledTools []BuiltinTool
-	// CompactionThreshold is deprecated: set Config.Compaction instead. Zero
+	// CompactionThreshold is deprecated: set Options.Compaction instead. Zero
 	// means unset.
 	CompactionThreshold int
 	// FinishToolSchemaJSON is the JSON schema of the finish tool's
-	// structured output. Config.ResponseSchema sets it.
+	// structured output. Options.ResponseSchema sets it.
 	FinishToolSchemaJSON string
 	// MaxSubagentDepth bounds subagent recursion; zero means the harness
 	// default of 1.
@@ -426,7 +426,7 @@ func (b *BudgetConfig) validate() error {
 	return validationErrorf("unknown budget scope %q", b.Scope)
 }
 
-// SessionContinuationMode says how a session with Config.ConversationID is
+// SessionContinuationMode says how a session with Options.ConversationID is
 // established.
 type SessionContinuationMode string
 

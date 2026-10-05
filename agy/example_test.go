@@ -16,7 +16,7 @@ import (
 
 func ExampleAgent() {
 	ctx := context.Background()
-	agent, err := agy.NewAgent(agy.Config{
+	agent, err := agy.NewAgent(agy.Options{
 		SystemInstructions: agy.TextSystemInstructions("Answer in one sentence."),
 	})
 	if err != nil {
@@ -27,18 +27,22 @@ func ExampleAgent() {
 	}
 	defer agent.Close()
 
-	resp, err := agent.Chat(ctx, agy.Text("Why is the sky blue?"))
+	stream, err := agent.Chat(ctx, agy.Text("Why is the sky blue?"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	for delta, err := range resp.Text(ctx) {
+	for delta, err := range stream.Text(ctx) {
 		if err != nil {
 			log.Fatal(err)
 		}
 		fmt.Print(delta)
 	}
 	fmt.Println()
-	if u := resp.UsageMetadata(); u != nil && u.TotalTokenCount != nil {
+	res, err := stream.Result(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if u := res.Usage; u != nil && u.TotalTokenCount != nil {
 		fmt.Println("tokens:", *u.TotalTokenCount)
 	}
 }
@@ -55,7 +59,7 @@ func ExampleNewTool() {
 		})
 
 	ctx := context.Background()
-	agent, err := agy.NewAgent(agy.Config{
+	agent, err := agy.NewAgent(agy.Options{
 		Tools: []*agy.Tool{weather},
 		// Read-only builtin tools need no policy; custom tools always run.
 		Capabilities: &agy.CapabilitiesConfig{EnabledTools: agy.ReadOnlyTools()},
@@ -68,29 +72,29 @@ func ExampleNewTool() {
 	}
 	defer agent.Close()
 
-	resp, err := agent.Chat(ctx, agy.Text("What's the weather in Seoul?"))
+	stream, err := agent.Chat(ctx, agy.Text("What's the weather in Seoul?"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	for call, err := range resp.ToolCalls(ctx) {
+	for call, err := range stream.ToolCalls(ctx) {
 		if err != nil {
 			log.Fatal(err)
 		}
 		fmt.Println("called", call.Name, call.Args)
 	}
-	text, err := resp.WaitText(ctx)
+	res, err := stream.Result(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(text)
+	fmt.Println(res.Text())
 }
 
-func ExampleConfig_policies() {
+func ExampleOptions_policies() {
 	confirm := func(_ context.Context, call agy.ToolCall, reason string) (bool, error) {
 		fmt.Printf("allow %s %v? (%s)\n", call.Name, call.Args, reason)
 		return true, nil
 	}
-	cfg := agy.Config{
+	cfg := agy.Options{
 		Policies: []agy.Policy{
 			policy.DenyAll(),
 			policy.Allow("view_file"),
@@ -106,7 +110,7 @@ func ExampleConfig_policies() {
 	}
 }
 
-func ExampleConfig_hooks() {
+func ExampleOptions_hooks() {
 	audit := agy.PostToolCallHook(func(_ context.Context, _ *agy.HookContext, r *agy.ToolResult) error {
 		if out, ok := r.Result.(*agy.RunCommandResult); ok {
 			log.Printf("%s printed %d bytes", r.Name, len(out.Output))
@@ -119,7 +123,7 @@ func ExampleConfig_hooks() {
 		}
 		return agy.StopHookResult{}, nil
 	})
-	cfg := agy.Config{
+	cfg := agy.Options{
 		Hooks:    []agy.Hook{audit, keepGoing},
 		Policies: []agy.Policy{policy.AllowAll()},
 	}
@@ -128,13 +132,13 @@ func ExampleConfig_hooks() {
 	}
 }
 
-func ExampleChatResponse_StructuredOutput() {
+func ExampleTurnResult_DecodeStructuredOutput() {
 	type answer struct {
 		Capital    string `json:"capital"`
 		Population int    `json:"population"`
 	}
 	ctx := context.Background()
-	agent, err := agy.NewAgent(agy.Config{ResponseSchema: answer{}})
+	agent, err := agy.NewAgent(agy.Options{ResponseSchema: answer{}})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -142,12 +146,16 @@ func ExampleChatResponse_StructuredOutput() {
 		log.Fatal(err)
 	}
 	defer agent.Close()
-	resp, err := agent.Chat(ctx, agy.Text("Capital and population of France?"))
+	stream, err := agent.Chat(ctx, agy.Text("Capital and population of France?"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	res, err := stream.Result(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
 	var a answer
-	if err := resp.DecodeStructuredOutput(ctx, &a); err != nil {
+	if err := res.DecodeStructuredOutput(&a); err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println(a.Capital, a.Population)
@@ -157,7 +165,7 @@ func ExampleEvery() {
 	heartbeat := agy.Every(time.Hour, func(ctx context.Context, tc *agy.TriggerContext) error {
 		return tc.Send(ctx, "Hourly check: summarize anything new in the workspace.")
 	})
-	cfg := agy.Config{Triggers: []agy.Trigger{heartbeat}}
+	cfg := agy.Options{Triggers: []agy.Trigger{heartbeat}}
 	if _, err := agy.NewAgent(cfg); err != nil {
 		log.Fatal(err)
 	}

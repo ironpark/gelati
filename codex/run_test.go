@@ -44,7 +44,7 @@ func TestTurnResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Result: %v", err)
 	}
-	if result.FinalResponse != "the answer" || len(result.Items) != 3 {
+	if result.Text() != "the answer" || len(result.Items) != 3 {
 		t.Fatalf("result = %+v", result)
 	}
 	if result.Usage == nil || result.Usage.Total.TotalTokens != 30 {
@@ -55,7 +55,7 @@ func TestTurnResult(t *testing.T) {
 	}
 }
 
-func TestFinalResponseFallback(t *testing.T) {
+func TestTurnResultText(t *testing.T) {
 	item := func(text, phase string) ThreadItem {
 		return ThreadItem{Item: &AgentMessageItem{Text: text, Phase: phase}}
 	}
@@ -70,9 +70,12 @@ func TestFinalResponseFallback(t *testing.T) {
 		{[]ThreadItem{item("final", PhaseFinalAnswer), item("x", "")}, "final"},
 	}
 	for _, tc := range cases {
-		if got := finalResponse(tc.items); got != tc.want {
-			t.Errorf("finalResponse = %q, want %q", got, tc.want)
+		if got := (&TurnResult{Items: tc.items}).Text(); got != tc.want {
+			t.Errorf("Text = %q, want %q", got, tc.want)
 		}
+	}
+	if got := (*TurnResult)(nil).Text(); got != "" {
+		t.Errorf("nil Text = %q", got)
 	}
 }
 
@@ -139,7 +142,7 @@ func TestRunInterruptsOnCancel(t *testing.T) {
 	})
 	cancel()
 	// Run is StartTurn followed by collect; drive collect on the started turn.
-	_, err := client.collect(ctx, stream)
+	_, err := collect(ctx, stream)
 	<-done
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
@@ -152,6 +155,41 @@ func TestRunInterruptsOnCancel(t *testing.T) {
 	case <-stream.Done():
 	default:
 		t.Fatal("stream not closed after the interrupt")
+	}
+}
+
+func TestTurnStreamCancel(t *testing.T) {
+	client, server := connect(t, Options{})
+	threadID := startThread(t, client, server, "thr_1")
+	stream := startTurn(t, client, server, threadID, "turn_1", Text("hi"))
+
+	done := serve(t, func() {
+		req := server.expect("turn/interrupt")
+		var params InterruptTurnParams
+		if json.Unmarshal(req.Params, &params) != nil || params.TurnID != "turn_1" || params.ThreadID != "thr_1" {
+			t.Errorf("interrupt params = %s", req.Params)
+		}
+		server.respond(req, map[string]any{})
+		server.notify(MethodTurnCompleted, map[string]any{"threadId": "thr_1",
+			"turn": map[string]any{"id": "turn_1", "status": "interrupted", "items": []any{}}})
+	})
+	if err := stream.Cancel(context.Background()); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	<-done
+	result, err := stream.Result(context.Background())
+	if err != nil || result.Turn.Status != TurnInterrupted {
+		t.Fatalf("Result = %+v, %v", result, err)
+	}
+	// The turn is over: Cancel is a no-op and Close leaves the result intact.
+	if err := stream.Cancel(context.Background()); err != nil {
+		t.Fatalf("Cancel after end: %v", err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if result, err := stream.Result(context.Background()); err != nil || result.Turn.Status != TurnInterrupted {
+		t.Fatalf("Result after Close = %+v, %v", result, err)
 	}
 }
 
@@ -295,8 +333,8 @@ func TestEventsIterator(t *testing.T) {
 		for _, err := range stream.Events(context.Background()) {
 			last = err
 		}
-		if !errors.Is(last, ErrTurnAbandoned) {
-			t.Fatalf("last error = %v, want ErrTurnAbandoned", last)
+		if !errors.Is(last, ErrClosed) {
+			t.Fatalf("last error = %v, want ErrClosed", last)
 		}
 	})
 	t.Run("context", func(t *testing.T) {

@@ -24,7 +24,7 @@ func main() {
 	dryRun := flag.Bool("dry_run", false, "validate the configuration without starting a session")
 	flag.Parse()
 
-	cfg := agy.Config{
+	opts := agy.Options{
 		Model:  *model,
 		OpenAI: &agy.OpenAIEndpoint{BaseURL: *baseURL},
 	}.Lightweight()
@@ -33,19 +33,19 @@ func main() {
 	fmt.Println("  Model:       ", *model)
 	fmt.Println("  Preset:       Lightweight()")
 	if *dryRun {
-		if err := cfg.Validate(); err != nil {
+		if err := opts.Validate(); err != nil {
 			log.Fatal(err)
 		}
 		fmt.Println("\n[Dry run] configuration is valid:")
-		fmt.Println("  Enabled tools:    ", cfg.Capabilities.EnabledTools)
-		fmt.Println("  Subagents enabled:", !cfg.Capabilities.DisableSubagents)
-		fmt.Println("  Agent behavior:   ", cfg.Capabilities.AgentBehavior)
-		fmt.Println("  Compaction at:    ", cfg.Compaction.TokenThreshold, "tokens")
+		fmt.Println("  Enabled tools:    ", opts.Capabilities.EnabledTools)
+		fmt.Println("  Subagents enabled:", !opts.Capabilities.DisableSubagents)
+		fmt.Println("  Agent behavior:   ", opts.Capabilities.AgentBehavior)
+		fmt.Println("  Compaction at:    ", opts.Compaction.TokenThreshold, "tokens")
 		return
 	}
 
 	ctx := context.Background()
-	agent, err := agy.NewAgent(cfg)
+	agent, err := agy.NewAgent(opts)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -56,11 +56,11 @@ func main() {
 
 	fmt.Println("\n  User:", *prompt)
 	fmt.Print("  Agent: ")
-	resp, err := agent.Chat(ctx, agy.Text(*prompt))
+	stream, err := agent.Chat(ctx, agy.Text(*prompt))
 	if err != nil {
 		log.Fatal(err)
 	}
-	for delta, err := range resp.Text(ctx) {
+	for delta, err := range stream.Text(ctx) {
 		if err != nil {
 			log.Fatal(err)
 		}

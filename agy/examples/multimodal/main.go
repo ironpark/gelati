@@ -30,7 +30,7 @@ func main() {
 	}
 
 	fmt.Println("  --- Multimodal input: image ---")
-	run(ctx, agy.Config{}, agy.Text("What is in this image?"), img)
+	run(ctx, agy.Options{}, agy.Text("What is in this image?"), img)
 
 	fmt.Println("  --- Multimodal input: document ---")
 	doc, err := agy.NewDocument([]byte("Project Falcon status report.\n\n"+
@@ -39,7 +39,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	run(ctx, agy.Config{}, agy.Text("Summarize this document"), doc)
+	run(ctx, agy.Options{}, agy.Text("Summarize this document"), doc)
 
 	if *audioPath != "" {
 		fmt.Println("  --- Multimodal input: audio ---")
@@ -47,11 +47,11 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		run(ctx, agy.Config{}, agy.Text("Transcribe or describe this audio clip"), audio)
+		run(ctx, agy.Options{}, agy.Text("Transcribe or describe this audio clip"), audio)
 	}
 
 	fmt.Println("  --- Multimodal output: image generation ---")
-	run(ctx, agy.Config{
+	run(ctx, agy.Options{
 		Capabilities: &agy.CapabilitiesConfig{EnabledTools: []agy.BuiltinTool{agy.BuiltinGenerateImage}},
 	}, agy.Text("Generate an image of a futuristic city with a 16:9 aspect ratio, name it 'future_city'. "+
 		"Please provide the file path to the generated image."))
@@ -63,7 +63,7 @@ func main() {
 		func(context.Context, *agy.ToolContext, struct{}) ([]any, error) {
 			return []any{"Here is the requested image.", img}, nil
 		})
-	run(ctx, agy.Config{Tools: []*agy.Tool{loadExampleImage}},
+	run(ctx, agy.Options{Tools: []*agy.Tool{loadExampleImage}},
 		agy.Text("Call load_example_image, then describe what is in the image."))
 }
 
@@ -91,10 +91,10 @@ func loadImage(path string) (*agy.Image, error) {
 	return agy.NewImage(buf.Bytes(), "image/png", "a generated test image")
 }
 
-// run starts a session with cfg, sends the prompt parts and prints the
+// run starts a session with opts, sends the prompt parts and prints the
 // answer.
-func run(ctx context.Context, cfg agy.Config, prompt ...agy.Content) {
-	agent, err := agy.NewAgent(cfg)
+func run(ctx context.Context, opts agy.Options, prompt ...agy.Content) {
+	agent, err := agy.NewAgent(opts)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -103,13 +103,13 @@ func run(ctx context.Context, cfg agy.Config, prompt ...agy.Content) {
 	}
 	defer agent.Close()
 	fmt.Println("  User:", prompt[0])
-	resp, err := agent.Chat(ctx, prompt...)
+	stream, err := agent.Chat(ctx, prompt...)
 	if err != nil {
 		log.Fatal(err)
 	}
-	text, err := resp.WaitText(ctx)
+	res, err := stream.Result(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("  Agent: %s\n\n", text)
+	fmt.Printf("  Agent: %s\n\n", res.Text())
 }

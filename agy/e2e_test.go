@@ -25,7 +25,7 @@ func TestE2EHelloWorld(t *testing.T) {
 	defer cancel()
 
 	var stderr syncBuffer
-	agent, err := agy.NewAgent(agy.Config{
+	agent, err := agy.NewAgent(agy.Options{
 		SystemInstructions: agy.TextSystemInstructions("Answer with a single word."),
 		Capabilities:       &agy.CapabilitiesConfig{EnabledTools: agy.ReadOnlyTools()},
 		Workspaces:         []string{t.TempDir()},
@@ -54,13 +54,20 @@ func TestE2EHelloWorld(t *testing.T) {
 	if !strings.Contains(strings.ToLower(text.String()), "paris") {
 		t.Fatalf("answer = %q", text.String())
 	}
-	if u := resp.UsageMetadata(); u == nil || u.TotalTokenCount == nil || *u.TotalTokenCount == 0 {
+	res, err := resp.Result(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Text() != text.String() {
+		t.Errorf("Result text %q, streamed %q", res.Text(), text.String())
+	}
+	if u := res.Usage; u == nil || u.TotalTokenCount == nil || *u.TotalTokenCount == 0 {
 		t.Errorf("usage = %+v", u)
 	}
 	if agent.ConversationID() == "" {
 		t.Error("no conversation ID")
 	}
-	t.Logf("answer %q, conversation %s, stop reason %s", text.String(), agent.ConversationID(), resp.StopReason())
+	t.Logf("answer %q, conversation %s, stop reason %s", text.String(), agent.ConversationID(), res.StopReason)
 	if err := agent.Close(); err != nil {
 		t.Fatal(err)
 	}

@@ -56,7 +56,7 @@ func TestQueryYieldsTypedMessages(t *testing.T) {
 	ft := scriptedCLI(t, assistantFrame("4"), resultFrame())
 	var texts []string
 	var result *ResultMessage
-	for msg, err := range Query(t.Context(), "What is 2+2?", &Options{Transport: ft}) {
+	for msg, err := range Query(t.Context(), "What is 2+2?", Options{Transport: ft}) {
 		if err != nil {
 			t.Fatalf("query: %v", err)
 		}
@@ -99,7 +99,7 @@ func TestQueryStreamWritesEveryInput(t *testing.T) {
 		yield(UserInput{Content: "two", ParentToolUseID: "tu1", Origin: &MessageOrigin{Kind: OriginHuman}})
 		yield(UserInput{Raw: map[string]any{"type": "user", "custom": true}})
 	}
-	for _, err := range QueryStream(t.Context(), inputs, &Options{Transport: ft}) {
+	for _, err := range QueryStream(t.Context(), inputs, Options{Transport: ft}) {
 		if err != nil {
 			t.Fatalf("query: %v", err)
 		}
@@ -140,7 +140,7 @@ func TestQueryEarlyBreakClosesTransport(t *testing.T) {
 	ft.mu.Unlock()
 
 	count := 0
-	for msg, err := range Query(t.Context(), "hi", &Options{Transport: ft}) {
+	for msg, err := range Query(t.Context(), "hi", Options{Transport: ft}) {
 		if err != nil {
 			t.Fatalf("query: %v", err)
 		}
@@ -187,7 +187,7 @@ func TestQueryContextCancellation(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for range Query(ctx, "hi", &Options{Transport: ft}) {
+		for range Query(ctx, "hi", Options{Transport: ft}) {
 		}
 	}()
 	time.Sleep(100 * time.Millisecond)
@@ -206,7 +206,7 @@ func TestQueryConnectError(t *testing.T) {
 	t.Parallel()
 	opts := &Options{CLIPath: "/nonexistent/claude/binary"}
 	var got error
-	for _, err := range Query(t.Context(), "hi", opts) {
+	for _, err := range Query(t.Context(), "hi", *opts) {
 		got = err
 	}
 	if got == nil {
@@ -223,7 +223,7 @@ func TestQueryRejectsConflictingPermissionOptions(t *testing.T) {
 		},
 	}
 	var got error
-	for _, err := range Query(t.Context(), "hi", opts) {
+	for _, err := range Query(t.Context(), "hi", *opts) {
 		got = err
 	}
 	if got == nil || !strings.Contains(got.Error(), "CanUseTool cannot be used with") {
@@ -278,12 +278,12 @@ func TestQueryPropagatesStreamError(t *testing.T) {
 		ft.push(map[string]any{"type": "control_response", "response": map[string]any{
 			"subtype": "success", "request_id": frame["request_id"], "response": map[string]any{}}})
 		code := 1
-		ft.finish(NewProcessError("Command failed with exit code 1", &code, "bad"))
+		ft.finish(NewProcessError("Command failed with exit code 1", &code, "bad", nil))
 	}
 	ft.mu.Unlock()
 
 	var got error
-	for _, err := range Query(t.Context(), "hi", &Options{Transport: ft}) {
+	for _, err := range Query(t.Context(), "hi", Options{Transport: ft}) {
 		if err != nil {
 			got = err
 		}
@@ -305,7 +305,7 @@ func TestQueryInitializeFailure(t *testing.T) {
 	ft.mu.Unlock()
 
 	var got error
-	for _, err := range Query(t.Context(), "hi", &Options{Transport: ft}) {
+	for _, err := range Query(t.Context(), "hi", Options{Transport: ft}) {
 		got = err
 	}
 	var ctrlErr *ControlError

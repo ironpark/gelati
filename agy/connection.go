@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ironpark/gelati/agy/internal/harness"
 	"github.com/ironpark/gelati/agy/internal/wire"
 	"github.com/ironpark/gelati/internal/lifecycle"
 	"github.com/ironpark/gelati/internal/logx"
@@ -72,7 +71,7 @@ func (t *stepTracker) markHandled(request string) bool {
 // ended, and its hook context and step trackers. Send starts a turn; so
 // does the harness starting one by itself (an automated trigger), seen as
 // a PreTurn hook request or a RUNNING state while idle after the previous
-// turn ended. Readers and ChatResponses keep their turn, so steps of a
+// turn ended. Readers and TurnStreams keep their turn, so steps of a
 // newer turn never reach them. The fields are guarded by Connection.mu.
 type turn struct {
 	queue []*Step
@@ -273,11 +272,11 @@ func (c *Connection) SandboxStatus() *SandboxStatus {
 	return &s
 }
 
-// LastTurnStopReason returns why the most recent turn stopped.
-func (c *Connection) LastTurnStopReason() StopReason {
+// turnEnded reports whether t is over.
+func (c *Connection) turnEnded(t *turn) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.cur.stopReason
+	return t.ended
 }
 
 // turnStopReason returns why t stopped.
@@ -379,10 +378,7 @@ func (c *Connection) cancel(ctx context.Context, t *turn) error {
 
 func (c *Connection) send(ctx context.Context, ev *wire.InputEvent) error {
 	if err := c.tr.Send(ctx, ev); err != nil {
-		if errors.Is(err, harness.ErrClosed) {
-			return ErrClosed
-		}
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, ErrClosed) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
 		return connectionErrorFrom(err)
@@ -400,6 +396,9 @@ func (c *Connection) WaitForIdle(ctx context.Context) error {
 	case <-ch:
 	case <-c.end.C():
 		if !c.IsIdle() {
+			if err := c.Err(); err != nil {
+				return err
+			}
 			return &ConnectionError{Message: "agy: the harness connection closed before the agent went idle"}
 		}
 	case <-ctx.Done():
@@ -559,7 +558,7 @@ func (c *Connection) readLoop() {
 		ev, err := c.tr.Receive(context.Background())
 		if err != nil {
 			switch {
-			case c.closing.Load(), errors.Is(err, harness.ErrClosed):
+			case c.closing.Load(), errors.Is(err, ErrClosed):
 				c.logger.Info("harness connection closed")
 			default:
 				streamErr = connectionErrorFrom(err)
@@ -580,7 +579,8 @@ func (c *Connection) Done() <-chan struct{} { return c.end.C() }
 // when it ended because of Close (whose own result Close returns). When
 // the session ended on its own, Err returns a *ConnectionError: for a lost
 // connection or an exited harness process it carries the WebSocket close
-// code and the tail of the harness's stderr. Once Done is closed, Err no
+// code and the tail of the harness's stderr, and when the process exited it
+// wraps a *ProcessError with its exit status. Once Done is closed, Err no
 // longer changes.
 func (c *Connection) Err() error { return c.end.Err() }
 

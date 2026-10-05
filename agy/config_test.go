@@ -27,7 +27,7 @@ func clearModelEnv(t *testing.T) {
 }
 
 // harnessConfig builds the harness config of cfg.
-func harnessConfig(t *testing.T, cfg Config, hooks ...Hook) *wire.HarnessConfig {
+func harnessConfig(t *testing.T, cfg Options, hooks ...Hook) *wire.HarnessConfig {
 	t.Helper()
 	cfg.Hooks = append(slices.Clone(cfg.Hooks), hooks...)
 	if err := cfg.Validate(); err != nil {
@@ -47,31 +47,31 @@ func harnessConfig(t *testing.T, cfg Config, hooks ...Hook) *wire.HarnessConfig 
 func TestConfigValidation(t *testing.T) {
 	sub := SubagentConfig{Name: "researcher", Description: "researcher"}
 	for name, tc := range map[string]struct {
-		cfg     Config
+		cfg     Options
 		wantErr string
 	}{
-		"zero":                {Config{}, ""},
-		"valid id":            {Config{ConversationID: "12345678901234567890123456789012"}, ""},
-		"uuid id":             {Config{ConversationID: "12345678-1234-1234-1234-123456789012"}, ""},
-		"short id":            {Config{ConversationID: "too-short"}, "must be at least 32 characters long"},
-		"bad id chars":        {Config{ConversationID: "invalid_char_because_of_underscores_123"}, "must match [a-zA-Z0-9-]"},
-		"resume without id":   {Config{SessionContinuationMode: SessionResume}, "must be specified when session_continuation_mode is RESUME"},
-		"resume with id":      {Config{SessionContinuationMode: SessionResume, ConversationID: strings.Repeat("a", 32)}, ""},
-		"bad mode":            {Config{SessionContinuationMode: "sometimes"}, "unknown session continuation mode"},
-		"relative app dir":    {Config{AppDataDir: "relative/path"}, "app_data_dir must be an absolute path"},
-		"schema string":       {Config{ResponseSchema: `{"type": "object"}`}, ""},
-		"schema invalid":      {Config{ResponseSchema: "{not json"}, "response_schema string is not valid JSON."},
-		"schema map":          {Config{ResponseSchema: map[string]any{"type": "object"}}, ""},
-		"schema type":         {Config{ResponseSchema: struct{ A int }{}}, ""},
-		"allowed known":       {Config{Subagents: []SubagentConfig{sub}, Capabilities: &CapabilitiesConfig{AllowedSubagents: []string{"researcher"}}}, ""},
-		"allowed unknown":     {Config{Subagents: []SubagentConfig{sub}, Capabilities: &CapabilitiesConfig{AllowedSubagents: []string{"non_existent"}}}, "Unknown subagent name(s)"},
-		"sub allowed unknown": {Config{Subagents: []SubagentConfig{{Name: "researcher", Capabilities: &SubagentCapabilities{EnabledTools: []BuiltinTool{BuiltinStartSubagent}, AllowedSubagents: []string{"ghost_agent"}}}}}, "ghost_agent"},
-		"bad mcp":             {Config{MCPServers: []MCPServer{&MCPStdioServer{Name: "bad name"}}}, "must match"},
-		"multiple auto":       {Config{Policies: []Policy{{Auto: true}, {Auto: true}}}, "Multiple AutoPolicy"},
-		"nil hook":            {Config{Hooks: []Hook{nil}}, "nil hook"},
-		"nil trigger":         {Config{Triggers: []Trigger{nil}}, "trigger 0 is nil"},
-		"negative compaction": {Config{Compaction: &CompactionConfig{TokenThreshold: -1}}, "must be positive"},
-		"bad budget":          {Config{Budget: &BudgetConfig{MaxModelCalls: -1}}, "max_model_calls"},
+		"zero":                {Options{}, ""},
+		"valid id":            {Options{ConversationID: "12345678901234567890123456789012"}, ""},
+		"uuid id":             {Options{ConversationID: "12345678-1234-1234-1234-123456789012"}, ""},
+		"short id":            {Options{ConversationID: "too-short"}, "must be at least 32 characters long"},
+		"bad id chars":        {Options{ConversationID: "invalid_char_because_of_underscores_123"}, "must match [a-zA-Z0-9-]"},
+		"resume without id":   {Options{SessionContinuationMode: SessionResume}, "must be specified when session_continuation_mode is RESUME"},
+		"resume with id":      {Options{SessionContinuationMode: SessionResume, ConversationID: strings.Repeat("a", 32)}, ""},
+		"bad mode":            {Options{SessionContinuationMode: "sometimes"}, "unknown session continuation mode"},
+		"relative app dir":    {Options{AppDataDir: "relative/path"}, "app_data_dir must be an absolute path"},
+		"schema string":       {Options{ResponseSchema: `{"type": "object"}`}, ""},
+		"schema invalid":      {Options{ResponseSchema: "{not json"}, "response_schema string is not valid JSON."},
+		"schema map":          {Options{ResponseSchema: map[string]any{"type": "object"}}, ""},
+		"schema type":         {Options{ResponseSchema: struct{ A int }{}}, ""},
+		"allowed known":       {Options{Subagents: []SubagentConfig{sub}, Capabilities: &CapabilitiesConfig{AllowedSubagents: []string{"researcher"}}}, ""},
+		"allowed unknown":     {Options{Subagents: []SubagentConfig{sub}, Capabilities: &CapabilitiesConfig{AllowedSubagents: []string{"non_existent"}}}, "Unknown subagent name(s)"},
+		"sub allowed unknown": {Options{Subagents: []SubagentConfig{{Name: "researcher", Capabilities: &SubagentCapabilities{EnabledTools: []BuiltinTool{BuiltinStartSubagent}, AllowedSubagents: []string{"ghost_agent"}}}}}, "ghost_agent"},
+		"bad mcp":             {Options{MCPServers: []MCPServer{&MCPStdioServer{Name: "bad name"}}}, "must match"},
+		"multiple auto":       {Options{Policies: []Policy{{Auto: true}, {Auto: true}}}, "Multiple AutoPolicy"},
+		"nil hook":            {Options{Hooks: []Hook{nil}}, "nil hook"},
+		"nil trigger":         {Options{Triggers: []Trigger{nil}}, "trigger 0 is nil"},
+		"negative compaction": {Options{Compaction: &CompactionConfig{TokenThreshold: -1}}, "must be positive"},
+		"bad budget":          {Options{Budget: &BudgetConfig{MaxModelCalls: -1}}, "max_model_calls"},
 	} {
 		err := tc.cfg.Validate()
 		switch {
@@ -88,7 +88,7 @@ func TestCustomToolCollection(t *testing.T) {
 		return NewToolWithSchema(name, "", nil, func(context.Context, *ToolContext, map[string]any) (any, error) { return nil, nil })
 	}
 	shared, subOnly := mk("shared_tool"), mk("sub_only_tool")
-	cfg := Config{
+	cfg := Options{
 		Tools:     []*Tool{shared},
 		ToolNames: []string{"view_file"},
 		Subagents: []SubagentConfig{
@@ -100,18 +100,18 @@ func TestCustomToolCollection(t *testing.T) {
 	if err != nil || len(tools) != 2 || tools[0] != shared || tools[1] != subOnly {
 		t.Fatalf("tools %v, %v", tools, err)
 	}
-	cfg = Config{Tools: []*Tool{mk("tool_fn")}, Subagents: []SubagentConfig{{Name: "sub1", Tools: []*Tool{mk("tool_fn")}}}}
+	cfg = Options{Tools: []*Tool{mk("tool_fn")}, Subagents: []SubagentConfig{{Name: "sub1", Tools: []*Tool{mk("tool_fn")}}}}
 	if _, err := cfg.allCustomTools(); err == nil || !strings.Contains(err.Error(), "Duplicate custom tool name 'tool_fn' detected across agent and subagent 'sub1' configurations.") {
 		t.Fatalf("collision: %v", err)
 	}
-	if err := (&Config{Tools: []*Tool{nil}}).Validate(); err == nil {
+	if err := (&Options{Tools: []*Tool{nil}}).Validate(); err == nil {
 		t.Fatal("nil tool accepted")
 	}
 }
 
 func TestResolvedModels(t *testing.T) {
 	clearModelEnv(t)
-	models := (&Config{}).ResolvedModels()
+	models := (&Options{}).ResolvedModels()
 	if len(models) != 2 || models[0].Name != DefaultModel || !reflect.DeepEqual(models[0].Types, []ModelType{ModelTypeText}) ||
 		models[1].Name != DefaultImageGenerationModel || !reflect.DeepEqual(models[1].Types, []ModelType{ModelTypeImage}) {
 		t.Fatalf("defaults %+v", models)
@@ -120,7 +120,7 @@ func TestResolvedModels(t *testing.T) {
 		t.Fatalf("default endpoint %T", models[0].Endpoint)
 	}
 
-	models = (&Config{Model: "custom-text-model", APIKey: "my-key"}).ResolvedModels()
+	models = (&Options{Model: "custom-text-model", APIKey: "my-key"}).ResolvedModels()
 	if len(models) != 2 || models[0].Name != "custom-text-model" || models[1].Name != DefaultImageGenerationModel {
 		t.Fatalf("shorthand %+v", models)
 	}
@@ -129,11 +129,11 @@ func TestResolvedModels(t *testing.T) {
 	}
 
 	img := ModelTarget{Name: "custom-image-model", Types: []ModelType{ModelTypeImage}}
-	models = (&Config{Models: []ModelTarget{img}}).ResolvedModels()
+	models = (&Options{Models: []ModelTarget{img}}).ResolvedModels()
 	if len(models) != 2 || models[0].Name != "custom-image-model" || models[1].Name != DefaultModel {
 		t.Fatalf("explicit %+v", models)
 	}
-	models = (&Config{Model: "custom-text-model", Models: []ModelTarget{img}}).ResolvedModels()
+	models = (&Options{Model: "custom-text-model", Models: []ModelTarget{img}}).ResolvedModels()
 	if len(models) != 2 || models[0].Name != "custom-image-model" || models[1].Name != "custom-text-model" {
 		t.Fatalf("explicit + shorthand %+v", models)
 	}
@@ -144,7 +144,7 @@ func TestVertexEnvironment(t *testing.T) {
 	t.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "True")
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "env-project")
 	t.Setenv("GOOGLE_CLOUD_LOCATION", "env-location")
-	models := (&Config{Model: "gemini-3.8-flash"}).ResolvedModels()
+	models := (&Options{Model: "gemini-3.8-flash"}).ResolvedModels()
 	v, ok := models[0].Endpoint.(*VertexEndpoint)
 	if !ok || v.Project != "env-project" || v.Location != "env-location" {
 		t.Fatalf("vertex endpoint %#v", models[0].Endpoint)
@@ -166,11 +166,11 @@ func TestVertexEnvironment(t *testing.T) {
 
 	clearModelEnv(t)
 	t.Setenv("GOOGLE_GENAI_USE_ENTERPRISE", "1")
-	if _, ok := (&Config{}).ResolvedModels()[0].Endpoint.(*VertexEndpoint); !ok {
+	if _, ok := (&Options{}).ResolvedModels()[0].Endpoint.(*VertexEndpoint); !ok {
 		t.Fatal("GOOGLE_GENAI_USE_ENTERPRISE did not route to Vertex")
 	}
 	clearModelEnv(t)
-	models = (&Config{Vertex: true, APIKey: "express-key"}).ResolvedModels()
+	models = (&Options{Vertex: true, APIKey: "express-key"}).ResolvedModels()
 	if v := models[0].Endpoint.(*VertexEndpoint); v.APIKey != "express-key" || v.Project != "" || v.Validate() != nil {
 		t.Fatalf("express shorthand %+v", v)
 	}
@@ -208,10 +208,10 @@ func TestEndpointValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := validateModels((&Config{Models: []ModelTarget{{Name: "m"}}}).ResolvedModels()); err == nil || !strings.Contains(err.Error(), "must have an endpoint configured") {
+	if err := validateModels((&Options{Models: []ModelTarget{{Name: "m"}}}).ResolvedModels()); err == nil || !strings.Contains(err.Error(), "must have an endpoint configured") {
 		t.Fatalf("missing endpoint: %v", err)
 	}
-	cc, err := (&Config{}).compile()
+	cc, err := (&Options{}).compile()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestEndpointValidation(t *testing.T) {
 
 func TestHarnessConfigDefaults(t *testing.T) {
 	clearModelEnv(t)
-	hc := harnessConfig(t, Config{Workspaces: []string{}})
+	hc := harnessConfig(t, Options{Workspaces: []string{}})
 	tools := hc.GetHarnessSideTools()
 	if !tools.GetSubagents().GetEnabled() || tools.GetUserQuestions().GetEnabled() || !tools.GetRunCommand().GetEnabled() ||
 		!tools.GetManageTask().GetEnabled() || !tools.GetSchedule().GetEnabled() || tools.GetFind().GetEnabled() ||
@@ -248,18 +248,18 @@ func TestHarnessConfigDefaults(t *testing.T) {
 	}
 	// A nil workspace list means the current directory.
 	wd, _ := os.Getwd()
-	hc = harnessConfig(t, Config{})
+	hc = harnessConfig(t, Options{})
 	if len(hc.GetWorkspaces()) != 1 || hc.GetWorkspaces()[0].GetFilesystemWorkspace().GetDirectory() != filepath.ToSlash(wd) {
 		t.Fatalf("default workspace %+v", hc.GetWorkspaces())
 	}
 	// Explicit empty policies send no policy config.
-	if hc := harnessConfig(t, Config{Policies: []Policy{}, Capabilities: &CapabilitiesConfig{EnabledTools: ReadOnlyTools()}}); hc.GetPolicyConfig() != nil {
+	if hc := harnessConfig(t, Options{Policies: []Policy{}, Capabilities: &CapabilitiesConfig{EnabledTools: ReadOnlyTools()}}); hc.GetPolicyConfig() != nil {
 		t.Fatalf("empty policies %+v", hc.GetPolicyConfig())
 	}
 }
 
 func TestHarnessConfigCapabilities(t *testing.T) {
-	hc := harnessConfig(t, Config{Capabilities: &CapabilitiesConfig{
+	hc := harnessConfig(t, Options{Capabilities: &CapabilitiesConfig{
 		DisabledTools: []BuiltinTool{BuiltinRunCommand, BuiltinSchedule, BuiltinAskQuestion, BuiltinGenerateImage},
 	}})
 	tools := hc.GetHarnessSideTools()
@@ -270,7 +270,7 @@ func TestHarnessConfigCapabilities(t *testing.T) {
 		t.Fatalf("disabled tools %+v", tools)
 	}
 
-	hc = harnessConfig(t, Config{Capabilities: &CapabilitiesConfig{EnabledTools: []BuiltinTool{BuiltinViewFile}}})
+	hc = harnessConfig(t, Options{Capabilities: &CapabilitiesConfig{EnabledTools: []BuiltinTool{BuiltinViewFile}}})
 	want := wire.HarnessSideTools_builder{
 		ViewFile:       wire.ViewFileToolConfig_builder{Enabled: new(true)}.Build(),
 		Subagents:      wire.SubagentsConfig_builder{Enabled: new(false)}.Build(),
@@ -293,18 +293,18 @@ func TestHarnessConfigCapabilities(t *testing.T) {
 		t.Fatalf("enabled tools\n got %s\nwant %s", gb, wb)
 	}
 
-	hc = harnessConfig(t, Config{Capabilities: &CapabilitiesConfig{RunCommand: &RunCommandConfig{Timeout: 60 * time.Second, EnableSandbox: true}}})
+	hc = harnessConfig(t, Options{Capabilities: &CapabilitiesConfig{RunCommand: &RunCommandConfig{Timeout: 60 * time.Second, EnableSandbox: true}}})
 	rc := hc.GetHarnessSideTools().GetRunCommand()
 	if rc.GetMaxTimeoutMs() != 60000 || rc.GetEnableDaemonCommands() || !rc.GetEnableSandbox() || !rc.GetEnabled() {
 		t.Fatalf("run command %+v", rc)
 	}
-	hc = harnessConfig(t, Config{Capabilities: &CapabilitiesConfig{RunCommand: &RunCommandConfig{EnableDaemons: true}}})
+	hc = harnessConfig(t, Options{Capabilities: &CapabilitiesConfig{RunCommand: &RunCommandConfig{EnableDaemons: true}}})
 	if rc := hc.GetHarnessSideTools().GetRunCommand(); !rc.GetEnableDaemonCommands() || rc.GetMaxTimeoutMs() != 0 {
 		t.Fatalf("daemons %+v", rc)
 	}
 
 	sub := SubagentConfig{Name: "researcher"}
-	hc = harnessConfig(t, Config{
+	hc = harnessConfig(t, Options{
 		Subagents:    []SubagentConfig{sub, {Name: "reviewer"}},
 		Capabilities: &CapabilitiesConfig{MaxSubagentDepth: 3, AllowedSubagents: []string{"researcher", "reviewer"}},
 	})
@@ -313,61 +313,61 @@ func TestHarnessConfigCapabilities(t *testing.T) {
 		t.Fatalf("subagents %+v", sc)
 	}
 	for _, caps := range []*CapabilitiesConfig{{DisabledTools: []BuiltinTool{BuiltinStartSubagent}}, {DisableSubagents: true}} {
-		if harnessConfig(t, Config{Capabilities: caps}).GetHarnessSideTools().GetSubagents().GetEnabled() {
+		if harnessConfig(t, Options{Capabilities: caps}).GetHarnessSideTools().GetSubagents().GetEnabled() {
 			t.Errorf("subagents enabled with %+v", caps)
 		}
 	}
-	hc = harnessConfig(t, Config{Capabilities: &CapabilitiesConfig{AgentBehavior: AgentBehaviorInteractive, EnabledTools: []BuiltinTool{BuiltinViewFile, BuiltinAskQuestion}}})
+	hc = harnessConfig(t, Options{Capabilities: &CapabilitiesConfig{AgentBehavior: AgentBehaviorInteractive, EnabledTools: []BuiltinTool{BuiltinViewFile, BuiltinAskQuestion}}})
 	if hc.GetAgentBehavior() != wire.AgentBehavior_AGENT_BEHAVIOR_INTERACTIVE || !hc.GetHarnessSideTools().GetUserQuestions().GetEnabled() || hc.GetHarnessSideTools().GetRunCommand().GetEnabled() {
 		t.Fatalf("interactive %+v", hc.GetHarnessSideTools())
 	}
-	hc = harnessConfig(t, Config{Capabilities: &CapabilitiesConfig{EnabledTools: []BuiltinTool{BuiltinFindFile, BuiltinSearchDir}}})
+	hc = harnessConfig(t, Options{Capabilities: &CapabilitiesConfig{EnabledTools: []BuiltinTool{BuiltinFindFile, BuiltinSearchDir}}})
 	if !hc.GetHarnessSideTools().GetFind().GetEnabled() || !hc.GetHarnessSideTools().GetGrepSearch().GetEnabled() {
 		t.Fatal("find/grep not enabled")
 	}
 }
 
 func TestHarnessConfigCompactionRetryBudgetTruncation(t *testing.T) {
-	hc := harnessConfig(t, Config{Capabilities: &CapabilitiesConfig{CompactionThreshold: 50000}})
+	hc := harnessConfig(t, Options{Capabilities: &CapabilitiesConfig{CompactionThreshold: 50000}})
 	if hc.GetCompactionThreshold() != 50000 || hc.GetCompactionConfig().GetTokenThreshold() != 50000 {
 		t.Fatalf("legacy compaction %+v", hc.GetCompactionConfig())
 	}
-	hc = harnessConfig(t, Config{Capabilities: &CapabilitiesConfig{CompactionThreshold: 50000}, Compaction: &CompactionConfig{TokenThreshold: 30000}})
+	hc = harnessConfig(t, Options{Capabilities: &CapabilitiesConfig{CompactionThreshold: 50000}, Compaction: &CompactionConfig{TokenThreshold: 30000}})
 	if hc.GetCompactionThreshold() != 30000 || hc.GetCompactionConfig().GetTokenThreshold() != 30000 {
 		t.Fatalf("compaction precedence %+v", hc.GetCompactionConfig())
 	}
 
-	if harnessConfig(t, Config{Retry: &RetryConfig{}}).GetRetryConfig() != nil {
+	if harnessConfig(t, Options{Retry: &RetryConfig{}}).GetRetryConfig() != nil {
 		t.Fatal("empty retry config sent")
 	}
-	hc = harnessConfig(t, Config{Retry: &RetryConfig{APIRetry: &ModelAPIRetryConfig{
+	hc = harnessConfig(t, Options{Retry: &RetryConfig{APIRetry: &ModelAPIRetryConfig{
 		MaxRetries: new(uint32(5)), InitialSleepDurationMs: new(uint32(500)), ExponentialMultiplier: new(1.5), JitterRange: new(0.1),
 	}}})
 	if a := hc.GetRetryConfig().GetApiRetry(); a.GetMaxRetries() != 5 || a.GetInitialSleepDurationMs() != 500 || a.GetExponentialMultiplier() != 1.5 || a.GetJitterRange() != 0.1 || hc.GetRetryConfig().GetModelOutputRetry() != nil {
 		t.Fatalf("api retry %+v", hc.GetRetryConfig())
 	}
-	hc = harnessConfig(t, Config{Retry: &RetryConfig{ModelOutputRetry: &ModelOutputRetryConfig{MaxRetries: new(uint32(math.MaxUint32))}, APIRetry: &ModelAPIRetryConfig{MaxRetries: new(uint32(0))}}})
+	hc = harnessConfig(t, Options{Retry: &RetryConfig{ModelOutputRetry: &ModelOutputRetryConfig{MaxRetries: new(uint32(math.MaxUint32))}, APIRetry: &ModelAPIRetryConfig{MaxRetries: new(uint32(0))}}})
 	if hc.GetRetryConfig().GetModelOutputRetry().GetMaxRetries() != math.MaxUint32 || !hc.GetRetryConfig().GetApiRetry().HasMaxRetries() {
 		t.Fatalf("retry edges %+v", hc.GetRetryConfig())
 	}
 
-	if harnessConfig(t, Config{Budget: &BudgetConfig{}}).GetBudgetConfig() != nil {
+	if harnessConfig(t, Options{Budget: &BudgetConfig{}}).GetBudgetConfig() != nil {
 		t.Fatal("empty budget sent")
 	}
-	hc = harnessConfig(t, Config{Budget: &BudgetConfig{MaxModelCalls: 5, MaxToolCalls: 10, MaxInputTokens: 500, MaxOutputTokens: 200, MaxTotalTokens: 1000}})
+	hc = harnessConfig(t, Options{Budget: &BudgetConfig{MaxModelCalls: 5, MaxToolCalls: 10, MaxInputTokens: 500, MaxOutputTokens: 200, MaxTotalTokens: 1000}})
 	b := hc.GetBudgetConfig()
 	if b.GetMaxModelCalls() != 5 || b.GetMaxToolCalls() != 10 || b.GetMaxInputTokens() != 500 || b.GetMaxOutputTokens() != 200 || b.GetMaxTotalTokens() != 1000 || b.GetScope() != wire.BudgetConfig_BUDGET_SCOPE_LIFETIME {
 		t.Fatalf("budget %+v", b)
 	}
-	if hc := harnessConfig(t, Config{Budget: &BudgetConfig{MaxTotalTokens: 2000, Scope: BudgetScopeForwardLooking}}); hc.GetBudgetConfig().GetScope() != wire.BudgetConfig_BUDGET_SCOPE_FORWARD_LOOKING {
+	if hc := harnessConfig(t, Options{Budget: &BudgetConfig{MaxTotalTokens: 2000, Scope: BudgetScopeForwardLooking}}); hc.GetBudgetConfig().GetScope() != wire.BudgetConfig_BUDGET_SCOPE_FORWARD_LOOKING {
 		t.Fatal("forward-looking scope")
 	}
 
-	if harnessConfig(t, Config{}).GetToolOutputTruncation() != nil {
+	if harnessConfig(t, Options{}).GetToolOutputTruncation() != nil {
 		t.Fatal("truncation sent by default")
 	}
 	for _, n := range []int{2048, 0} {
-		hc := harnessConfig(t, Config{Capabilities: &CapabilitiesConfig{ToolOutputTruncation: &ToolOutputTruncationConfig{MaxTokens: n}}})
+		hc := harnessConfig(t, Options{Capabilities: &CapabilitiesConfig{ToolOutputTruncation: &ToolOutputTruncationConfig{MaxTokens: n}}})
 		if tr := hc.GetToolOutputTruncation().GetTruncate(); tr == nil || tr.GetMaxTokens() != int32(n) {
 			t.Fatalf("truncation %d: %+v", n, hc.GetToolOutputTruncation())
 		}
@@ -382,13 +382,13 @@ func TestHarnessConfigSessionModelsAndInstructions(t *testing.T) {
 		SessionCreateOrResume: wire.HarnessConfig_CREATE_OR_RESUME,
 		SessionCreateOnly:     wire.HarnessConfig_CREATE_ONLY,
 	} {
-		hc := harnessConfig(t, Config{ConversationID: id, SessionContinuationMode: mode})
+		hc := harnessConfig(t, Options{ConversationID: id, SessionContinuationMode: mode})
 		if hc.GetSessionContinuationMode() != want || hc.GetCascadeId() != id {
 			t.Errorf("mode %s: %s %s", mode, hc.GetSessionContinuationMode(), hc.GetCascadeId())
 		}
 	}
 
-	hc := harnessConfig(t, Config{Models: []ModelTarget{
+	hc := harnessConfig(t, Options{Models: []ModelTarget{
 		{Name: "gemini-2.5-pro", Endpoint: &GeminiAPIEndpoint{APIKey: "test-key", Options: &GeminiModelOptions{ThinkingLevel: ThinkingHigh}}},
 		{Name: "imagen-3-custom", Types: []ModelType{ModelTypeImage}, Endpoint: &GeminiAPIEndpoint{Options: &GeminiModelOptions{}}},
 	}})
@@ -398,7 +398,7 @@ func TestHarnessConfigSessionModelsAndInstructions(t *testing.T) {
 		t.Fatalf("models %+v", hc.GetModels())
 	}
 	for _, tier := range []ServiceTier{ServiceTierStandard, ServiceTierPriority, ServiceTierFlex} {
-		hc := harnessConfig(t, Config{Models: []ModelTarget{{Endpoint: &VertexEndpoint{Project: "p", Location: "l", Options: &GeminiModelOptions{ServiceTier: tier}}}}})
+		hc := harnessConfig(t, Options{Models: []ModelTarget{{Endpoint: &VertexEndpoint{Project: "p", Location: "l", Options: &GeminiModelOptions{ServiceTier: tier}}}}})
 		if got := hc.GetModels()[0].GetVertexEndpoint().GetOptions().GetServiceTier(); got != string(tier) {
 			t.Errorf("tier %s: %q", tier, got)
 		}
@@ -407,30 +407,30 @@ func TestHarnessConfigSessionModelsAndInstructions(t *testing.T) {
 		}
 	}
 
-	if si := harnessConfig(t, Config{SystemInstructions: TextSystemInstructions("Be concise.")}).GetSystemInstructions(); si.GetAppended().GetAppendedSections()[0].GetContent() != "Be concise." ||
+	if si := harnessConfig(t, Options{SystemInstructions: TextSystemInstructions("Be concise.")}).GetSystemInstructions(); si.GetAppended().GetAppendedSections()[0].GetContent() != "Be concise." ||
 		si.GetAppended().GetAppendedSections()[0].GetTitle() != "user_system_instructions" {
 		t.Fatalf("text instructions %+v", si)
 	}
-	if si := harnessConfig(t, Config{SystemInstructions: CustomSystemInstructions{Text: "Override everything."}}).GetSystemInstructions(); si.GetCustom().GetPart()[0].GetText() != "Override everything." {
+	if si := harnessConfig(t, Options{SystemInstructions: CustomSystemInstructions{Text: "Override everything."}}).GetSystemInstructions(); si.GetCustom().GetPart()[0].GetText() != "Override everything." {
 		t.Fatalf("custom instructions %+v", si)
 	}
-	si := harnessConfig(t, Config{SystemInstructions: TemplatedSystemInstructions{Identity: "New Identity", Sections: []SystemInstructionSection{{Title: "extra", Content: "More instructions"}}}}).GetSystemInstructions()
+	si := harnessConfig(t, Options{SystemInstructions: TemplatedSystemInstructions{Identity: "New Identity", Sections: []SystemInstructionSection{{Title: "extra", Content: "More instructions"}}}}).GetSystemInstructions()
 	if si.GetAppended().GetCustomIdentity() != "New Identity" || si.GetAppended().GetAppendedSections()[0].GetTitle() != "extra" {
 		t.Fatalf("templated instructions %+v", si)
 	}
-	if si := harnessConfig(t, Config{SystemInstructions: &TemplatedSystemInstructions{Identity: "Only Identity"}}).GetSystemInstructions(); si.GetAppended().GetCustomIdentity() != "Only Identity" || len(si.GetAppended().GetAppendedSections()) != 0 {
+	if si := harnessConfig(t, Options{SystemInstructions: &TemplatedSystemInstructions{Identity: "Only Identity"}}).GetSystemInstructions(); si.GetAppended().GetCustomIdentity() != "Only Identity" || len(si.GetAppended().GetAppendedSections()) != 0 {
 		t.Fatalf("identity only %+v", si)
 	}
-	if si := harnessConfig(t, Config{SystemInstructions: TextSystemInstructions("")}).GetSystemInstructions(); si != nil {
+	if si := harnessConfig(t, Options{SystemInstructions: TextSystemInstructions("")}).GetSystemInstructions(); si != nil {
 		t.Fatalf("empty instructions %+v", si)
 	}
 
-	hc = harnessConfig(t, Config{SkillsPaths: []string{"/skills/a", "/skills/b"}, AppDataDir: "/custom/app/data", ResponseSchema: map[string]any{"properties": map[string]any{"field": map[string]any{"type": "string"}}}})
+	hc = harnessConfig(t, Options{SkillsPaths: []string{"/skills/a", "/skills/b"}, AppDataDir: "/custom/app/data", ResponseSchema: map[string]any{"properties": map[string]any{"field": map[string]any{"type": "string"}}}})
 	if !reflect.DeepEqual(hc.GetSkillsPaths(), []string{"/skills/a", "/skills/b"}) || hc.GetAppDataDir() != "/custom/app/data" ||
 		hc.GetFinishToolSchemaJson() != `{"properties":{"field":{"type":"string"}}}` {
 		t.Fatalf("misc %+v", hc)
 	}
-	hc = harnessConfig(t, Config{Capabilities: &CapabilitiesConfig{FinishToolSchemaJSON: `{"type": "object"}`}})
+	hc = harnessConfig(t, Options{Capabilities: &CapabilitiesConfig{FinishToolSchemaJSON: `{"type": "object"}`}})
 	if hc.GetFinishToolSchemaJson() != `{"type": "object"}` {
 		t.Fatalf("finish schema %q", hc.GetFinishToolSchemaJson())
 	}
@@ -440,7 +440,7 @@ func TestHarnessConfigWorkspaces(t *testing.T) {
 	tmp := resolvePath(os.TempDir())
 	home, _ := os.UserHomeDir()
 	wd, _ := os.Getwd()
-	hc := harnessConfig(t, Config{Workspaces: []string{
+	hc := harnessConfig(t, Options{Workspaces: []string{
 		"file:///dev/shm/workspace", filepath.Join(tmp, "clean-path"), "ws", "~/my_project", "cns://el-d/home/user/project", "/cns/el-d/home/user/data",
 	}})
 	var got []string
@@ -457,7 +457,7 @@ func TestHarnessConfigWorkspaces(t *testing.T) {
 }
 
 func TestHarnessConfigMCPServers(t *testing.T) {
-	hc := harnessConfig(t, Config{MCPServers: []MCPServer{
+	hc := harnessConfig(t, Options{MCPServers: []MCPServer{
 		&MCPStreamableHTTPServer{Name: "my_http_server", URL: "http://localhost:8080/mcp", Headers: map[string]string{"Authorization": "Bearer token123"}, TimeoutSeconds: 30},
 		&MCPStdioServer{Name: "my_stdio_server", Command: "node", Args: []string{"server.js"}, Env: map[string]string{"NODE_ENV": "production"}, TimeoutSeconds: 10, EnabledTools: []string{"add", "sub"}},
 	}})
@@ -479,7 +479,7 @@ func TestHarnessConfigToolsAndSubagents(t *testing.T) {
 		return NewTool(name, name+" docs", func(context.Context, *ToolContext, q) (string, error) { return "", nil })
 	}
 	root, shared, subOnly := mk("root_tool"), mk("shared_tool"), mk("sub_tool")
-	hc := harnessConfig(t, Config{
+	hc := harnessConfig(t, Options{
 		Tools:     []*Tool{root, shared},
 		ToolNames: []string{"sub_tool", "builtin_thing"},
 		Subagents: []SubagentConfig{
@@ -530,7 +530,7 @@ func TestHarnessConfigToolsAndSubagents(t *testing.T) {
 
 func TestLightweight(t *testing.T) {
 	clearModelEnv(t)
-	orig := Config{Model: "gemini-3.8-flash"}
+	orig := Options{Model: "gemini-3.8-flash"}
 	cfg := orig.Lightweight()
 	caps := cfg.Capabilities
 	if cfg.Model != "gemini-3.8-flash" || caps.AgentBehavior != AgentBehaviorMinimal || !reflect.DeepEqual(caps.EnabledTools, MinimalTools()) ||
@@ -548,15 +548,15 @@ func TestLightweight(t *testing.T) {
 		t.Fatalf("lightweight harness config %+v", tools)
 	}
 
-	cfg = Config{Capabilities: &CapabilitiesConfig{CompactionThreshold: 8000}}.Lightweight()
+	cfg = Options{Capabilities: &CapabilitiesConfig{CompactionThreshold: 8000}}.Lightweight()
 	if cfg.Capabilities.CompactionThreshold != 8000 || cfg.Compaction != nil {
 		t.Fatalf("legacy compaction kept %+v", cfg)
 	}
-	cfg = Config{Compaction: &CompactionConfig{TokenThreshold: 12345}}.Lightweight()
+	cfg = Options{Compaction: &CompactionConfig{TokenThreshold: 12345}}.Lightweight()
 	if cfg.Compaction.TokenThreshold != 12345 || harnessConfig(t, cfg).GetCompactionThreshold() != 12345 {
 		t.Fatal("explicit compaction not kept")
 	}
-	cfg = Config{Capabilities: &CapabilitiesConfig{DisabledTools: []BuiltinTool{BuiltinRunCommand}, AgentBehavior: AgentBehaviorInteractive}}.Lightweight()
+	cfg = Options{Capabilities: &CapabilitiesConfig{DisabledTools: []BuiltinTool{BuiltinRunCommand}, AgentBehavior: AgentBehaviorInteractive}}.Lightweight()
 	if !reflect.DeepEqual(cfg.Capabilities.EnabledTools, []BuiltinTool{BuiltinViewFile, BuiltinCreateFile, BuiltinEditFile}) ||
 		cfg.Capabilities.DisabledTools != nil || cfg.Capabilities.AgentBehavior != AgentBehaviorInteractive {
 		t.Fatalf("lightweight with disabled tools %+v", cfg.Capabilities)
@@ -565,7 +565,7 @@ func TestLightweight(t *testing.T) {
 
 func TestEval(t *testing.T) {
 	clearModelEnv(t)
-	orig := Config{Model: "gemini-3.1-pro-preview"}
+	orig := Options{Model: "gemini-3.1-pro-preview"}
 	cfg, err := orig.Eval(ThinkingHigh)
 	if err != nil {
 		t.Fatal(err)
@@ -593,22 +593,22 @@ func TestEval(t *testing.T) {
 	}
 
 	custom := &RetryConfig{APIRetry: &ModelAPIRetryConfig{MaxRetries: new(uint32(3))}}
-	cfg, err = Config{Retry: custom, Policies: ConfirmRunCommandPolicies(nil), Capabilities: &CapabilitiesConfig{DisabledTools: []BuiltinTool{BuiltinSearchWeb}}}.Eval("")
+	cfg, err = Options{Retry: custom, Policies: ConfirmRunCommandPolicies(nil), Capabilities: &CapabilitiesConfig{DisabledTools: []BuiltinTool{BuiltinSearchWeb}}}.Eval("")
 	if err != nil || *cfg.Retry.APIRetry.MaxRetries != 3 || len(cfg.Policies) != 2 || !reflect.DeepEqual(cfg.Capabilities.DisabledTools, []BuiltinTool{BuiltinSearchWeb}) {
 		t.Fatalf("eval overrides %+v %v", cfg, err)
 	}
-	cfg, _ = Config{Capabilities: &CapabilitiesConfig{EnabledTools: []BuiltinTool{BuiltinViewFile}}}.Eval("")
+	cfg, _ = Options{Capabilities: &CapabilitiesConfig{EnabledTools: []BuiltinTool{BuiltinViewFile}}}.Eval("")
 	if cfg.Capabilities.DisabledTools != nil {
 		t.Fatal("disabled tools added despite enabled tools")
 	}
 
-	if _, err := (Config{Models: []ModelTarget{{Name: "x", Endpoint: &GeminiAPIEndpoint{Options: &GeminiModelOptions{ThinkingLevel: ThinkingLow}}}}}).Eval(ThinkingHigh); err == nil || !strings.Contains(err.Error(), "already sets thinking_level") {
+	if _, err := (Options{Models: []ModelTarget{{Name: "x", Endpoint: &GeminiAPIEndpoint{Options: &GeminiModelOptions{ThinkingLevel: ThinkingLow}}}}}).Eval(ThinkingHigh); err == nil || !strings.Contains(err.Error(), "already sets thinking_level") {
 		t.Fatalf("existing thinking level: %v", err)
 	}
-	if _, err := (Config{Models: []ModelTarget{{Name: "x"}}}).Eval(ThinkingHigh); err == nil || !strings.Contains(err.Error(), "endpoint must be a GeminiAPIEndpoint or VertexEndpoint") {
+	if _, err := (Options{Models: []ModelTarget{{Name: "x"}}}).Eval(ThinkingHigh); err == nil || !strings.Contains(err.Error(), "endpoint must be a GeminiAPIEndpoint or VertexEndpoint") {
 		t.Fatalf("nil endpoint: %v", err)
 	}
-	cfg, err = (Config{Models: []ModelTarget{{Name: "x", Endpoint: &VertexEndpoint{Project: "p", Location: "l", Options: &GeminiModelOptions{ServiceTier: ServiceTierFlex}}}}}).Eval(ThinkingExtraHigh)
+	cfg, err = (Options{Models: []ModelTarget{{Name: "x", Endpoint: &VertexEndpoint{Project: "p", Location: "l", Options: &GeminiModelOptions{ServiceTier: ServiceTierFlex}}}}}).Eval(ThinkingExtraHigh)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -629,7 +629,7 @@ func TestEval(t *testing.T) {
 // OpenAI-compatible server replaces the Gemini models.
 func TestOpenAI(t *testing.T) {
 	clearModelEnv(t)
-	cfg := Config{Model: "llama3.1", OpenAI: &OpenAIEndpoint{BaseURL: "http://localhost:11434/v1"}}
+	cfg := Options{Model: "llama3.1", OpenAI: &OpenAIEndpoint{BaseURL: "http://localhost:11434/v1"}}
 	hc := harnessConfig(t, cfg)
 	if len(hc.GetModels()) != 1 {
 		t.Fatalf("models %+v", hc.GetModels())
@@ -649,7 +649,7 @@ func TestOpenAI(t *testing.T) {
 	}
 
 	// An empty base URL fails at session start.
-	empty := Config{Model: "test", OpenAI: &OpenAIEndpoint{}}
+	empty := Options{Model: "test", OpenAI: &OpenAIEndpoint{}}
 	err := validateModels(empty.ResolvedModels())
 	var verr *ValidationError
 	if !errors.As(err, &verr) || !strings.Contains(err.Error(), "non-empty BaseURL") {
@@ -663,7 +663,7 @@ func TestOpenAI(t *testing.T) {
 		lw.Compaction.TokenThreshold != 65536 || !lw.Capabilities.DisableSubagents {
 		t.Fatalf("lightweight %+v", lw)
 	}
-	lw = Config{Model: "m", OpenAI: cfg.OpenAI, Compaction: &CompactionConfig{TokenThreshold: 20000}}.Lightweight()
+	lw = Options{Model: "m", OpenAI: cfg.OpenAI, Compaction: &CompactionConfig{TokenThreshold: 20000}}.Lightweight()
 	if lw.Compaction.TokenThreshold != 20000 {
 		t.Fatal("explicit compaction not kept")
 	}
@@ -686,7 +686,7 @@ func TestOpenAI(t *testing.T) {
 	}
 
 	// An OpenAIEndpoint can also be one target among others.
-	mixed := Config{Models: []ModelTarget{{Name: "local", Endpoint: &OpenAIEndpoint{BaseURL: "http://x/v1"}}}, APIKey: "k"}
+	mixed := Options{Models: []ModelTarget{{Name: "local", Endpoint: &OpenAIEndpoint{BaseURL: "http://x/v1"}}}, APIKey: "k"}
 	hc = harnessConfig(t, mixed)
 	if len(hc.GetModels()) != 2 || hc.GetModels()[0].GetGemmaEndpoint().GetBaseUrl() != "http://x/v1" || hc.GetModels()[1].GetName() != DefaultImageGenerationModel {
 		t.Fatalf("mixed models %+v", hc.GetModels())

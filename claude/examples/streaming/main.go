@@ -15,7 +15,7 @@ func main() {
 	prompt := "List the files in the current directory, then describe them in one sentence."
 	fmt.Printf("  User: %s\n\n", prompt)
 
-	opts := &claude.Options{
+	opts := claude.Options{
 		// StreamEvent messages carry the raw API stream events, including
 		// the text deltas.
 		IncludePartialMessages: true,

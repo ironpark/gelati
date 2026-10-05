@@ -55,8 +55,8 @@ func TestE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !strings.Contains(strings.ToLower(result.FinalResponse), "pong") {
-		t.Fatalf("final response = %q (items: %d)", result.FinalResponse, len(result.Items))
+	if !strings.Contains(strings.ToLower(result.Text()), "pong") {
+		t.Fatalf("final response = %q (items: %d)", result.Text(), len(result.Items))
 	}
 	if result.Turn.Status != TurnCompleted || result.Usage == nil || result.Usage.Total.TotalTokens == 0 {
 		t.Fatalf("turn = %+v, usage = %+v", result.Turn, result.Usage)
@@ -69,7 +69,7 @@ func TestE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run with output schema: %v", err)
 	}
-	if strings.ReplaceAll(result.FinalResponse, " ", "") != `{"answer":4}` {
-		t.Fatalf("structured response = %q", result.FinalResponse)
+	if strings.ReplaceAll(result.Text(), " ", "") != `{"answer":4}` {
+		t.Fatalf("structured response = %q", result.Text())
 	}
 }

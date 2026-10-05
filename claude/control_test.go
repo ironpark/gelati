@@ -537,7 +537,7 @@ func TestEngineProcessErrorBecomesResultError(t *testing.T) {
 		"duration_api_ms": 1, "is_error": true, "num_turns": 5, "session_id": "s1",
 		"errors": []any{"turn limit reached"}})
 	code := 1
-	ft.finish(NewProcessError("Command failed with exit code 1", &code, ""))
+	ft.finish(NewProcessError("Command failed with exit code 1", &code, "", nil))
 
 	var last error
 	for _, err := range eng.receive(context.Background()) {
@@ -566,7 +566,7 @@ func TestEngineProcessErrorKeptAfterOtherMessages(t *testing.T) {
 	// fresh failure rather than the expected exit after the error result.
 	ft.push(map[string]any{"type": "system", "subtype": "init"})
 	code := 1
-	ft.finish(NewProcessError("Command failed with exit code 1", &code, "stderr tail"))
+	ft.finish(NewProcessError("Command failed with exit code 1", &code, "stderr tail", nil))
 
 	var last error
 	for _, err := range eng.receive(context.Background()) {

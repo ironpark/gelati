@@ -524,6 +524,26 @@ func TestSubprocessTransportWriteAndEndInput(t *testing.T) {
 	}
 }
 
+func TestSubprocessTransportSignalExitCode(t *testing.T) {
+	stub := writeStub(t, `
+echo '{"type":"system","subtype":"init"}'
+kill -9 $$
+`)
+	tr := newTestTransport(t, &Options{CLIPath: stub})
+	if err := tr.Connect(t.Context()); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer tr.Close()
+	_, err := collect(t, tr)
+	var perr *ProcessError
+	if !errors.As(err, &perr) {
+		t.Fatalf("error = %T (%v), want *ProcessError", err, err)
+	}
+	if perr.ExitCode != nil {
+		t.Fatalf("exit code = %d, want nil for a signal", *perr.ExitCode)
+	}
+}
+
 func TestSubprocessTransportProcessError(t *testing.T) {
 	stub := writeStub(t, `
 echo '{"type":"system","subtype":"init"}'

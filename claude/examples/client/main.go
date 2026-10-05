@@ -12,7 +12,7 @@ import (
 
 func main() {
 	ctx := context.Background()
-	client := claude.NewClient(&claude.Options{MaxTurns: new(1)})
+	client := claude.NewClient(claude.Options{MaxTurns: new(1)})
 	if err := client.Connect(ctx); err != nil {
 		log.Fatal(err)
 	}
@@ -23,10 +23,10 @@ func main() {
 		"What fruit did you pick? Name its color in one word.",
 	} {
 		fmt.Println("  User:", prompt)
-		res, err := client.Run(ctx, prompt, "")
+		res, err := client.Run(ctx, claude.Text(prompt))
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Println("  Claude:", res.Result)
+		fmt.Println("  Claude:", res.Text())
 	}
 }

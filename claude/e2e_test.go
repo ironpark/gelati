@@ -22,7 +22,7 @@ func TestE2EQuery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 
-	opts := &claude.Options{
+	opts := claude.Options{
 		SystemPrompt: claude.SystemPromptText("Answer with a single word."),
 		Tools:        claude.ToolList{},
 		Stderr:       func(line string) { t.Log("cli stderr:", line) },
@@ -64,7 +64,7 @@ func TestE2EClient(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
 
-	client := claude.NewClient(&claude.Options{Tools: claude.ToolList{}})
+	client := claude.NewClient(claude.Options{Tools: claude.ToolList{}})
 	if err := client.Connect(ctx); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -74,11 +74,12 @@ func TestE2EClient(t *testing.T) {
 		t.Fatal("no server info after connect")
 	}
 	for _, prompt := range []string{"Remember the number 7.", "What number did I ask you to remember?"} {
-		if err := client.Query(ctx, prompt, ""); err != nil {
-			t.Fatalf("query: %v", err)
+		turn, err := client.Send(ctx, claude.Text(prompt))
+		if err != nil {
+			t.Fatalf("send: %v", err)
 		}
 		var sawResult bool
-		for msg, err := range client.ReceiveResponse(ctx) {
+		for msg, err := range turn.Events(ctx) {
 			if err != nil {
 				t.Fatalf("receive: %v", err)
 			}
@@ -118,7 +119,7 @@ func TestE2ECallbacks(t *testing.T) {
 		toolCalls.Add(1)
 		return claude.TextResult(strconv.Itoa(args.A + args.B)), nil
 	})
-	opts := &claude.Options{
+	opts := claude.Options{
 		SystemPrompt: claude.SystemPromptText(
 			"You are a calculator. Always use the calc add tool for arithmetic. Reply with only the number."),
 		MCPServers: map[string]claude.MCPServerConfig{"calc": claude.NewSDKMCPServer("calc", "1.0.0", add)},
@@ -150,7 +151,7 @@ func TestE2ECallbacks(t *testing.T) {
 		case *claude.InitMessage:
 			sawInit = true
 		case *claude.ResultMessage:
-			result = m.Result
+			result = m.Text()
 		}
 	}
 	if !sawInit {

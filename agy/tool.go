@@ -13,7 +13,7 @@ import (
 
 // Tool is a custom tool that runs in this process when the model calls it.
 // Build one with NewTool, or NewToolWithSchema for an explicit schema, and
-// list it in Config.Tools (or SubagentConfig.Tools).
+// list it in Options.Tools (or SubagentConfig.Tools).
 type Tool struct {
 	name        string
 	description string

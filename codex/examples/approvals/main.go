@@ -51,5 +51,5 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("  Codex:", result.FinalResponse)
+	fmt.Println("  Codex:", result.Text())
 }

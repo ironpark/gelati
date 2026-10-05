@@ -17,13 +17,19 @@ type TurnResult struct {
 	Turn *Turn
 	// Items are the turn's completed items in completion order.
 	Items []ThreadItem
-	// FinalResponse is the text of the last agent message in the
-	// final_answer phase, or else of the last agent message without a phase.
-	// It is empty when the turn produced neither. With an OutputSchema it is
-	// the JSON document.
-	FinalResponse string
 	// Usage is the turn's last token usage update, or nil when none arrived.
 	Usage *ThreadTokenUsage
+}
+
+// Text returns the turn's final response: the text of the last agent message
+// in the final_answer phase, or else of the last agent message without a
+// phase. It is empty when the turn produced neither. With an OutputSchema it
+// is the JSON document.
+func (r *TurnResult) Text() string {
+	if r == nil {
+		return ""
+	}
+	return finalResponse(r.Items)
 }
 
 // record captures the parts of an event that Result reports. The pump calls
@@ -35,6 +41,9 @@ func (s *TurnStream) record(event Event) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.done.Ended() {
+		return // Result may already hold s.items
+	}
 	if event.Kind == EventItemCompleted {
 		s.items = append(s.items, *event.Item)
 	} else {
@@ -47,11 +56,14 @@ func (s *TurnStream) record(event Event) {
 // Events, or after breaking out of that loop.
 //
 // A failed turn returns both the result and its *TurnError. An interrupted
-// turn returns the result and a nil error. When the context ends first, the
-// turn keeps running; Run interrupts it instead.
+// turn returns the result and a nil error. A stream closed before its turn
+// ended, or ended by a client shutdown, returns ErrClosed. When the context
+// ends first, the turn keeps running; call Cancel to stop it, or use Run,
+// which does. Repeated calls return the same Items slice, which callers must
+// treat as read-only.
 func (s *TurnStream) Result(ctx context.Context) (*TurnResult, error) {
-	events := s.events
-	for done := false; !done; {
+	events, done := s.events, s.done.C()
+	for done != nil {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -59,26 +71,21 @@ func (s *TurnStream) Result(ctx context.Context) (*TurnResult, error) {
 			if !ok {
 				events = nil
 			}
-		case <-s.done:
-			done = true
+		case <-done:
+			done = nil
 		}
 	}
-	final, err := s.Wait(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	s.mu.Lock()
-	result := &TurnResult{
-		Turn:  final,
-		Items: append([]ThreadItem(nil), s.items...),
-		Usage: s.usage,
+	defer s.mu.Unlock()
+	if s.closed || s.final == nil {
+		return nil, s.endErrLocked()
 	}
-	s.mu.Unlock()
-	result.FinalResponse = finalResponse(result.Items)
-	if final != nil && final.Status == TurnFailed {
-		if final.Error != nil {
-			return result, final.Error
+	// Nothing appends to s.items once the stream has ended. The capacity is
+	// capped so a caller's append cannot write into a shared backing array.
+	result := &TurnResult{Turn: s.final, Items: s.items[:len(s.items):len(s.items)], Usage: s.usage}
+	if s.final.Status == TurnFailed {
+		if s.final.Error != nil {
+			return result, s.final.Error
 		}
 		return result, &TurnError{}
 	}
@@ -114,7 +121,7 @@ func (c *Client) Run(ctx context.Context, threadID string, input []InputItem, op
 	if err != nil {
 		return nil, err
 	}
-	return c.collect(ctx, stream)
+	return collect(ctx, stream)
 }
 
 // RunExternal is Run for an ExternalMessage; see StartExternalTurn.
@@ -123,17 +130,17 @@ func (c *Client) RunExternal(ctx context.Context, threadID string, msg ExternalM
 	if err != nil {
 		return nil, err
 	}
-	return c.collect(ctx, stream)
+	return collect(ctx, stream)
 }
 
-// collect waits for a stream's result, interrupting the turn when ctx ends.
-func (c *Client) collect(ctx context.Context, stream *TurnStream) (*TurnResult, error) {
+// collect waits for a stream's result, cancelling the turn when ctx ends.
+func collect(ctx context.Context, stream *TurnStream) (*TurnResult, error) {
 	result, err := stream.Result(ctx)
 	if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
-		interruptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), interruptTimeout)
-		_ = c.InterruptTurn(interruptCtx, stream.ThreadID(), stream.TurnID())
+		cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), interruptTimeout)
+		_ = stream.Cancel(cancelCtx)
 		cancel()
-		stream.Close()
+		_ = stream.Close()
 	}
 	return result, err
 }

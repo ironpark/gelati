@@ -22,7 +22,7 @@ Besides the Go standard library, the module depends only on
 - For `codex`: the `codex` CLI
 - For `agy`: the `localharness` binary from the
   [`google-antigravity`](https://pypi.org/project/google-antigravity/) wheel
-  (via `ANTIGRAVITY_HARNESS_PATH`, `PATH` or `Config.CLIPath`), and a
+  (via `ANTIGRAVITY_HARNESS_PATH`, `PATH` or `Options.CLIPath`), and a
   `GEMINI_API_KEY` (or Vertex AI credentials, or a local OpenAI-compatible server)
 
 ```sh
@@ -36,18 +36,38 @@ but the pieces around them line up:
 
 | | `claude` | `codex` | `agy` |
 |---|---|---|---|
-| Create | `NewClient(*Options)` | `New(ctx, Options)` (starts the process) | `NewAgent(Config)` |
+| Create | `NewClient(Options)` | `New(ctx, Options)` (starts the process) | `NewAgent(Options)` |
 | Start | `Connect(ctx)` | — | `Start(ctx)` |
 | Stop | `Disconnect()` | `Close()` | `Close()` |
-| One-shot | `claude.Run` / `Client.Run` → `*ResultMessage` | `Client.Run` → `*TurnResult` | `ChatResponse.WaitText` |
-| Streaming | `iter.Seq2[Message, error]` | `TurnStream.Events(ctx)` → `iter.Seq2[Event, error]` | `ChatResponse.Text` / `Chunks` / … → `iter.Seq2` |
+| Start a turn | `Client.Send(ctx, input...)` | `Client.StartTurn(ctx, threadID, input, opts)` | `Agent.Chat(ctx, content...)` |
+| One-shot | `Run` / `Client.Run` → `*ResultMessage` | `Client.Run` → `*TurnResult` | `TurnStream.Result` → `*TurnResult` |
+| Final text | `ResultMessage.Text()` | `TurnResult.Text()` | `TurnResult.Text()` |
+| Conversation id | `SessionID` | thread ID | `ConversationID()` |
 | Session end | `Done()` / `Err()` | `Done()` / `Err()` | `Done()` / `Err()` |
-| Executable | `Options.CLIPath` | `Options.CLIPath` | `Config.CLIPath` |
-| CLI missing | `ErrCLINotFound` | `ErrCLINotFound` | `ErrCLINotFound` |
-| Extra environment | `Options.Env` | `Options.Env` | `Config.Env` |
-| Diagnostics | `Options.Logger` | `Options.Logger` | `Config.Logger` |
-| Error marker | `claude.Error` | `codex.Error` | `agy.Error` |
+| Executable | `Options.CLIPath` | `Options.CLIPath` | `Options.CLIPath` |
+| Extra environment | `Options.Env` | `Options.Env` | `Options.Env` |
+| Diagnostics | `Options.Logger` | `Options.Logger` | `Options.Logger` |
+| Errors | `Error`, `ErrCLINotFound`, `ErrNotConnected`, `ErrClosed`, `*ProcessError` | `Error`, `ErrCLINotFound`, `ErrClosed`, `*ProcessError` | `Error`, `ErrCLINotFound`, `ErrNotStarted`, `ErrClosed`, `*ProcessError` |
 | Unmodeled data | `*UnknownMessage`, `*UnknownBlock` | `*UnknownItem`, `EventNotification` | — |
+
+Options are passed by value and their zero value means defaults. A turn is a
+`*TurnStream` in every package, with the same four methods:
+
+| Method | Does |
+|---|---|
+| `Events(ctx)` | `iter.Seq2` over the turn's events: claude `Message`s, codex `Event`s, agy `Chunk`s |
+| `Result(ctx)` | waits for the end of the turn, reading what `Events` did not, and returns its result |
+| `Cancel(ctx)` | interrupts the turn |
+| `Close()` | stops reading; the turn is not interrupted |
+
+The rules are the same everywhere: `Result` returns the turn's result whenever
+there is one, together with the error when the turn failed; `Close` on a turn
+that already ended changes nothing; `Cancel` still interrupts a running turn
+after `Close`, and does nothing once the turn has ended. A CLI killed by a
+signal has a nil `ProcessError.ExitCode`.
+
+A CLI that exits unexpectedly surfaces as a `*ProcessError` (exit code and
+stderr tail) that `errors.As` finds in the returned error.
 
 `Done` is closed once the session ends for any reason, and `Err` then reports
 why (nil after an explicit stop). A nil `Logger` passes warnings and errors to
@@ -67,7 +87,7 @@ The child process is handled the same way everywhere:
   of the process.
 
 JSON goes through `encoding/json/v2`: raw JSON in the APIs (codex `Event.Params`,
-approval `Params`, `UnknownItem.Raw`, agy `Config.ResponseSchema`, …) is a
+approval `Params`, `UnknownItem.Raw`, agy `Options.ResponseSchema`, …) is a
 `jsontext.Value`, and JSON decoded into your types (tool arguments, structured
 output) matches field names case-sensitively. What the CLIs write is decoded
 tolerantly: invalid UTF-8 and repeated keys do not fail a message.
@@ -79,7 +99,7 @@ its upstream's model:
 |---|---|
 | `claude` | The CLI decides from `PermissionMode`, `AllowedTools` / `DisallowedTools` and its settings; set `CanUseTool` to answer the prompts it would show a user |
 | `codex` | Commands and file changes are declined, permission requests grant nothing and MCP elicitations are declined (upstream's Python SDK accepts); set `Options.Approvals` |
-| `agy` | Builtin tools run except `run_command`, which is denied; set `Config.Policies` |
+| `agy` | Builtin tools run except `run_command`, which is denied; set `Options.Policies` |
 
 Each package has runnable programs under `examples/`:
 
@@ -101,7 +121,7 @@ semantics, expressed with contexts, iterators and sealed interfaces.
 
 ```go
 ctx := context.Background()
-for msg, err := range claude.Query(ctx, "What is 2+2?", nil) {
+for msg, err := range claude.Query(ctx, "What is 2+2?", claude.Options{}) {
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -121,21 +141,21 @@ for msg, err := range claude.Query(ctx, "What is 2+2?", nil) {
 ```
 
 When only the final answer matters, `Run` drains the stream and returns the
-`*ResultMessage` (its `Result` field is the final text); an error result, a
-failed exit or a stream that ends without a result is returned as an error:
+`*ResultMessage` (`Text()` is the final text); an error result, a failed exit
+or a stream that ends without a result is returned as an error:
 
 ```go
-res, err := claude.Run(ctx, "What is 2+2?", nil)
+res, err := claude.Run(ctx, "What is 2+2?", claude.Options{})
 if err != nil {
 	log.Fatal(err)
 }
-fmt.Println(res.Result)
+fmt.Println(res.Text())
 ```
 
 ### Interactive client
 
 ```go
-client := claude.NewClient(&claude.Options{
+client := claude.NewClient(claude.Options{
 	PermissionMode: claude.PermissionModeAcceptEdits,
 	Cwd:            "/path/to/repo",
 })
@@ -144,19 +164,25 @@ if err := client.Connect(ctx); err != nil {
 }
 defer client.Disconnect()
 
-if err := client.Query(ctx, "Summarize this repository", ""); err != nil {
+turn, err := client.Send(ctx, claude.Text("Summarize this repository"))
+if err != nil {
 	log.Fatal(err)
 }
-for msg, err := range client.ReceiveResponse(ctx) {
+for msg, err := range turn.Events(ctx) {
 	// ... same message handling as above
 }
+res, err := turn.Result(ctx)
 ```
+
+Turns are read in the order they were sent; one `TurnStream` is read at a
+time.
 
 A connected `Client` can also interrupt a turn, change the model or permission
 mode, rewind files, manage MCP servers, reload plugins and skills, apply
 settings mid-session, and query commands, models, account info and context
 usage. `SendControlRequest` reaches any control request without a wrapper.
-`client.Run(ctx, prompt, "")` sends a turn and waits for its `*ResultMessage`.
+`client.Run(ctx, claude.Text(prompt))` sends a turn and waits for its
+`*ResultMessage`.
 `Done()` is closed when the session ends for any reason (`Disconnect`, ctx
 cancellation, CLI exit, transport failure) and `Err()` then reports why.
 
@@ -295,7 +321,7 @@ result, err := client.Run(ctx, thread.ID, codex.Text("Run the tests"), nil)
 if err != nil {
 	log.Fatal(err)
 }
-fmt.Println(result.FinalResponse)
+fmt.Println(result.Text())
 ```
 
 To stream instead, `StartTurn` returns a `TurnStream`:
@@ -343,15 +369,15 @@ export ANTIGRAVITY_HARNESS_PATH=/tmp/ag/google/antigravity/bin/localharness
 export GEMINI_API_KEY=...
 ```
 
-Without `ANTIGRAVITY_HARNESS_PATH` (or `Config.CLIPath`), `localharness` is
-looked up on `PATH`. Set `Config.Vertex` (or `GOOGLE_GENAI_USE_VERTEXAI=true`)
+Without `ANTIGRAVITY_HARNESS_PATH` (or `Options.CLIPath`), `localharness` is
+looked up on `PATH`. Set `Options.Vertex` (or `GOOGLE_GENAI_USE_VERTEXAI=true`)
 with a project and location or an API key to use Vertex AI instead.
 
 ### Quickstart
 
 ```go
 ctx := context.Background()
-agent, err := agy.NewAgent(agy.Config{
+agent, err := agy.NewAgent(agy.Options{
 	SystemInstructions: agy.TextSystemInstructions("Answer briefly."),
 })
 if err != nil {
@@ -362,45 +388,50 @@ if err := agent.Start(ctx); err != nil {
 }
 defer agent.Close()
 
-resp, err := agent.Chat(ctx, agy.Text("What is the capital of France?"))
+turn, err := agent.Chat(ctx, agy.Text("What is the capital of France?"))
 if err != nil {
 	log.Fatal(err)
 }
-text, err := resp.WaitText(ctx)
+res, err := turn.Result(ctx)
 if err != nil {
 	log.Fatal(err)
 }
-fmt.Println(text)
+fmt.Println(res.Text())
 ```
 
-The zero `Config` runs the default Gemini model with the default builtin tools,
+The zero `Options` runs the default Gemini model with the default builtin tools,
 `run_command` denied, and the current directory as the workspace.
 
 ### Streaming
 
-A `ChatResponse` streams one turn. `Text`, `Thoughts`, `ToolCalls` and
-`Chunks` are `iter.Seq2` sequences; each is an independent cursor, so a
-response can be read several times and from several goroutines.
+A `TurnStream` streams one turn. Besides `Events` (every chunk), `Text`,
+`Thoughts` and `ToolCalls` are focused `iter.Seq2` sequences; each is an
+independent cursor, so a turn can be read several times and from several
+goroutines.
 
 ```go
-for thought, err := range resp.Thoughts(ctx) {
+for thought, err := range turn.Thoughts(ctx) {
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Print(thought)
 }
-for delta, err := range resp.Text(ctx) {
+for delta, err := range turn.Text(ctx) {
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Print(delta)
 }
-fmt.Println(resp.StopReason(), resp.UsageMetadata())
+res, err := turn.Result(ctx)
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(res.StopReason, res.Usage)
 ```
 
-`resp.Cancel` aborts the turn (the stream ends with `*agy.CancelledError`),
-and `Config.ResponseSchema` plus `resp.DecodeStructuredOutput` return typed
-structured output.
+`turn.Cancel` aborts the turn (the stream ends with `*agy.CancelledError`),
+and `Options.ResponseSchema` plus `TurnResult.DecodeStructuredOutput` return
+typed structured output.
 
 ### Tools
 
@@ -418,7 +449,7 @@ weather := agy.NewTool("get_weather", "Returns the weather for a city.",
 		return "sunny in " + in.City, nil
 	})
 
-agent, err := agy.NewAgent(agy.Config{
+agent, err := agy.NewAgent(agy.Options{
 	Tools: []*agy.Tool{weather},
 	MCPServers: []agy.MCPServer{
 		&agy.MCPStdioServer{Name: "fs", Command: "npx", Args: []string{"-y", "@modelcontextprotocol/server-filesystem", "."}},
@@ -429,16 +460,16 @@ agent, err := agy.NewAgent(agy.Config{
 Tools may return `Image`, `Document`, `Audio` or `Video` values (alone or
 inside slices and maps) to show media to the model. Builtin tools are chosen
 with `CapabilitiesConfig.EnabledTools` / `DisabledTools` and presets such as
-`ReadOnlyTools()`; static subagents are declared with `Config.Subagents`.
+`ReadOnlyTools()`; static subagents are declared with `Options.Subagents`.
 
 ### Hooks and policies
 
-Hooks are function types listed in `Config.Hooks`; policies (built with the
+Hooks are function types listed in `Options.Hooks`; policies (built with the
 `agy/policy` package) decide which tool calls run, are evaluated by
 the harness, and call back into Go for predicates and ask-user handlers.
 
 ```go
-cfg := agy.Config{
+opts := agy.Options{
 	Hooks: []agy.Hook{
 		agy.PreToolCallHook(func(ctx context.Context, hc *agy.HookContext,
 			call *agy.ToolCall) (agy.HookResult, error) {
@@ -469,11 +500,11 @@ cfg := agy.Config{
 
 ### Local models
 
-`Config.OpenAI` runs the session on an OpenAI-compatible server such as Ollama
+`Options.OpenAI` runs the session on an OpenAI-compatible server such as Ollama
 or LM Studio, with no Gemini credentials (upstream `LocalOpenAIAgentConfig`):
 
 ```go
-cfg := agy.Config{
+opts := agy.Options{
 	Model:  "gemma3",
 	OpenAI: &agy.OpenAIEndpoint{BaseURL: "http://localhost:11434/v1"},
 }.Lightweight()
@@ -493,7 +524,7 @@ go run ./agy/examples/hello_world
 
 ### Differences from upstream
 
-- Configuration is one `Config` struct (upstream `LocalAgentConfig`,
+- Configuration is one `Options` struct (upstream `LocalAgentConfig`,
   `LocalOpenAIAgentConfig`); `Lightweight` and `Eval` return modified copies.
   Where Python distinguishes unset from empty, nil and empty slices differ, and
   options whose upstream default is true are inverted (`DisableSubagents`).
@@ -505,7 +536,7 @@ go run ./agy/examples/hello_world
   at most a minute for session end hooks.
 - Not ported: the LiteRT backend (it needs upstream's Python LiteRT-LM
   server), OpenTelemetry instrumentation, and the interactive terminal helpers.
-  `DebugConfig` is replaced by `Config.Logger`.
+  `DebugConfig` is replaced by `Options.Logger`.
 
 The package documentation (`go doc github.com/ironpark/gelati/agy`)
 has the full Python-to-Go name mapping.

@@ -35,7 +35,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("  Codex:", result.FinalResponse)
+	fmt.Println("  Codex:", result.Text())
 	if result.Usage != nil {
 		fmt.Printf("  (%d tokens)\n", result.Usage.Total.TotalTokens)
 	}

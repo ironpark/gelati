@@ -18,12 +18,12 @@ import (
 
 // fakeAgentConfig returns a config that launches the fake harness, with
 // files the fake records the harness config and notable events to.
-func fakeAgentConfig(t *testing.T) (cfg Config, recordPath, logPath string) {
+func fakeAgentConfig(t *testing.T) (cfg Options, recordPath, logPath string) {
 	t.Helper()
 	dir := t.TempDir()
 	recordPath = filepath.Join(dir, "harness_config.json")
 	logPath = filepath.Join(dir, "events.log")
-	return Config{
+	return Options{
 		CLIPath: os.Args[0],
 		Env: map[string]string{
 			fakeHarnessEnv: "1",
@@ -40,7 +40,7 @@ func fakeAgentConfig(t *testing.T) (cfg Config, recordPath, logPath string) {
 	}, recordPath, logPath
 }
 
-func startAgent(t *testing.T, cfg Config) *Agent {
+func startAgent(t *testing.T, cfg Options) *Agent {
 	t.Helper()
 	agent, err := NewAgent(cfg)
 	if err != nil {
@@ -81,7 +81,11 @@ func chat(t *testing.T, agent *Agent, prompt string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return resp.WaitText(ctx)
+	res, err := resp.Result(ctx)
+	if res == nil {
+		return "", err
+	}
+	return res.Text(), err
 }
 
 func TestAgentChat(t *testing.T) {
@@ -124,10 +128,17 @@ func TestAgentChat(t *testing.T) {
 	if !reflect.DeepEqual(thoughts, []string{"thinking"}) {
 		t.Fatalf("thoughts %q", thoughts)
 	}
-	if u := resp.UsageMetadata(); u == nil || val(u.TotalTokenCount) != 35 || val(u.PromptTokenCount) != 30 {
+	res, err := resp.Result(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Text() != "Hello there!" || res.Thoughts() != "thinking" {
+		t.Fatalf("result text %q thoughts %q", res.Text(), res.Thoughts())
+	}
+	if u := res.Usage; u == nil || val(u.TotalTokenCount) != 35 || val(u.PromptTokenCount) != 30 {
 		t.Fatalf("turn usage %+v (cumulative started at 10)", u)
 	}
-	if agent.ConversationID() != fakeCascade || conv.LastResponse() != "Hello there!" || conv.TurnCount() != 1 || resp.StopReason() != StopReasonUnspecified {
+	if agent.ConversationID() != fakeCascade || conv.LastResponse() != "Hello there!" || conv.TurnCount() != 1 || res.StopReason != StopReasonUnspecified {
 		t.Fatalf("id %q last %q turns %d", agent.ConversationID(), conv.LastResponse(), conv.TurnCount())
 	}
 
@@ -324,7 +335,7 @@ func TestAgentCancel(t *testing.T) {
 	if err := resp.Cancel(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resp.Resolve(ctx); !errors.Is(err, context.Canceled) {
+	if _, err := resp.Result(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled turn: %v", err)
 	}
 	if text, err := chat(t, agent, "hello"); err != nil || text != "Hello there!" {
@@ -344,8 +355,12 @@ func TestAgentStructuredOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	res, err := resp.Result(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
 	var got report
-	if err := resp.DecodeStructuredOutput(t.Context(), &got); err != nil || got.Total != 386 || got.Top != "Widget A" {
+	if err := res.DecodeStructuredOutput(&got); err != nil || got.Total != 386 || got.Top != "Widget A" {
 		t.Fatalf("structured output %+v %v", got, err)
 	}
 	if s := readRecord(t, record).GetFinishToolSchemaJson(); !strings.Contains(s, `"total_revenue"`) || !strings.Contains(s, `"number"`) {
@@ -441,22 +456,22 @@ func TestAgentPolicyGuard(t *testing.T) {
 	mcp := []MCPServer{&MCPStdioServer{Name: "test_server", Command: "node", Args: []string{"index.js"}}}
 	decide := PreToolCallHook(func(context.Context, *HookContext, *ToolCall) (HookResult, error) { return HookResult{}, nil })
 	for name, tc := range map[string]struct {
-		cfg     Config
+		cfg     Options
 		blocked bool
 	}{
-		"default write tools, no policies":     {Config{Policies: []Policy{}}, true},
-		"explicit write tool":                  {Config{Policies: []Policy{}, Capabilities: &CapabilitiesConfig{EnabledTools: []BuiltinTool{BuiltinRunCommand}}}, true},
-		"all tools":                            {Config{Policies: []Policy{}, Capabilities: &CapabilitiesConfig{EnabledTools: AllTools()}}, true},
-		"empty disabled list":                  {Config{Policies: []Policy{}, Capabilities: &CapabilitiesConfig{DisabledTools: []BuiltinTool{}}}, true},
-		"mcp server, no policies":              {Config{Policies: []Policy{}, Capabilities: &CapabilitiesConfig{EnabledTools: ReadOnlyTools()}, MCPServers: mcp}, true},
-		"read-only tools":                      {Config{Policies: []Policy{}, Capabilities: &CapabilitiesConfig{EnabledTools: ReadOnlyTools()}}, false},
-		"deprecated read-only tools":           {Config{Policies: []Policy{}, Capabilities: &CapabilitiesConfig{EnabledTools: DeprecatedTools()}}, false},
-		"all default write tools disabled":     {Config{Policies: []Policy{}, Capabilities: &CapabilitiesConfig{DisabledTools: writeTools()}}, false},
-		"write tools with a policy":            {Config{Policies: []Policy{{Tool: "*", Decision: DecisionDeny}}}, false},
-		"default policies":                     {Config{}, false},
-		"mcp server with a policy":             {Config{Policies: []Policy{{Tool: "*", Decision: DecisionDeny}}, MCPServers: mcp}, false},
-		"mcp server with a pre-tool-call hook": {Config{Policies: []Policy{}, MCPServers: mcp, Hooks: []Hook{decide}}, false},
-		"auto policy":                          {Config{Policies: []Policy{{Auto: true}}}, false},
+		"default write tools, no policies":     {Options{Policies: []Policy{}}, true},
+		"explicit write tool":                  {Options{Policies: []Policy{}, Capabilities: &CapabilitiesConfig{EnabledTools: []BuiltinTool{BuiltinRunCommand}}}, true},
+		"all tools":                            {Options{Policies: []Policy{}, Capabilities: &CapabilitiesConfig{EnabledTools: AllTools()}}, true},
+		"empty disabled list":                  {Options{Policies: []Policy{}, Capabilities: &CapabilitiesConfig{DisabledTools: []BuiltinTool{}}}, true},
+		"mcp server, no policies":              {Options{Policies: []Policy{}, Capabilities: &CapabilitiesConfig{EnabledTools: ReadOnlyTools()}, MCPServers: mcp}, true},
+		"read-only tools":                      {Options{Policies: []Policy{}, Capabilities: &CapabilitiesConfig{EnabledTools: ReadOnlyTools()}}, false},
+		"deprecated read-only tools":           {Options{Policies: []Policy{}, Capabilities: &CapabilitiesConfig{EnabledTools: DeprecatedTools()}}, false},
+		"all default write tools disabled":     {Options{Policies: []Policy{}, Capabilities: &CapabilitiesConfig{DisabledTools: writeTools()}}, false},
+		"write tools with a policy":            {Options{Policies: []Policy{{Tool: "*", Decision: DecisionDeny}}}, false},
+		"default policies":                     {Options{}, false},
+		"mcp server with a policy":             {Options{Policies: []Policy{{Tool: "*", Decision: DecisionDeny}}, MCPServers: mcp}, false},
+		"mcp server with a pre-tool-call hook": {Options{Policies: []Policy{}, MCPServers: mcp, Hooks: []Hook{decide}}, false},
+		"auto policy":                          {Options{Policies: []Policy{{Auto: true}}}, false},
 	} {
 		base, _, _ := fakeAgentConfig(t)
 		cfg := tc.cfg
@@ -504,7 +519,7 @@ func TestAgentBeforeStartAndValidation(t *testing.T) {
 			t.Errorf("Chat(%q) = %v", content, err)
 		}
 	}
-	if _, err := NewAgent(Config{ConversationID: "short"}); err == nil {
+	if _, err := NewAgent(Options{ConversationID: "short"}); err == nil {
 		t.Fatal("invalid config accepted")
 	}
 	clearModelEnv(t)
@@ -586,10 +601,16 @@ func TestAgentDoneAndErr(t *testing.T) {
 	if _, ok := errors.AsType[*ConnectionError](err); !ok {
 		t.Fatalf("chat with a crashing harness: %q, %v", text, err)
 	}
+	if pe, ok := errors.AsType[*ProcessError](err); !ok || pe.ExitCode == nil || *pe.ExitCode != 3 {
+		t.Fatalf("turn error of a crashing harness %v, want a *ProcessError with status 3", err)
+	}
 	waitDone(t, done)
 	ce, ok := errors.AsType[*ConnectionError](agent.Err())
 	if !ok || !strings.Contains(ce.Stderr, "crashing on purpose") {
 		t.Fatalf("Err after crash = %v", agent.Err())
+	}
+	if pe, ok := errors.AsType[*ProcessError](agent.Err()); !ok || !strings.Contains(pe.Stderr, "crashing on purpose") {
+		t.Fatalf("Err after crash = %v, want a *ProcessError", agent.Err())
 	}
 	if err := agent.Close(); err != nil {
 		t.Logf("Close after crash: %v", err)

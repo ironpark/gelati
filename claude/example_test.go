@@ -14,7 +14,7 @@ import (
 
 func ExampleQuery() {
 	ctx := context.Background()
-	for msg, err := range claude.Query(ctx, "What is 2+2?", nil) {
+	for msg, err := range claude.Query(ctx, "What is 2+2?", claude.Options{}) {
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -34,33 +34,33 @@ func ExampleQuery() {
 }
 
 func ExampleRun() {
-	res, err := claude.Run(context.Background(), "What is 2+2?", nil)
+	res, err := claude.Run(context.Background(), "What is 2+2?", claude.Options{})
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(res.Result)
+	fmt.Println(res.Text())
 }
 
 func ExampleClient_Run() {
 	ctx := context.Background()
-	client := claude.NewClient(nil)
+	client := claude.NewClient(claude.Options{})
 	if err := client.Connect(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer client.Disconnect()
 
 	for _, prompt := range []string{"Pick a number", "Double it"} {
-		res, err := client.Run(ctx, prompt, "")
+		res, err := client.Run(ctx, claude.Text(prompt))
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Println(res.Result)
+		fmt.Println(res.Text())
 	}
 }
 
 func ExampleClient_Done() {
 	ctx := context.Background()
-	client := claude.NewClient(nil)
+	client := claude.NewClient(claude.Options{})
 	if err := client.Connect(ctx); err != nil {
 		log.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func ExampleClient_Done() {
 
 func ExampleQuery_options() {
 	maxTurns := 5
-	opts := &claude.Options{
+	opts := claude.Options{
 		SystemPrompt:   claude.SystemPromptText("You are an expert Go developer"),
 		Cwd:            "/home/user/project",
 		AllowedTools:   []string{"Read", "Grep"},
@@ -94,19 +94,20 @@ func ExampleQuery_options() {
 
 func ExampleClient() {
 	ctx := context.Background()
-	client := claude.NewClient(&claude.Options{PermissionMode: claude.PermissionModeAcceptEdits})
+	client := claude.NewClient(claude.Options{PermissionMode: claude.PermissionModeAcceptEdits})
 	if err := client.Connect(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer client.Disconnect()
 
 	for _, prompt := range []string{"Describe this repo", "Now write a README"} {
-		if err := client.Query(ctx, prompt, ""); err != nil {
+		turn, err := client.Send(ctx, claude.Text(prompt))
+		if err != nil {
 			log.Fatal(err)
 		}
-		// ReceiveResponse stops after the turn's ResultMessage, leaving the
-		// next turn's messages queued.
-		for msg, err := range client.ReceiveResponse(ctx) {
+		// Events stops after the turn's ResultMessage, leaving the next
+		// turn's messages queued.
+		for msg, err := range turn.Events(ctx) {
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -117,28 +118,37 @@ func ExampleClient() {
 	}
 }
 
-func ExampleClient_interrupt() {
+func ExampleTurnStream_Cancel() {
 	ctx := context.Background()
-	client := claude.NewClient(nil)
+	client := claude.NewClient(claude.Options{})
 	if err := client.Connect(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer client.Disconnect()
 
-	if err := client.Query(ctx, "Count to a million", ""); err != nil {
+	turn, err := client.Send(ctx, claude.Text("Count to a million"))
+	if err != nil {
 		log.Fatal(err)
 	}
-	// Control calls are safe to make while another goroutine is receiving.
-	if err := client.Interrupt(ctx); err != nil {
+	defer turn.Close()
+	// Control calls are safe to make while another goroutine is reading the
+	// turn.
+	if err := turn.Cancel(ctx); err != nil {
 		log.Fatal(err)
 	}
 	if err := client.SetModel(ctx, "claude-sonnet-4-5"); err != nil {
 		log.Fatal(err)
 	}
+	// The interrupted turn still ends with its ResultMessage.
+	if res, err := turn.Result(ctx); err != nil {
+		fmt.Println("interrupted:", err)
+	} else {
+		fmt.Println(res.Text())
+	}
 }
 
 func ExampleOptions_hooks() {
-	opts := &claude.Options{
+	opts := claude.Options{
 		Hooks: map[claude.HookEvent][]claude.HookMatcher{
 			claude.HookPreToolUse: {{
 				Matcher: "Bash",
@@ -165,7 +175,7 @@ func ExampleOptions_hooks() {
 }
 
 func ExampleOptions_canUseTool() {
-	opts := &claude.Options{
+	opts := claude.Options{
 		CanUseTool: func(_ context.Context, toolName string, input map[string]any, permCtx claude.ToolPermissionContext) (claude.PermissionResult, error) {
 			if toolName != "Write" {
 				return &claude.PermissionResultDeny{Message: "only writes are allowed"}, nil
@@ -206,7 +216,7 @@ func ExampleNewSDKMCPServer() {
 				return claude.TextResult("Sum: %v", args.A+args.B), nil
 			}),
 	)
-	opts := &claude.Options{
+	opts := claude.Options{
 		MCPServers:   map[string]claude.MCPServerConfig{"calc": calculator},
 		AllowedTools: []string{"mcp__calc__add"},
 	}

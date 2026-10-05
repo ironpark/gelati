@@ -152,8 +152,8 @@ type SpareProcess struct {
 //
 // Alpha: this API may change, and it requires a CLI that supports
 // --await-claim.
-func Prewarm(ctx context.Context, opts *Options) (*SpareProcess, error) {
-	return prewarm(ctx, opts, nil)
+func Prewarm(ctx context.Context, opts Options) (*SpareProcess, error) {
+	return prewarm(ctx, &opts, nil)
 }
 
 func prewarm(ctx context.Context, opts *Options, deps *sessionDeps) (*SpareProcess, error) {

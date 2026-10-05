@@ -43,6 +43,18 @@ func startTurn(t *testing.T, client *Client, server *fakeServer, threadID, turnI
 	return stream
 }
 
+// turnOf adapts Result to the final turn, treating a failed turn's
+// *TurnError as a normal end so tests can inspect its status.
+func turnOf(result *TurnResult, err error) (*Turn, error) {
+	if _, ok := errors.AsType[*TurnError](err); ok && result != nil {
+		return result.Turn, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return result.Turn, nil
+}
+
 func recvEvent(t *testing.T, stream *TurnStream) (Event, bool) {
 	t.Helper()
 	select {
@@ -178,9 +190,9 @@ func TestTurnStreamEndToEnd(t *testing.T) {
 		t.Fatalf("deltas = %q, final = %q", accum.String(), finalText)
 	}
 
-	final, err := stream.Wait(context.Background())
+	final, err := turnOf(stream.Result(context.Background()))
 	if err != nil {
-		t.Fatalf("Wait: %v", err)
+		t.Fatalf("Result: %v", err)
 	}
 	if final == nil || final.Status != TurnCompleted {
 		t.Fatalf("final = %+v", final)
@@ -267,9 +279,9 @@ func TestTurnInterrupt(t *testing.T) {
 	if _, ok := recvEvent(t, stream); ok {
 		t.Fatal("channel not closed after terminal event")
 	}
-	final, err := stream.Wait(context.Background())
+	final, err := turnOf(stream.Result(context.Background()))
 	if err != nil || final.Status != TurnInterrupted {
-		t.Fatalf("Wait = %+v, %v", final, err)
+		t.Fatalf("Result = %+v, %v", final, err)
 	}
 }
 
@@ -290,9 +302,9 @@ func TestTurnFailed(t *testing.T) {
 	if !ok || event.Kind != EventTurnCompleted {
 		t.Fatalf("event = %+v", event)
 	}
-	final, err := stream.Wait(context.Background())
+	final, err := turnOf(stream.Result(context.Background()))
 	if err != nil {
-		t.Fatalf("Wait: %v", err)
+		t.Fatalf("Result: %v", err)
 	}
 	if final.Status != TurnFailed || final.Error == nil {
 		t.Fatalf("final = %+v", final)
@@ -380,16 +392,19 @@ func TestAbandonedStreamDoesNotBlockOtherThreads(t *testing.T) {
 	server.notify(MethodTurnCompleted, map[string]any{"threadId": "thr_2",
 		"turn": map[string]any{"id": "turn_2", "status": "completed"}})
 
-	final, err := live.Wait(context.Background())
+	final, err := turnOf(live.Result(context.Background()))
 	if err != nil || final.Status != TurnCompleted {
 		t.Fatalf("second thread stalled: %+v %v", final, err)
 	}
 
-	// Abandoning releases the blocked pump and closes the channel.
+	// Abandoning releases the blocked pump, which drops the rest and closes
+	// the channel once the turn completes.
 	abandoned.Close()
-	if _, err := abandoned.Wait(context.Background()); !errors.Is(err, ErrTurnAbandoned) {
-		t.Fatalf("Wait = %v, want ErrTurnAbandoned", err)
+	if _, err := turnOf(abandoned.Result(context.Background())); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Result = %v, want ErrClosed", err)
 	}
+	server.notify(MethodTurnCompleted, map[string]any{"threadId": "thr_1",
+		"turn": map[string]any{"id": "turn_1", "status": "completed"}})
 	deadline := time.After(fakeTimeout)
 	for {
 		select {
@@ -400,6 +415,76 @@ func TestAbandonedStreamDoesNotBlockOtherThreads(t *testing.T) {
 		case <-deadline:
 			t.Fatal("abandoned stream channel never closed")
 		}
+	}
+}
+
+func TestCloseAfterTurnEnded(t *testing.T) {
+	client, server := connect(t, Options{})
+	threadID := startThread(t, client, server, "thr_1")
+	stream := startTurn(t, client, server, threadID, "turn_1", Text("hi"))
+
+	server.notify(MethodItemCompleted, map[string]any{"threadId": "thr_1", "turnId": "turn_1",
+		"item": map[string]any{"type": "agentMessage", "id": "item_1", "text": "done"}})
+	server.notify(MethodTurnCompleted, map[string]any{"threadId": "thr_1",
+		"turn": map[string]any{"id": "turn_1", "status": "completed"}})
+	<-stream.Done()
+
+	if err := stream.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	result, err := stream.Result(context.Background())
+	if err != nil || result.Turn.Status != TurnCompleted || result.Text() != "done" {
+		t.Fatalf("Result after Close = %+v, %v", result, err)
+	}
+	for _, err := range stream.Events(context.Background()) {
+		if err != nil {
+			t.Fatalf("Events after Close: %v", err)
+		}
+	}
+	// Cancel on an ended turn sends nothing; a sent turn/interrupt would go
+	// unanswered and time out.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if err := stream.Cancel(ctx); err != nil {
+		t.Fatalf("Cancel after end: %v", err)
+	}
+}
+
+func TestCancelAfterClose(t *testing.T) {
+	client, server := connect(t, Options{})
+	threadID := startThread(t, client, server, "thr_1")
+	stream := startTurn(t, client, server, threadID, "turn_1", Text("hi"))
+
+	stream.Close()
+	for _, err := range stream.Events(context.Background()) {
+		if !errors.Is(err, ErrClosed) {
+			t.Fatalf("Events after Close = %v, want ErrClosed", err)
+		}
+	}
+
+	// The turn is still running on the server, so Cancel must interrupt it.
+	done := serve(t, func() {
+		req := server.expect("turn/interrupt")
+		server.respond(req, map[string]any{})
+		server.notify(MethodTurnCompleted, map[string]any{"threadId": "thr_1",
+			"turn": map[string]any{"id": "turn_1", "status": "interrupted"}})
+	})
+	if err := stream.Cancel(context.Background()); err != nil {
+		t.Fatalf("Cancel after Close: %v", err)
+	}
+	<-done
+
+	// Once the pump sees the turn complete, Cancel is a no-op.
+	waitFor(t, func() bool {
+		stream.mu.Lock()
+		defer stream.mu.Unlock()
+		return stream.final != nil
+	})
+	if err := stream.Cancel(context.Background()); err != nil {
+		t.Fatalf("Cancel after completion: %v", err)
+	}
+	if _, err := stream.Result(context.Background()); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Result = %v, want ErrClosed", err)
 	}
 }
 
@@ -427,8 +512,8 @@ func TestTurnStreamClosedOnClientShutdown(t *testing.T) {
 
 	server.close()
 
-	if _, err := stream.Wait(context.Background()); !errors.Is(err, ErrClosed) {
-		t.Fatalf("Wait = %v, want ErrClosed", err)
+	if _, err := turnOf(stream.Result(context.Background())); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Result = %v, want ErrClosed", err)
 	}
 	deadline := time.After(fakeTimeout)
 	for {
@@ -443,15 +528,15 @@ func TestTurnStreamClosedOnClientShutdown(t *testing.T) {
 	}
 }
 
-func TestTurnWaitContextCancel(t *testing.T) {
+func TestTurnResultContextCancel(t *testing.T) {
 	client, server := connect(t, Options{})
 	threadID := startThread(t, client, server, "thr_1")
 	stream := startTurn(t, client, server, threadID, "turn_1", Text("hi"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := stream.Wait(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Wait = %v, want context.Canceled", err)
+	if _, err := turnOf(stream.Result(ctx)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Result = %v, want context.Canceled", err)
 	}
 }
 

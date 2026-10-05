@@ -31,8 +31,8 @@ type WarmQuery struct {
 //
 // As with Client.Connect, ctx governs the whole session: cancelling it after
 // Startup returns terminates the CLI. Use a context that outlives the query.
-func Startup(ctx context.Context, opts *Options) (*WarmQuery, error) {
-	return startup(ctx, opts, nil)
+func Startup(ctx context.Context, opts Options) (*WarmQuery, error) {
+	return startup(ctx, &opts, nil)
 }
 
 // startup is Startup with replaceable session dependencies.
@@ -54,7 +54,7 @@ func (w *WarmQuery) InitializationResult() *InitializeResult {
 // the sequence ends, when the caller breaks out of the range loop, or when ctx
 // is cancelled.
 func (w *WarmQuery) Query(ctx context.Context, prompt string) iter.Seq2[Message, error] {
-	return w.QueryStream(ctx, slices.Values([]UserInput{{Content: prompt}}))
+	return w.QueryStream(ctx, slices.Values([]UserInput{Text(prompt)}))
 }
 
 // QueryStream is Query with several user turns known up front, like the
@@ -64,7 +64,7 @@ func (w *WarmQuery) QueryStream(ctx context.Context, inputs iter.Seq[UserInput])
 	var err error
 	switch {
 	case w.closed:
-		err = NewConnectionError("warm query is closed")
+		err = closedError("warm query")
 	case w.used:
 		err = errors.New("claude: WarmQuery can run only one query")
 	}

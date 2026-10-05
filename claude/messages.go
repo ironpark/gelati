@@ -188,11 +188,13 @@ type AssistantMessage struct {
 	Model           string
 	ParentToolUseID string
 	Error           AssistantMessageError
-	Usage           map[string]any
-	MessageID       string
-	StopReason      string
-	SessionID       string
-	UUID            string
+	// Usage is the API response's token usage; not final while the
+	// response streams (see above).
+	Usage      Usage
+	MessageID  string
+	StopReason string
+	SessionID  string
+	UUID       string
 	// StopSequence is the custom stop sequence that ended the response.
 	StopSequence string
 	// StopDetails explains a "refusal" stop, when the API reported it.
@@ -262,7 +264,7 @@ type ResultMessage struct {
 	SessionID         string                `json:"session_id"`
 	StopReason        string                `json:"stop_reason,omitempty"`
 	TotalCostUSD      *float64              `json:"total_cost_usd,omitzero"`
-	Usage             map[string]any        `json:"usage,omitempty"`
+	Usage             Usage                 `json:"usage,omitzero"`
 	Result            string                `json:"result,omitempty"`
 	StructuredOutput  jsontext.Value        `json:"structured_output,omitempty"`
 	ModelUsage        map[string]ModelUsage `json:"modelUsage,omitempty"`
@@ -301,6 +303,86 @@ type ResultMessage struct {
 }
 
 func (*ResultMessage) isMessage() {}
+
+// Text returns the final response text of the turn: the Result field.
+func (m *ResultMessage) Text() string { return m.Result }
+
+// Usage is the token usage the Anthropic API reports, for one response
+// (AssistantMessage) or summed over a run (ResultMessage). Members the CLI
+// sends as null read as zero.
+type Usage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	// ServerToolUse counts server-side tool requests, when reported.
+	ServerToolUse *ServerToolUse `json:"server_tool_use,omitzero"`
+	// ServiceTier is the tier the request was served on, such as
+	// "standard".
+	ServiceTier string `json:"service_tier,omitempty"`
+	// Extra holds usage keys this SDK version does not model (cache_creation,
+	// inference_geo, speed, iterations, ...), so a newer CLI loses nothing.
+	// It is merged back in on marshal; modeled fields win.
+	Extra map[string]any `json:"-"`
+}
+
+// ServerToolUse counts the server-side tool requests of a Usage.
+type ServerToolUse struct {
+	WebSearchRequests int `json:"web_search_requests"`
+	WebFetchRequests  int `json:"web_fetch_requests,omitzero"`
+}
+
+// usageFields are the usage keys Usage has a field for. Anything else goes to
+// Extra.
+var usageFields = jsonMemberNames(reflect.TypeFor[Usage]())
+
+// MarshalJSON writes the modeled fields with any Extra keys merged alongside.
+func (u Usage) MarshalJSON() ([]byte, error) {
+	type alias Usage
+	return marshalWithExtra(alias(u), u.Extra)
+}
+
+// UnmarshalJSON reads the modeled fields leniently, as the message parser
+// does, and collects the rest into Extra. A value that is not an object
+// leaves u unchanged.
+func (u *Usage) UnmarshalJSON(b []byte) error {
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw, lenient); err != nil {
+		if fatalDecodeErr(err) {
+			return err
+		}
+		return nil
+	}
+	if raw != nil {
+		*u = usageFromMap(raw)
+	}
+	return nil
+}
+
+// usageFromMap reads a decoded usage object. Counters of the wrong type read
+// as zero and fractional ones are truncated; unmodeled keys go to Extra.
+func usageFromMap(raw map[string]any) Usage {
+	var u Usage
+	u.InputTokens, _ = toInt(raw["input_tokens"])
+	u.OutputTokens, _ = toInt(raw["output_tokens"])
+	u.CacheCreationInputTokens, _ = toInt(raw["cache_creation_input_tokens"])
+	u.CacheReadInputTokens, _ = toInt(raw["cache_read_input_tokens"])
+	u.ServiceTier = str(raw["service_tier"])
+	if stu, ok := raw["server_tool_use"].(map[string]any); ok {
+		u.ServerToolUse = &ServerToolUse{}
+		u.ServerToolUse.WebSearchRequests, _ = toInt(stu["web_search_requests"])
+		u.ServerToolUse.WebFetchRequests, _ = toInt(stu["web_fetch_requests"])
+	}
+	for k, v := range raw {
+		if !usageFields[k] {
+			if u.Extra == nil {
+				u.Extra = map[string]any{}
+			}
+			u.Extra[k] = v
+		}
+	}
+	return u
+}
 
 // ModelUsage is the per-model token and cost breakdown reported on a result
 // message. Field names follow the CLI's camelCase wire format.

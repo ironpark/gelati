@@ -9,7 +9,7 @@
 //
 // [Query] runs a one-shot prompt and yields the messages it produces:
 //
-//	for msg, err := range claude.Query(ctx, "What is 2+2?", nil) {
+//	for msg, err := range claude.Query(ctx, "What is 2+2?", claude.Options{}) {
 //		if err != nil {
 //			return err
 //		}
@@ -23,26 +23,32 @@
 //	}
 //
 // [Run] runs the same one-shot prompt to completion and returns only the final
-// [ResultMessage], whose Result field is the final text:
+// [ResultMessage], whose [ResultMessage.Text] is the final text:
 //
-//	res, err := claude.Run(ctx, "What is 2+2?", nil)
+//	res, err := claude.Run(ctx, "What is 2+2?", claude.Options{})
+//
+// Options are passed by value; the zero Options means defaults.
 //
 // [Client] runs an interactive session where later turns depend on earlier
 // responses, and supports interrupts and mid-conversation setters:
 //
-//	client := claude.NewClient(&claude.Options{PermissionMode: claude.PermissionModeAcceptEdits})
+//	client := claude.NewClient(claude.Options{PermissionMode: claude.PermissionModeAcceptEdits})
 //	if err := client.Connect(ctx); err != nil {
 //		return err
 //	}
 //	defer client.Disconnect()
-//	if err := client.Query(ctx, "Summarize this repo", ""); err != nil {
+//	turn, err := client.Send(ctx, claude.Text("Summarize this repo"))
+//	if err != nil {
 //		return err
 //	}
-//	for msg, err := range client.ReceiveResponse(ctx) {
+//	for msg, err := range turn.Events(ctx) {
 //		...
 //	}
 //
-// [Client.Run] is the one-turn shorthand of Query plus ReceiveResponse.
+// [Client.Send] returns a [TurnStream]: its Events yield the turn's messages
+// up to its ResultMessage, Result waits for that, Cancel interrupts the turn
+// and Close stops reading it. [Client.Run] is the shorthand of Send plus
+// Result.
 // [Client.Done] is closed when the session ends for any reason, and
 // [Client.Err] then reports why.
 //
@@ -55,6 +61,11 @@
 // session down; a [Client] is torn down by [Client.Disconnect], which is
 // idempotent and safe to defer. [Client.Done] and [Client.Err] report a
 // session that ended on its own.
+//
+// Client calls made before Connect fail with an error matching
+// [ErrNotConnected], and after Disconnect with one matching [ErrClosed]. A CLI
+// that exited with a failure status is reported as a *[ProcessError], which
+// errors.As finds also through a *[ResultError].
 //
 // Message and content-block unions, and the option unions, are sealed
 // interfaces ([Message], [ContentBlock], [PermissionResult], [MCPServerConfig],
@@ -145,6 +156,7 @@
 //
 //	query()                        -> Query, QueryStream, Run (final result only)
 //	ClaudeSDKClient                -> Client
+//	client.query() + receive_response() -> Client.Send, TurnStream
 //	ClaudeAgentOptions             -> Options
 //	create_sdk_mcp_server()        -> NewSDKMCPServer
 //	createSdkMcpServer() (TS)      -> NewSDKMCPServerWithOptions, SDKMCPServerOptions

@@ -128,7 +128,7 @@ func AllowAllPolicy() Policy {
 // WorkspaceOnlyPolicies confine the file tools to the session's workspace
 // directories (upstream policy.workspace_only; the policy package wraps it
 // as policy.WorkspaceOnly). The harness enforces them natively against
-// Config.Workspaces; EnforcePolicies skips them.
+// Options.Workspaces; EnforcePolicies skips them.
 func WorkspaceOnlyPolicies() []Policy {
 	var out []Policy
 	for _, t := range FileTools() {
@@ -137,7 +137,7 @@ func WorkspaceOnlyPolicies() []Policy {
 	return out
 }
 
-// ConfirmRunCommandPolicies is the default policy set of Config (upstream
+// ConfirmRunCommandPolicies is the default policy set of Options (upstream
 // confirm_run_command; the policy package wraps it as
 // policy.ConfirmRunCommand): run_command is denied, or confirmed through
 // handler when it is non-nil, and every other tool is allowed.

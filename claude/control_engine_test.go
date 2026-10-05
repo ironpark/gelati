@@ -73,7 +73,7 @@ func TestEngineErrorResultSurvivesSkippedFrames(t *testing.T) {
 				ft.push(f)
 			}
 			code := 1
-			ft.finish(NewProcessError("Command failed", &code, ""))
+			ft.finish(NewProcessError("Command failed", &code, "", nil))
 			var last error
 			for _, err := range eng.receive(context.Background()) {
 				if err != nil {

@@ -47,3 +47,19 @@ func TestGroupTerminateReachesGrandchildren(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestExitCode(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "exit 3")
+	_ = cmd.Run()
+	if c := ExitCode(cmd.ProcessState); c == nil || *c != 3 {
+		t.Fatalf("exit 3: %v", c)
+	}
+	cmd = exec.Command("sh", "-c", "kill -9 $$")
+	_ = cmd.Run()
+	if c := ExitCode(cmd.ProcessState); c != nil {
+		t.Fatalf("killed: %v", *c)
+	}
+	if ExitCode(nil) != nil {
+		t.Fatal("nil state")
+	}
+}

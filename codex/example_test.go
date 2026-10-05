@@ -34,7 +34,7 @@ func Example() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(result.FinalResponse)
+	fmt.Println(result.Text())
 }
 
 // ExampleTurnStream streams a turn's events as they arrive, answering command

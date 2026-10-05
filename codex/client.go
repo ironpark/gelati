@@ -22,7 +22,7 @@ import (
 // install locations, when Options.CLIPath is empty.
 const DefaultBinary = "codex"
 
-// defaultEventBuffer bounds each turn's event channel.
+// defaultEventBuffer is the default Options.EventBuffer.
 const defaultEventBuffer = 64
 
 // stderrTailLines is how much subprocess stderr Err reports after an exit.
@@ -71,7 +71,8 @@ type Options struct {
 	// including those routed to thread and turn subscribers.
 	OnNotification func(method string, params jsontext.Value)
 
-	// EventBuffer is the per-turn event channel capacity. It defaults to 64.
+	// EventBuffer is the event buffer capacity of each TurnStream and of each
+	// ThreadEvents or AccountUpdates loop. It defaults to 64.
 	EventBuffer int
 
 	// Logger receives debug messages about dropped or unroutable events. Nil
@@ -89,7 +90,7 @@ type Client struct {
 
 	pending *pendingRequests
 
-	accounts chan AccountUpdate
+	accounts *broadcast[AccountUpdate]
 
 	mu          sync.Mutex
 	initialized bool
@@ -139,7 +140,7 @@ func dial(ctx context.Context, opts Options, in io.Reader, out io.Writer, releas
 
 		loginResults: make(map[string]*LoginCompletedParams),
 	}
-	c.accounts = make(chan AccountUpdate, c.eventBuffer())
+	c.accounts = newBroadcast[AccountUpdate](c.eventBuffer())
 	c.tr = newTransport(transportConfig{
 		in:              in,
 		out:             out,

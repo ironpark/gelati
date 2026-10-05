@@ -67,7 +67,7 @@ func main() {
 	workspaces := []string{*workspace}
 
 	fmt.Println("\n=== Dynamic subagent (self clone) ===")
-	run(ctx, agy.Config{Workspaces: workspaces, Hooks: logHooks},
+	run(ctx, agy.Options{Workspaces: workspaces, Hooks: logHooks},
 		"Use a subagent to research the files in the workspace. Delegate the task of listing and reading "+
 			"the files to the subagent, and then generate a lesson plan for me based on its findings.")
 
@@ -81,7 +81,7 @@ func main() {
 			"State explicitly whether you have access to 'get_root_admin_secret'. Output your report directly in your final response."),
 		Tools: []*agy.Tool{getReviewerBadge},
 	}
-	text := run(ctx, agy.Config{
+	text := run(ctx, agy.Options{
 		Subagents:  []agy.SubagentConfig{reviewer},
 		Workspaces: workspaces,
 		Tools:      []*agy.Tool{getReviewerBadge, getRootAdminSecret},
@@ -112,7 +112,7 @@ func main() {
 			AllowedSubagents: []string{"fact_checker"},
 		},
 	}
-	run(ctx, agy.Config{
+	run(ctx, agy.Options{
 		Subagents:  []agy.SubagentConfig{leadResearcher, factChecker},
 		Workspaces: workspaces,
 		Capabilities: &agy.CapabilitiesConfig{
@@ -132,9 +132,9 @@ func check(name string, ok bool) {
 	fmt.Println(" ", status, name)
 }
 
-// run starts a session with cfg, sends prompt and returns the answer.
-func run(ctx context.Context, cfg agy.Config, prompt string) string {
-	agent, err := agy.NewAgent(cfg)
+// run starts a session with opts, sends prompt and returns the answer.
+func run(ctx context.Context, opts agy.Options, prompt string) string {
+	agent, err := agy.NewAgent(opts)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -143,14 +143,14 @@ func run(ctx context.Context, cfg agy.Config, prompt string) string {
 	}
 	defer agent.Close()
 	fmt.Println("  User:", prompt)
-	resp, err := agent.Chat(ctx, agy.Text(prompt))
+	stream, err := agent.Chat(ctx, agy.Text(prompt))
 	if err != nil {
 		log.Fatal(err)
 	}
-	text, err := resp.WaitText(ctx)
+	res, err := stream.Result(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("\n  Agent:\n%s\n", text)
-	return text
+	fmt.Printf("\n  Agent:\n%s\n", res.Text())
+	return res.Text()
 }

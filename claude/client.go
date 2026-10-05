@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"sync"
 
@@ -18,7 +19,8 @@ type ServerInfo map[string]any
 
 // Client runs a bidirectional, stateful conversation with the Claude Code CLI:
 // turns can be sent at any time, responses consumed as they arrive, and the run
-// steered with interrupts and setter calls. Use Query for one-shot prompts.
+// steered with interrupts and setter calls. Use Query or Run for one-shot
+// prompts.
 //
 // The lifecycle is explicit rather than scoped:
 //
@@ -27,18 +29,22 @@ type ServerInfo map[string]any
 //		return err
 //	}
 //	defer client.Disconnect()
+//	turn, err := client.Send(ctx, claude.Text("Hello"))
+//	...
 //
 // A connected client is safe for concurrent use: control calls may run while
-// another goroutine ranges over ReceiveMessages. The message stream itself has
-// a single consumer — ReceiveMessages and ReceiveResponse read from the same
-// underlying sequence, so ranging over both at once splits the messages
-// between them.
+// another goroutine reads a turn. The CLI's output is a single message stream,
+// though, so it has a single consumer: read one TurnStream at a time, and do
+// not mix TurnStreams with ReceiveMessages, which reads the same stream raw.
 type Client struct {
-	opts *Options
+	opts Options
 
 	// deps replaces process-level dependencies in tests; nil means the
 	// real ones.
 	deps *sessionDeps
+
+	// sendMu serializes Send.
+	sendMu sync.Mutex
 
 	mu sync.Mutex
 	// connecting is set while Connect opens a session.
@@ -48,21 +54,24 @@ type Client struct {
 	// last is the engine of the current or most recent session, kept after
 	// Disconnect for Done and Err.
 	last *engine
+	// turns are the live session's turns that have not ended, oldest
+	// first. Reading a turn reads the stream from the head of the queue.
+	turns []*TurnStream
 }
 
-// NewClient builds an unconnected client. opts may be nil.
-func NewClient(opts *Options) *Client {
+// NewClient builds an unconnected client. The zero Options means defaults.
+func NewClient(opts Options) *Client {
 	return &Client{opts: opts}
 }
 
-// Connect starts the CLI session and performs the initialize handshake. Any
-// initial turns are sent right after it. Calling Connect on an already
-// connected client is an error.
+// Connect starts the CLI session and performs the initialize handshake.
+// Calling Connect on an already connected client is an error; after
+// Disconnect it starts a new session.
 //
 // When ctx has no deadline, DefaultInitializeTimeout bounds the handshake.
 // ctx governs the whole session: cancelling it after Connect returns
 // terminates the CLI.
-func (c *Client) Connect(ctx context.Context, initial ...UserInput) error {
+func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Lock()
 	if c.sess != nil || c.connecting {
 		c.mu.Unlock()
@@ -73,76 +82,97 @@ func (c *Client) Connect(ctx context.Context, initial ...UserInput) error {
 	c.connecting = true
 	c.mu.Unlock()
 
-	sess, err := startSession(ctx, c.opts, entrypointClient, c.deps)
+	sess, err := startSession(ctx, &c.opts, entrypointClient, c.deps)
 
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.connecting = false
-	c.sess = sess
-	if err == nil {
-		c.last = sess.eng
-	}
-	c.mu.Unlock()
 	if err != nil {
 		return err
 	}
-
-	for _, input := range initial {
-		if err := c.send(ctx, input, DefaultSessionID); err != nil {
-			_ = c.Disconnect()
-			return err
-		}
-	}
+	c.sess = sess
+	c.last = sess.eng
+	c.turns = nil
 	return nil
 }
 
-// engineOrErr returns the live engine, or an error when not connected.
+// engineOrErr returns the live engine, or an error matching ErrNotConnected
+// before the first Connect and ErrClosed after Disconnect.
 func (c *Client) engineOrErr() (*engine, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.sess == nil {
-		return nil, NewConnectionError("Not connected. Call Connect first.")
+	switch {
+	case c.sess != nil:
+		return c.sess.eng, nil
+	case c.last != nil:
+		return nil, closedError("client")
+	default:
+		return nil, notConnectedError()
 	}
-	return c.sess.eng, nil
 }
 
-// send writes one user turn, attributed to sessionID unless it names its own
-// session.
-func (c *Client) send(ctx context.Context, input UserInput, sessionID string) error {
+// Text returns a UserInput carrying prompt as plain text, the common case of
+// a turn's input.
+func Text(prompt string) UserInput {
+	return UserInput{Content: prompt}
+}
+
+// Send writes input as a new turn, in order, and returns the stream of the
+// turn's messages. Inputs that name no session are attributed to
+// DefaultSessionID. Sending nothing is an error.
+//
+// A turn is the messages up to and including the next ResultMessage after
+// those of the turns sent before it. Several inputs in one Send are meant to
+// be answered together: should the CLI answer them with a result each, the
+// later results belong to the following turns. For a one-to-one mapping send
+// a turn once the previous one's result has arrived, as Run does.
+func (c *Client) Send(ctx context.Context, input ...UserInput) (*TurnStream, error) {
+	if len(input) == 0 {
+		return nil, errors.New("claude: Send needs at least one input")
+	}
+	// Sends are serialized so that turns are queued in the order the CLI
+	// sees them.
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
 	eng, err := c.engineOrErr()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if input.SessionID == "" {
-		input.SessionID = sessionID
-	}
-	return eng.sendUserMessage(ctx, input)
-}
-
-// Query sends one prompt as a new turn. An empty sessionID uses
-// DefaultSessionID.
-func (c *Client) Query(ctx context.Context, prompt, sessionID string) error {
-	if sessionID == "" {
-		sessionID = DefaultSessionID
-	}
-	return c.send(ctx, UserInput{Content: prompt}, sessionID)
-}
-
-// QueryStream sends several turns in order. An empty sessionID uses
-// DefaultSessionID; inputs that name their own session keep it.
-func (c *Client) QueryStream(ctx context.Context, inputs iter.Seq[UserInput], sessionID string) error {
-	if sessionID == "" {
-		sessionID = DefaultSessionID
-	}
-	for input := range inputs {
-		if err := c.send(ctx, input, sessionID); err != nil {
-			return err
+	for _, in := range input {
+		if in.SessionID == "" {
+			in.SessionID = DefaultSessionID
+		}
+		if err := eng.sendUserMessage(ctx, in); err != nil {
+			return nil, err
 		}
 	}
-	return nil
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sess == nil || c.sess.eng != eng {
+		// Disconnected while writing.
+		return nil, closedError("client")
+	}
+	t := &TurnStream{client: c, eng: eng}
+	c.turns = append(c.turns, t)
+	return t, nil
 }
 
-// ReceiveMessages yields every message the session produces until it ends. A
-// fatal error is the final item.
+// Run sends input as a new turn and waits for its ResultMessage, whose Text
+// method returns the final response text: Send followed by
+// TurnStream.Result. Messages before the result are dropped; use Send and
+// TurnStream.Events to observe them. Errors are as for the package-level Run.
+func (c *Client) Run(ctx context.Context, input ...UserInput) (*ResultMessage, error) {
+	t, err := c.Send(ctx, input...)
+	if err != nil {
+		return nil, err
+	}
+	defer t.Close()
+	return t.Result(ctx)
+}
+
+// ReceiveMessages yields every message the session produces until it ends, as
+// it comes, regardless of turns. A fatal error is the final item. It reads
+// the same stream as TurnStream; use one or the other.
 func (c *Client) ReceiveMessages(ctx context.Context) iter.Seq2[Message, error] {
 	// The session is looked up when the sequence is ranged over.
 	return func(yield func(Message, error) bool) {
@@ -153,32 +183,6 @@ func (c *Client) ReceiveMessages(ctx context.Context) iter.Seq2[Message, error] 
 		}
 		eng.receive(ctx)(yield)
 	}
-}
-
-// ReceiveResponse yields messages up to and including the next ResultMessage,
-// then stops. Messages of later turns stay queued for the next call.
-func (c *Client) ReceiveResponse(ctx context.Context) iter.Seq2[Message, error] {
-	return func(yield func(Message, error) bool) {
-		for msg, err := range c.ReceiveMessages(ctx) {
-			if !yield(msg, err) || err != nil {
-				return
-			}
-			if _, ok := msg.(*ResultMessage); ok {
-				return
-			}
-		}
-	}
-}
-
-// Run sends prompt as a new turn and waits for its ResultMessage, whose
-// Result field is the final response text. An empty sessionID uses
-// DefaultSessionID. Messages before the result are dropped; use Query and
-// ReceiveResponse to observe them. Errors are as for the package-level Run.
-func (c *Client) Run(ctx context.Context, prompt, sessionID string) (*ResultMessage, error) {
-	if err := c.Query(ctx, prompt, sessionID); err != nil {
-		return nil, err
-	}
-	return collectResult(c.ReceiveResponse(ctx))
 }
 
 // ServerInfo reports the raw initialize response: available commands, output
@@ -216,18 +220,21 @@ func (c *Client) Err() error {
 	last := c.last
 	c.mu.Unlock()
 	if last == nil {
-		return NewConnectionError("Not connected. Call Connect first.")
+		return notConnectedError()
 	}
 	return last.end.Err()
 }
 
 // Disconnect ends the session and releases its resources, including the
-// temporary config directory of a SessionStore resume. It is idempotent, so
-// `defer client.Disconnect()` is safe even on paths that already disconnected.
+// temporary config directory of a SessionStore resume. Calls that need the
+// session then fail with an error matching ErrClosed, until the next Connect.
+// It is idempotent, so `defer client.Disconnect()` is safe even on paths that
+// already disconnected.
 func (c *Client) Disconnect() error {
 	c.mu.Lock()
 	sess := c.sess
 	c.sess = nil
+	c.turns = nil
 	c.mu.Unlock()
 	if sess == nil {
 		return nil

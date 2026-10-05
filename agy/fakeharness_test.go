@@ -21,7 +21,7 @@ import (
 
 // The test binary doubles as a fake localharness: when fakeHarnessEnv is set
 // in its environment, TestMain runs runFakeHarness instead of the tests.
-// Agent tests point Config.CLIPath at os.Args[0].
+// Agent tests point Options.CLIPath at os.Args[0].
 const (
 	fakeHarnessEnv = "GELATI_AGY_FAKE_HARNESS"
 	// fakeRecordEnv names a file the fake writes the HarnessConfig it

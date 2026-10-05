@@ -29,7 +29,7 @@ func main() {
 		return claude.TextResult("%d", args.A+args.B), nil
 	})
 
-	opts := &claude.Options{
+	opts := claude.Options{
 		MCPServers: map[string]claude.MCPServerConfig{
 			"calc": claude.NewSDKMCPServer("calc", "1.0.0", add),
 		},
@@ -59,5 +59,5 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("  Claude:", res.Result)
+	fmt.Println("  Claude:", res.Text())
 }

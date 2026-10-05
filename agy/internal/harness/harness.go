@@ -70,13 +70,15 @@ const (
 	connectBaseBackoff = 100 * time.Millisecond
 	wsCloseTimeout     = 500 * time.Millisecond
 	terminateGrace     = time.Second
+	exitWait           = time.Second // for a crashing process to exit
 	stderrTailLines    = 100
 	maxFrameSize       = 1 << 20
 	msgBuffer          = 16
 )
 
-// ErrClosed is returned by operations on a Harness after Close.
-var ErrClosed = errors.New("agy harness: closed")
+// ErrClosed is returned by operations on a Harness after Close. The agy
+// package re-exports it as agy.ErrClosed.
+var ErrClosed = errors.New("agy: closed")
 
 // Options configures [Start].
 type Options struct {
@@ -202,7 +204,9 @@ func Start(ctx context.Context, opts Options) (*Harness, error) {
 
 	out, err := h.handshake(ctx, input)
 	if err != nil {
-		return nil, h.abort(fmt.Errorf("agy harness: handshake: %w", err))
+		// A failed handshake usually means the process is exiting.
+		waitExit := ctx.Err() == nil
+		return nil, h.abort(fmt.Errorf("agy harness: handshake: %w", err), waitExit)
 	}
 	// Nothing more is expected on stdout; drain it so the harness never
 	// blocks writing there.
@@ -210,10 +214,10 @@ func Start(ctx context.Context, opts Options) (*Harness, error) {
 
 	h.port = int(out.GetPort())
 	if h.port <= 0 || h.port > 65535 {
-		return nil, h.abort(fmt.Errorf("agy harness: invalid port %d in output config", out.GetPort()))
+		return nil, h.abort(fmt.Errorf("agy harness: invalid port %d in output config", out.GetPort()), false)
 	}
 	if err := h.connect(ctx, out.GetApiKey()); err != nil {
-		return nil, h.abort(err)
+		return nil, h.abort(err, false)
 	}
 	return h, nil
 }
@@ -317,8 +321,17 @@ func (h *Harness) connect(ctx context.Context, apiKey string) error {
 }
 
 // abort kills the process after a failed launch and returns err annotated
-// with the harness's stderr.
-func (h *Harness) abort(err error) error {
+// with the harness's stderr, and with its exit status when it exited on its
+// own. waitExit gives a process that is likely exiting a moment to do so
+// before it is killed.
+func (h *Harness) abort(err error, waitExit bool) error {
+	var selfExit bool
+	select {
+	case <-h.exited:
+		selfExit = true
+	default:
+		selfExit = waitExit && lifecycle.WaitClosed(h.exited, exitWait)
+	}
 	h.closing.Store(true)
 	if h.ws != nil {
 		_ = h.ws.CloseNow()
@@ -327,7 +340,17 @@ func (h *Harness) abort(err error) error {
 	_ = h.stdin.Close()
 	<-h.exited
 	_ = h.stdout.Close()
-	return &StartError{Err: err, Stderr: h.stderr.String()}
+	se := &StartError{Err: err, Stderr: h.stderr.String()}
+	if selfExit {
+		se.Exit = h.processExit()
+	}
+	return se
+}
+
+// processExit reports how the process exited; call it once exited is
+// closed.
+func (h *Harness) processExit() *ProcessExit {
+	return &ProcessExit{Code: proc.ExitCode(h.cmd.ProcessState), Err: h.waitErr}
 }
 
 // Initialize sends the InitializeConversationEvent built from cfg and returns
@@ -337,7 +360,7 @@ func (h *Harness) abort(err error) error {
 func (h *Harness) Initialize(ctx context.Context, cfg *wire.HarnessConfig) (*wire.InitializeConversationResponse, error) {
 	resp, err := h.initialize(ctx, cfg)
 	if err != nil {
-		return nil, h.abort(fmt.Errorf("agy harness: initialize conversation at %s: %w", h.url, err))
+		return nil, h.abort(fmt.Errorf("agy harness: initialize conversation at %s: %w", h.url, err), false)
 	}
 	return resp, nil
 }
@@ -431,12 +454,16 @@ func (h *Harness) connErr(err error) error {
 	}
 	// The harness likely crashed: give it a moment to exit so its stderr is
 	// complete.
-	lifecycle.WaitClosed(h.exited, time.Second)
+	exited := lifecycle.WaitClosed(h.exited, exitWait)
 	code := websocket.CloseStatus(err)
 	if code < 0 {
 		code = websocket.StatusAbnormalClosure
 	}
-	return &ConnectionError{Code: code, Stderr: h.stderr.String(), Err: err}
+	ce := &ConnectionError{Code: code, Stderr: h.stderr.String(), Err: err}
+	if exited {
+		ce.Exit = h.processExit()
+	}
+	return ce
 }
 
 // Close shuts the harness down: it closes the WebSocket, closes stdin to

@@ -158,7 +158,7 @@ func TestEngineCloseCancelsInflightHandlers(t *testing.T) {
 func TestClientConcurrentConnect(t *testing.T) {
 	t.Parallel()
 	ft := newFakeTransport()
-	client := NewClient(&Options{Transport: ft})
+	client := NewClient(Options{Transport: ft})
 	t.Cleanup(func() { _ = client.Disconnect() })
 
 	first := make(chan error, 1)
@@ -202,7 +202,7 @@ func TestQueryEndsOnContextCancel(t *testing.T) {
 	defer cancel()
 	var lastErr error
 	finishesWithin(t, 3*time.Second, "Query after cancel", func() {
-		for msg, err := range Query(ctx, "hi", &Options{Transport: ft}) {
+		for msg, err := range Query(ctx, "hi", Options{Transport: ft}) {
 			if err != nil {
 				lastErr = err
 				break
@@ -242,7 +242,7 @@ func TestClientDisconnectWithBlockingConnector(t *testing.T) {
 		<-release
 		close(disconnected)
 	}}
-	client := NewClient(&Options{
+	client := NewClient(Options{
 		Transport:  ft,
 		MCPServers: map[string]MCPServerConfig{"slow": &MCPSDKServerConfig{Name: "slow", Instance: conn}},
 	})

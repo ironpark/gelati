@@ -369,9 +369,15 @@ func (t *subprocessTransport) ReadMessages() iter.Seq2[jsontext.Value, error] {
 		t.ready = false
 		t.mu.Unlock()
 		if exitErr, ok := errors.AsType[exitCoder](waitErr); ok {
-			code := exitErr.ExitCode()
-			perr := NewProcessError(
-				fmt.Sprintf("Command failed with exit code %d", code), &code, strings.TrimSpace(t.stderrTail.String()))
+			// A negative status means the process was ended by a signal
+			// and has no exit code.
+			var exitCode *int
+			msg := "Command was terminated by a signal"
+			if code := exitErr.ExitCode(); code >= 0 {
+				exitCode = &code
+				msg = fmt.Sprintf("Command failed with exit code %d", code)
+			}
+			perr := NewProcessError(msg, exitCode, strings.TrimSpace(t.stderrTail.String()), waitErr)
 			t.mu.Lock()
 			t.exitErr = perr
 			t.mu.Unlock()

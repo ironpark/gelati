@@ -16,7 +16,7 @@ type SchemaProvider interface {
 }
 
 // SchemaFor returns the JSON schema of T, as NewTool derives it for tool
-// parameters. It is useful for Config.ResponseSchema.
+// parameters. It is useful for Options.ResponseSchema.
 func SchemaFor[T any]() map[string]any {
 	return schemaForType(reflect.TypeFor[T]())
 }

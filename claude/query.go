@@ -16,25 +16,25 @@ import (
 // The CLI subprocess is torn down when the sequence ends, when the caller
 // breaks out of the range loop, or when ctx is cancelled.
 //
-//	for msg, err := range claude.Query(ctx, "What is 2+2?", nil) {
+//	for msg, err := range claude.Query(ctx, "What is 2+2?", claude.Options{}) {
 //		if err != nil {
 //			return err
 //		}
 //		fmt.Println(msg)
 //	}
-func Query(ctx context.Context, prompt string, opts *Options) iter.Seq2[Message, error] {
-	return QueryStream(ctx, slices.Values([]UserInput{{Content: prompt}}), opts)
+func Query(ctx context.Context, prompt string, opts Options) iter.Seq2[Message, error] {
+	return QueryStream(ctx, slices.Values([]UserInput{Text(prompt)}), opts)
 }
 
 // Run runs a one-shot prompt to completion and returns its final
-// ResultMessage, whose Result field is the final response text. It ranges over
+// ResultMessage, whose Text method returns the final response text. It ranges over
 // Query, dropping the intermediate messages; use Query to observe them.
 //
 // The error is the one Query's stream ends with, returned alongside the
 // ResultMessage when one arrived first. Unlike Query, Run also reports an
 // error result as a *ResultError, and a stream with no result as a
 // *ConnectionError.
-func Run(ctx context.Context, prompt string, opts *Options) (*ResultMessage, error) {
+func Run(ctx context.Context, prompt string, opts Options) (*ResultMessage, error) {
 	return collectResult(Query(ctx, prompt, opts))
 }
 
@@ -50,20 +50,14 @@ func collectResult(messages iter.Seq2[Message, error]) (*ResultMessage, error) {
 			result = r
 		}
 	}
-	if result == nil {
-		return nil, NewConnectionError("Claude Code ended without a result")
-	}
-	if result.IsError {
-		return result, newErrorResultError(result.Data, nil)
-	}
-	return result, nil
+	return checkResult(result)
 }
 
 // QueryStream is Query with several user turns known up front. Every input is
 // written before the responses are consumed, so it stays unidirectional: use
 // Client when a later turn depends on an earlier response.
-func QueryStream(ctx context.Context, inputs iter.Seq[UserInput], opts *Options) iter.Seq2[Message, error] {
-	return queryStream(ctx, inputs, opts, nil)
+func QueryStream(ctx context.Context, inputs iter.Seq[UserInput], opts Options) iter.Seq2[Message, error] {
+	return queryStream(ctx, inputs, &opts, nil)
 }
 
 // queryStream is QueryStream with replaceable session dependencies.

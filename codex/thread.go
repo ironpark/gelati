@@ -3,10 +3,12 @@ package codex
 import (
 	"context"
 	"encoding/json/jsontext"
+	"fmt"
 	"iter"
 	"sync"
 
 	"github.com/ironpark/gelati/internal/jsonx"
+	"github.com/ironpark/gelati/internal/lifecycle"
 )
 
 // ThreadEvent is a thread lifecycle notification delivered to a subscriber.
@@ -28,43 +30,32 @@ type ThreadEvent struct {
 // threadSubscription tracks one subscribed thread and its active turns.
 type threadSubscription struct {
 	id     string
-	events chan ThreadEvent
+	events *broadcast[ThreadEvent]
 	queue  chan queuedNotification
-	quit   chan struct{}
+	// quit ends when the subscription closes; it stops enqueue and the pump.
+	quit lifecycle.Done
 
 	mu      sync.Mutex
-	closed  bool
 	streams []*TurnStream
 }
 
-// emit delivers an event without ever blocking the transport reader. A slow
-// consumer loses events rather than stalling the connection.
+// emit delivers an event to every ThreadEvents loop without ever blocking the
+// transport reader. A slow consumer loses events rather than stalling the
+// connection.
 func (s *threadSubscription) emit(c *Client, event ThreadEvent) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return
-	}
-	select {
-	case s.events <- event:
-	default:
+	if s.events.publish(event) {
 		c.logger.Debug("codex: dropped thread event", "threadId", s.id, "method", event.Method)
 	}
 }
 
-// close stops delivery and closes the event channel.
+// close stops delivery and ends every ThreadEvents loop.
 func (s *threadSubscription) close() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return
+	if s.quit.Finish(nil) {
+		s.events.close()
 	}
-	s.closed = true
-	close(s.events)
-	close(s.quit)
 }
 
-// eventBuffer returns the configured per-subscription channel capacity.
+// eventBuffer returns the configured per-listener buffer capacity.
 func (c *Client) eventBuffer() int {
 	if c.opts.EventBuffer > 0 {
 		return c.opts.EventBuffer
@@ -86,9 +77,8 @@ func (c *Client) subscribe(threadID string) *threadSubscription {
 	}
 	sub := &threadSubscription{
 		id:     threadID,
-		events: make(chan ThreadEvent, c.eventBuffer()),
+		events: newBroadcast[ThreadEvent](c.eventBuffer()),
 		queue:  make(chan queuedNotification, 4*c.eventBuffer()),
-		quit:   make(chan struct{}),
 	}
 	c.threads[threadID] = sub
 	go sub.pump(c)
@@ -102,7 +92,8 @@ func (c *Client) lookup(threadID string) *threadSubscription {
 	return c.threads[threadID]
 }
 
-// unsubscribeLocal removes a thread subscription and closes its channel.
+// unsubscribeLocal removes a thread subscription and ends its ThreadEvents
+// loops.
 func (c *Client) unsubscribeLocal(threadID string) {
 	c.mu.Lock()
 	sub := c.threads[threadID]
@@ -113,15 +104,43 @@ func (c *Client) unsubscribeLocal(threadID string) {
 	}
 }
 
-// ThreadEvents returns the lifecycle event channel for a subscribed thread, or
-// nil when the thread is not subscribed. The channel is closed by
-// UnsubscribeThread and when the client shuts down. Events are dropped rather
-// than queued without bound, so read them promptly.
-func (c *Client) ThreadEvents(threadID string) <-chan ThreadEvent {
-	if sub := c.lookup(threadID); sub != nil {
-		return sub.events
+// ThreadEvents iterates the lifecycle events of a subscribed thread (one
+// opened by StartThread, ResumeThread, or ForkThread). Events are received
+// from the moment the loop starts until it exits; any number of loops may
+// range over the same thread, each seeing every event.
+//
+// The sequence ends cleanly when UnsubscribeThread drops the thread. It ends
+// with an error when ctx ends (ctx's error), when the client shuts down
+// (Client.Err, typically ErrClosed), or immediately when the thread is not
+// subscribed.
+//
+// Each loop buffers up to Options.EventBuffer events; while that buffer is
+// full, newer events are dropped rather than stalling the connection, so
+// keep the loop body short.
+func (c *Client) ThreadEvents(ctx context.Context, threadID string) iter.Seq2[ThreadEvent, error] {
+	return func(yield func(ThreadEvent, error) bool) {
+		sub := c.lookup(threadID)
+		if sub == nil {
+			if err := c.Err(); err != nil {
+				yield(ThreadEvent{}, err)
+			} else {
+				yield(ThreadEvent{}, fmt.Errorf("codex: thread %q is not subscribed", threadID))
+			}
+			return
+		}
+		sub.events.seq(ctx, c.endErr)(yield)
 	}
-	return nil
+}
+
+// endErr is the error a subscription iterator ends with once its source
+// closes: nil after an unsubscribe, the client's error after a shutdown.
+func (c *Client) endErr() error {
+	select {
+	case <-c.tr.Done():
+		return c.Err()
+	default:
+		return nil
+	}
 }
 
 // isThreadMethod reports whether method is a thread lifecycle notification
@@ -201,9 +220,8 @@ func (c *Client) ForkThread(ctx context.Context, params ForkThreadParams) (*Thre
 }
 
 // ReadThread reads a stored thread without resuming or subscribing to it.
-func (c *Client) ReadThread(ctx context.Context, threadID string, includeTurns bool) (*Thread, error) {
+func (c *Client) ReadThread(ctx context.Context, params ReadThreadParams) (*Thread, error) {
 	var result ThreadResult
-	params := ReadThreadParams{ThreadID: threadID, IncludeTurns: includeTurns}
 	if err := c.call(ctx, "thread/read", params, &result); err != nil {
 		return nil, err
 	}
@@ -266,7 +284,7 @@ func (c *Client) DeleteThread(ctx context.Context, threadID string) error {
 }
 
 // UnsubscribeThread drops this connection's subscription to a thread and
-// closes its event channel. The returned status is "unsubscribed",
+// ends its ThreadEvents loops. The returned status is "unsubscribed",
 // "notSubscribed", or "notLoaded".
 func (c *Client) UnsubscribeThread(ctx context.Context, threadID string) (string, error) {
 	var result UnsubscribeResult
@@ -300,6 +318,7 @@ func (c *Client) ListLoadedThreads(ctx context.Context) ([]string, error) {
 
 // shutdown closes every subscription once the transport stops.
 func (c *Client) shutdown() {
+	c.accounts.close()
 	c.mu.Lock()
 	subs := c.threads
 	c.threads = make(map[string]*threadSubscription)

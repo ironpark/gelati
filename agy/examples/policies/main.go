@@ -72,7 +72,7 @@ func main() {
 	defer os.RemoveAll(workspace)
 
 	ctx := context.Background()
-	agent, err := agy.NewAgent(agy.Config{
+	agent, err := agy.NewAgent(agy.Options{
 		Tools:      []*agy.Tool{lookupSecret},
 		Policies:   policies,
 		Workspaces: []string{workspace},
@@ -92,14 +92,14 @@ func main() {
 		"Look up the secret named 'api_key' using lookup_secret.",
 	} {
 		fmt.Printf("\n  User: %s\n", prompt)
-		resp, err := agent.Chat(ctx, agy.Text(prompt))
+		stream, err := agent.Chat(ctx, agy.Text(prompt))
 		if err != nil {
 			log.Fatal(err)
 		}
-		text, err := resp.WaitText(ctx)
+		res, err := stream.Result(ctx)
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Println("  Agent:", text)
+		fmt.Println("  Agent:", res.Text())
 	}
 }

@@ -278,12 +278,26 @@ func TestErrorHierarchy(t *testing.T) {
 	}
 
 	code := 2
-	proc := NewProcessError("Command failed", &code, "boom")
+	proc := NewProcessError("Command failed", &code, "boom", nil)
 	if proc.Error() != "Command failed (exit code: 2)\nError output: boom" {
 		t.Fatalf("message = %q", proc.Error())
 	}
 	if proc.ExitCode == nil || *proc.ExitCode != 2 || proc.Stderr != "boom" {
 		t.Fatalf("unexpected fields: %+v", proc)
+	}
+	cause := errors.New("exit status 2")
+	if !errors.Is(NewProcessError("x", &code, "", cause), cause) {
+		t.Fatal("ProcessError should unwrap to its Err")
+	}
+
+	if err := notConnectedError(); !errors.Is(err, ErrNotConnected) || errors.Is(err, ErrClosed) {
+		t.Fatalf("not connected = %v", err)
+	}
+	if err := closedError("client"); !errors.Is(err, ErrClosed) || errors.Is(err, ErrNotConnected) {
+		t.Fatalf("closed = %v", err)
+	}
+	if errors.Is(NewConnectionError("x"), ErrClosed) {
+		t.Fatal("a plain ConnectionError matches no sentinel")
 	}
 }
 

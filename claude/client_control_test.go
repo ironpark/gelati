@@ -17,7 +17,7 @@ func connectedClientWith(t *testing.T, opts *Options, answers map[string]map[str
 		opts = &Options{}
 	}
 	opts.Transport = ft
-	client := NewClient(opts)
+	client := NewClient(*opts)
 	if err := client.Connect(t.Context()); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestClientControlRequestShapes(t *testing.T) {
 
 func TestClientInitializeAccessors(t *testing.T) {
 	t.Parallel()
-	client := NewClient(nil)
+	client := NewClient(Options{})
 	if client.InitializationResult() != nil || client.SupportedCommands() != nil ||
 		client.SupportedModels() != nil || client.SupportedAgents() != nil || client.AccountInfo() != nil {
 		t.Fatal("accessors should be nil before Connect")

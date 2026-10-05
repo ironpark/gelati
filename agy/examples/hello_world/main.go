@@ -16,9 +16,9 @@ import (
 
 func main() {
 	ctx := context.Background()
-	// The zero Config runs agy.DefaultModel on the Gemini API. Set
-	// Config.Model to pick another model.
-	agent, err := agy.NewAgent(agy.Config{})
+	// The zero Options runs agy.DefaultModel on the Gemini API. Set
+	// Options.Model to pick another model.
+	agent, err := agy.NewAgent(agy.Options{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -29,13 +29,13 @@ func main() {
 
 	prompt := "Say 'Hello World!'"
 	fmt.Println("  User:", prompt)
-	resp, err := agent.Chat(ctx, agy.Text(prompt))
+	stream, err := agent.Chat(ctx, agy.Text(prompt))
 	if err != nil {
 		log.Fatal(err)
 	}
-	text, err := resp.WaitText(ctx)
+	res, err := stream.Result(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("  Agent:", text)
+	fmt.Println("  Agent:", res.Text())
 }

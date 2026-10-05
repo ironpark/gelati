@@ -12,7 +12,9 @@
 // StartThread (or ResumeThread, ForkThread) opens a conversation and subscribes
 // to its events. Run sends user input and waits for the turn's TurnResult, the
 // equivalent of upstream's thread.run; StartTurn returns a TurnStream carrying
-// typed events instead. Close stops the subprocess and releases every waiting
+// typed events instead: range over Events, call Result for the collected
+// TurnResult, Cancel to interrupt the turn on the server, or Close to stop
+// reading it. Client.Close stops the subprocess and releases every waiting
 // caller.
 //
 //	client, err := codex.New(ctx, codex.Options{})
@@ -31,7 +33,7 @@
 //	if err != nil {
 //		return err
 //	}
-//	fmt.Println(result.FinalResponse)
+//	fmt.Println(result.Text())
 //
 // To stream, iterate the events of a TurnStream and then call Result:
 //
@@ -58,7 +60,8 @@
 //	codex.thread_start(...)         Client.StartThread
 //	thread.run(input) -> TurnResult Client.Run, TurnStream.Result
 //	thread.turn(input) -> handle    Client.StartTurn -> *TurnStream
-//	handle.steer / interrupt        Client.SteerTurn / InterruptTurn
+//	handle.steer                    Client.SteerTurn
+//	handle.interrupt                TurnStream.Cancel, Client.InterruptTurn
 //	ExternalMessage                 Client.StartExternalTurn, RunExternal
 //	ApprovalMode, Sandbox           ApprovalMode.Settings, SandboxMode
 //	codex.models()                  Client.ListModels
@@ -74,10 +77,14 @@
 //
 // The transport reader never blocks. Turn events are handed to a per-thread
 // pump that blocks only on its own thread's consumer, so a slow reader delays
-// that thread alone. Thread lifecycle events and account updates use bounded
-// channels whose entries are dropped when the consumer falls behind; turn
-// events are never dropped while the stream is live. Abandoning a TurnStream
-// with Close releases its pump immediately.
+// that thread alone; turn events are never dropped while the stream is live.
+// Closing a TurnStream releases its pump immediately.
+//
+// Client.ThreadEvents and Client.AccountUpdates are iterators: each loop
+// subscribes when it starts and unsubscribes when it exits, so events that
+// arrive before the loop starts are not seen. Every loop has its own bounded
+// buffer (Options.EventBuffer); while it is full, newer events are dropped
+// for that loop rather than stalling the connection.
 //
 // # Failure modes
 //
@@ -89,7 +96,8 @@
 // still retrying arrive as EventError events. If the subprocess exits, the
 // channel from Done closes, Err reports the cause (wrapping a *ProcessError
 // with the exit status and stderr tail), active turn streams fail
-// with ErrClosed, and later calls return ErrClosed.
+// with ErrClosed, ThreadEvents and AccountUpdates loops end with Err, and
+// later calls return ErrClosed.
 //
 // Unknown item types decode into UnknownItem and unmodeled turn-scoped
 // notifications arrive as EventNotification events, so a newer app-server

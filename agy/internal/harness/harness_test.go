@@ -235,6 +235,9 @@ func TestCrashReportsStderr(t *testing.T) {
 	if !strings.Contains(err.Error(), "panic: halted") {
 		t.Fatalf("message lacks stderr: %v", err)
 	}
+	if ce.Exit == nil || ce.Exit.Code == nil || *ce.Exit.Code != 3 {
+		t.Fatalf("ConnectionError.Exit = %+v", ce.Exit)
+	}
 }
 
 func TestDiesEarly(t *testing.T) {
@@ -245,6 +248,9 @@ func TestDiesEarly(t *testing.T) {
 	}
 	if !strings.Contains(se.Stderr, "fatal: boom") || !strings.Contains(err.Error(), "fatal: boom") {
 		t.Fatalf("StartError = %v", err)
+	}
+	if se.Exit == nil || se.Exit.Code == nil || *se.Exit.Code != 2 {
+		t.Fatalf("StartError.Exit = %+v", se.Exit)
 	}
 }
 

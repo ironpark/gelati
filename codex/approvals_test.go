@@ -65,6 +65,7 @@ func TestCommandApprovalAccepted(t *testing.T) {
 		t.Fatal("handler never ran")
 	}
 
+	threadEvents, _ := watchThread(t, client, "thr_1")
 	server.notify(MethodServerRequestResolved, map[string]any{"threadId": "thr_1", "requestId": "sr-1"})
 	server.notify(MethodItemCompleted, map[string]any{"threadId": "thr_1", "turnId": "turn_1",
 		"item": map[string]any{"type": "commandExecution", "id": "item_1",
@@ -72,21 +73,14 @@ func TestCommandApprovalAccepted(t *testing.T) {
 	server.notify(MethodTurnCompleted, map[string]any{"threadId": "thr_1",
 		"turn": map[string]any{"id": "turn_1", "status": "completed"}})
 
-	final, err := stream.Wait(context.Background())
+	final, err := turnOf(stream.Result(context.Background()))
 	if err != nil || final.Status != TurnCompleted {
-		t.Fatalf("Wait = %+v, %v", final, err)
+		t.Fatalf("Result = %+v, %v", final, err)
 	}
 
 	// serverRequest/resolved reaches the thread subscriber.
-	var resolved bool
-	for event := range client.ThreadEvents("thr_1") {
-		if event.Method == MethodServerRequestResolved {
-			resolved = true
-			break
-		}
-	}
-	if !resolved {
-		t.Fatal("serverRequest/resolved not surfaced")
+	if event := recvThreadEvent(t, threadEvents); event.Method != MethodServerRequestResolved {
+		t.Fatalf("thread event = %+v, want serverRequest/resolved", event)
 	}
 }
 
@@ -317,9 +311,9 @@ func TestApprovalContextCanceledOnTurnEnd(t *testing.T) {
 	if got := decisionOf(t, server.awaitReply(replies)); got != DecisionCancel {
 		t.Fatalf("decision = %q", got)
 	}
-	final, err := stream.Wait(context.Background())
+	final, err := turnOf(stream.Result(context.Background()))
 	if err != nil || final.Status != TurnInterrupted {
-		t.Fatalf("Wait = %+v, %v", final, err)
+		t.Fatalf("Result = %+v, %v", final, err)
 	}
 }
 

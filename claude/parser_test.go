@@ -2,6 +2,7 @@ package claude
 
 import (
 	"errors"
+	"github.com/ironpark/gelati/internal/jsonx"
 	"testing"
 )
 
@@ -129,7 +130,7 @@ func TestParseAssistantMessage(t *testing.T) {
 	if am.Model != "claude-opus-4-5" || am.MessageID != "msg_1" || am.StopReason != "end_turn" {
 		t.Fatalf("unexpected: %+v", am)
 	}
-	if am.SessionID != "s1" || am.UUID != "u1" || am.Usage["input_tokens"] != float64(5) {
+	if am.SessionID != "s1" || am.UUID != "u1" || am.Usage.InputTokens != 5 {
 		t.Fatalf("unexpected metadata: %+v", am)
 	}
 	// The unknown block kind is preserved.
@@ -217,6 +218,45 @@ func TestParseHookEventMessage(t *testing.T) {
 	alt := mustParse(t, `{"type":"system","subtype":"hook_started","hook_name":"Stop"}`).(*HookEventMessage)
 	if alt.HookEventName != "Stop" {
 		t.Fatalf("hook name = %q", alt.HookEventName)
+	}
+}
+
+func TestParseUsage(t *testing.T) {
+	t.Parallel()
+	msg := mustParse(t, `{"type":"result","subtype":"success","is_error":false,"session_id":"s1","result":"hi",
+	  "usage":{"input_tokens":3,"output_tokens":4.7,"cache_creation_input_tokens":null,"cache_read_input_tokens":"x",
+	  "server_tool_use":{"web_search_requests":2,"web_fetch_requests":1},"service_tier":"standard",
+	  "cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":5},"speed":"fast"}}`)
+	rm := msg.(*ResultMessage)
+	if rm.Text() != "hi" {
+		t.Fatalf("text = %q", rm.Text())
+	}
+	u := rm.Usage
+	if u.InputTokens != 3 || u.OutputTokens != 4 || u.CacheCreationInputTokens != 0 || u.CacheReadInputTokens != 0 ||
+		u.ServiceTier != "standard" || u.ServerToolUse == nil || *u.ServerToolUse != (ServerToolUse{2, 1}) {
+		t.Fatalf("usage = %+v", u)
+	}
+	if len(u.Extra) != 2 || u.Extra["speed"] != "fast" || u.Extra["cache_creation"] == nil {
+		t.Fatalf("extra = %#v", u.Extra)
+	}
+
+	// Usage round-trips through JSON with its Extra keys.
+	b, err := jsonx.Marshal(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Usage
+	if err := jsonx.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.InputTokens != 3 || back.ServerToolUse == nil || back.Extra["speed"] != "fast" {
+		t.Fatalf("round trip = %s -> %+v", b, back)
+	}
+
+	// A result without usage has the zero Usage.
+	if rm := mustParse(t, `{"type":"result","subtype":"success"}`).(*ResultMessage); rm.Usage.InputTokens != 0 ||
+		rm.Usage.ServerToolUse != nil || rm.Usage.Extra != nil {
+		t.Fatalf("usage = %+v", rm.Usage)
 	}
 }
 

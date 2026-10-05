@@ -337,7 +337,9 @@ func (t *errorResultTracker) translate(err error) error {
 	// The CLI exits non-zero on purpose after reporting an error result;
 	// the generic exit-code error carries nothing the result does not
 	// already say.
-	return newErrorResultError(last, perr.ExitCode)
+	rerr := newErrorResultError(last, perr.ExitCode)
+	rerr.process = perr
+	return rerr
 }
 
 // newErrorResultError reports a failed result frame as a ResultError.

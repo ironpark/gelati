@@ -37,7 +37,7 @@ func periodic(ctx context.Context) {
 		}
 		return nil
 	})
-	session(ctx, agy.Config{
+	session(ctx, agy.Options{
 		SystemInstructions: agy.TextSystemInstructions("You are a system operations and support assistant. " +
 			"You monitor a queue of incoming support tickets. When the user asks for updates, you must check and " +
 			"report any tickets that came in from the background system alert trigger."),
@@ -74,7 +74,7 @@ func custom(ctx context.Context) {
 			}
 		}
 	})
-	session(ctx, agy.Config{
+	session(ctx, agy.Options{
 		SystemInstructions: agy.TextSystemInstructions("You are a CI/CD operations assistant. You monitor " +
 			"pipeline status via an external webhook trigger. When the user asks for updates, you must check and " +
 			"report any failures that came in from the webhook alert trigger."),
@@ -86,8 +86,8 @@ func custom(ctx context.Context) {
 
 // session sends first, arms the trigger, waits five seconds and sends
 // second.
-func session(ctx context.Context, cfg agy.Config, arm *atomic.Bool, first, second string) {
-	agent, err := agy.NewAgent(cfg)
+func session(ctx context.Context, opts agy.Options, arm *atomic.Bool, first, second string) {
+	agent, err := agy.NewAgent(opts)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -106,13 +106,13 @@ func session(ctx context.Context, cfg agy.Config, arm *atomic.Bool, first, secon
 
 func chat(ctx context.Context, agent *agy.Agent, prompt string) {
 	fmt.Printf("\n  User: %s\n", prompt)
-	resp, err := agent.Chat(ctx, agy.Text(prompt))
+	stream, err := agent.Chat(ctx, agy.Text(prompt))
 	if err != nil {
 		log.Fatal(err)
 	}
-	text, err := resp.WaitText(ctx)
+	res, err := stream.Result(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("  Agent:", text)
+	fmt.Println("  Agent:", res.Text())
 }

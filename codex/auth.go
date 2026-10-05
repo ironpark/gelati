@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"fmt"
+	"iter"
 
 	"github.com/ironpark/gelati/internal/jsonx"
 )
@@ -91,12 +92,14 @@ type AccountUpdate struct {
 	PlanType string `json:"planType,omitempty"`
 }
 
-// ReadAccount fetches the current account info. Set refreshToken to force a
-// token refresh in managed ChatGPT mode.
-func (c *Client) ReadAccount(ctx context.Context, refreshToken bool) (*AccountInfo, error) {
-	params := struct {
-		RefreshToken bool `json:"refreshToken"`
-	}{RefreshToken: refreshToken}
+// ReadAccountParams are the parameters of account/read.
+type ReadAccountParams struct {
+	// RefreshToken forces a token refresh in managed ChatGPT mode.
+	RefreshToken bool `json:"refreshToken"`
+}
+
+// ReadAccount fetches the current account info.
+func (c *Client) ReadAccount(ctx context.Context, params ReadAccountParams) (*AccountInfo, error) {
 	var info AccountInfo
 	if err := c.call(ctx, "account/read", params, &info); err != nil {
 		return nil, err
@@ -157,9 +160,16 @@ func (c *Client) Logout(ctx context.Context) error {
 	return c.call(ctx, "account/logout", nil, nil)
 }
 
-// AccountUpdates returns the client's account/updated channel. Updates are
-// dropped rather than queued without bound, so read them promptly.
-func (c *Client) AccountUpdates() <-chan AccountUpdate { return c.accounts }
+// AccountUpdates iterates account/updated notifications received from the
+// moment the loop starts until it exits; any number of loops may run at once,
+// each seeing every update. The sequence ends with ctx's error when ctx ends,
+// and with Client.Err (typically ErrClosed) when the client shuts down.
+//
+// Each loop buffers up to Options.EventBuffer updates; while that buffer is
+// full, newer updates are dropped rather than stalling the connection.
+func (c *Client) AccountUpdates(ctx context.Context) iter.Seq2[AccountUpdate, error] {
+	return c.accounts.seq(ctx, c.endErr)
+}
 
 // AwaitLogin waits for the account/login/completed notification matching
 // loginID. Use the empty string for flows with no login id, such as API-key
@@ -255,9 +265,7 @@ func (c *Client) routeAccountNotification(method string, params jsontext.Value) 
 			c.logger.Debug("codex: bad account/updated payload", "error", err)
 			return
 		}
-		select {
-		case c.accounts <- payload:
-		default:
+		if c.accounts.publish(payload) {
 			c.logger.Debug("codex: dropped account update", "authMode", payload.AuthMode)
 		}
 	}

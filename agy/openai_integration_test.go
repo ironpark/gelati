@@ -30,7 +30,7 @@ func openAIAgent(t *testing.T, ctx context.Context, srv *httptest.Server, tools 
 	}
 	clearGeminiEnv(t)
 	stderr := &syncBuffer{}
-	agent, err := agy.NewAgent(agy.Config{
+	agent, err := agy.NewAgent(agy.Options{
 		CLIPath:    bin,
 		Model:      "test-model",
 		OpenAI:     &agy.OpenAIEndpoint{BaseURL: srv.URL + "/v1"},
@@ -144,12 +144,12 @@ func TestRealHarnessOpenAI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text, err := resp.WaitText(ctx)
+	res, err := resp.Result(ctx)
 	if err != nil {
 		t.Fatalf("turn: %v\nstderr:\n%s", err, stderr.String())
 	}
-	if !strings.Contains(text, "Seattle") {
-		t.Fatalf("answer %q", text)
+	if !strings.Contains(res.Text(), "Seattle") {
+		t.Fatalf("answer %q", res.Text())
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -181,7 +181,7 @@ func TestRealHarnessOpenAIBadRequest(t *testing.T) {
 	agent, _ := openAIAgent(t, ctx, srv, weatherTool())
 	resp, err := agent.Chat(ctx, agy.Text("What's the weather in Seattle?"))
 	if err == nil {
-		_, err = resp.WaitText(ctx)
+		_, err = resp.Result(ctx)
 	}
 	var execErr *agy.ExecutionError
 	var connErr *agy.ConnectionError

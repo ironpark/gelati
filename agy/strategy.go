@@ -20,14 +20,14 @@ import (
 // it (upstream LocalConnectionStrategy). It is the only backend: upstream's
 // OpenAI-compatible strategy (LocalOpenAIConnectionStrategy) only swaps the
 // model list, which here is the OpenAIEndpoint model endpoint
-// (Config.OpenAI).
+// (Options.OpenAI).
 //
 // Seam for further backends: the LiteRT strategy, not ported, would adjust
 // the HarnessConfig between buildHarnessConfig and Initialize below, and run
 // a side server for the session's lifetime.
-func connectLocal(ctx context.Context, cc *compiledConfig) (*Connection, error) {
-	cfg := cc.cfg
-	models := cfg.ResolvedModels()
+func connectLocal(ctx context.Context, cc *compiledOptions) (*Connection, error) {
+	opts := cc.opts
+	models := opts.ResolvedModels()
 	if err := validateModels(models); err != nil {
 		return nil, err
 	}
@@ -35,20 +35,20 @@ func connectLocal(ctx context.Context, cc *compiledConfig) (*Connection, error) 
 	if err != nil {
 		return nil, err
 	}
-	saveDir := cfg.SaveDir
+	saveDir := opts.SaveDir
 	if saveDir == "" {
 		if saveDir, err = os.MkdirTemp("", "antigravity_"); err != nil {
 			return nil, err
 		}
 		cc.logger.Info("no SaveDir specified; using a temporary directory", "dir", saveDir)
 	}
-	opts := harness.Options{
-		CLIPath:          cfg.CLIPath,
-		Env:              cfg.Env,
+	hopts := harness.Options{
+		CLIPath:          opts.CLIPath,
+		Env:              opts.Env,
 		StorageDirectory: saveDir,
-		Stderr:           cfg.Stderr,
+		Stderr:           opts.Stderr,
 	}
-	h, err := harness.Start(ctx, opts)
+	h, err := harness.Start(ctx, hopts)
 	if err != nil {
 		// Also for a missing binary, which still matches ErrCLINotFound.
 		return nil, connectionErrorFrom(err)
@@ -100,10 +100,10 @@ func warnIfSandboxUnavailable(logger *slog.Logger, rc *wire.RunCommandToolConfig
 
 // buildHarnessConfig translates a compiled configuration and its resolved
 // models into the HarnessConfig sent at initialization.
-func buildHarnessConfig(cc *compiledConfig, resolvedModels []ModelTarget) (*wire.HarnessConfig, error) {
-	cfg := cc.cfg
-	caps := cfg.capabilities().clone()
-	schema, err := cfg.responseSchemaJSON()
+func buildHarnessConfig(cc *compiledOptions, resolvedModels []ModelTarget) (*wire.HarnessConfig, error) {
+	opts := cc.opts
+	caps := opts.capabilities().clone()
+	schema, err := opts.responseSchemaJSON()
 	if err != nil {
 		return nil, err
 	}
@@ -121,12 +121,12 @@ func buildHarnessConfig(cc *compiledConfig, resolvedModels []ModelTarget) (*wire
 			allTools[t.name] = p
 		}
 	}
-	rootTools, err := resolveToolRefs(cfg.Tools, cfg.ToolNames, allTools)
+	rootTools, err := resolveToolRefs(opts.Tools, opts.ToolNames, allTools)
 	if err != nil {
 		return nil, err
 	}
 
-	workspaces, err := cfg.ResolvedWorkspaces()
+	workspaces, err := opts.ResolvedWorkspaces()
 	if err != nil {
 		return nil, err
 	}
@@ -141,12 +141,12 @@ func buildHarnessConfig(cc *compiledConfig, resolvedModels []ModelTarget) (*wire
 	}
 
 	var mcp []*wire.McpServerConfig
-	for _, srv := range cfg.MCPServers {
+	for _, srv := range opts.MCPServers {
 		mcp = append(mcp, mcpServerProto(srv))
 	}
 
 	var subagents []*wire.CustomAgent
-	for _, sub := range cfg.Subagents {
+	for _, sub := range opts.Subagents {
 		subCaps := sub.Capabilities
 		if subCaps == nil {
 			subCaps = &SubagentCapabilities{EnabledTools: ReadOnlyTools()}
@@ -169,19 +169,19 @@ func buildHarnessConfig(cc *compiledConfig, resolvedModels []ModelTarget) (*wire
 		subagents = append(subagents, ca)
 	}
 
-	compaction, legacyThreshold := compactionProto(cfg.Compaction, caps)
-	appDataDir := cfg.AppDataDir
+	compaction, legacyThreshold := compactionProto(opts.Compaction, caps)
+	appDataDir := opts.AppDataDir
 	if appDataDir == "" {
 		appDataDir = defaultAppDataDir()
 	}
 	hc := wire.HarnessConfig_builder{
 		Tools:                   rootTools,
-		SystemInstructions:      systemInstructionsProto(cfg.SystemInstructions),
-		CascadeId:               new(cfg.ConversationID),
-		SessionContinuationMode: new(sessionModeProto(cfg.SessionContinuationMode)),
+		SystemInstructions:      systemInstructionsProto(opts.SystemInstructions),
+		CascadeId:               new(opts.ConversationID),
+		SessionContinuationMode: new(sessionModeProto(opts.SessionContinuationMode)),
 		Models:                  models,
 		Workspaces:              workspaceProtos,
-		SkillsPaths:             slices.Clone(cfg.SkillsPaths),
+		SkillsPaths:             slices.Clone(opts.SkillsPaths),
 		HarnessSideTools:        rootToolsProto(caps),
 		CompactionThreshold:     new(legacyThreshold),
 		CompactionConfig:        compaction,
@@ -191,8 +191,8 @@ func buildHarnessConfig(cc *compiledConfig, resolvedModels []ModelTarget) (*wire
 		EnabledHooks:            enabledHooks(cc.hooks),
 		CustomSubagents:         subagents,
 		AgentBehavior:           new(agentBehaviorProto(caps.behavior())),
-		RetryConfig:             retryProto(cfg.Retry),
-		BudgetConfig:            budgetProto(cfg.Budget),
+		RetryConfig:             retryProto(opts.Retry),
+		BudgetConfig:            budgetProto(opts.Budget),
 		PolicyConfig:            cc.policy,
 	}.Build()
 	if t := caps.ToolOutputTruncation; t != nil {

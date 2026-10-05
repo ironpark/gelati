@@ -156,7 +156,7 @@ func parseAssistantMessage(data map[string]any, src []byte) Message {
 	// Generic subtrees are taken from the already-decoded frame instead of
 	// being decoded a second time.
 	innerMap, _ := data["message"].(map[string]any)
-	usage, _ := innerMap["usage"].(map[string]any)
+	usageMap, _ := innerMap["usage"].(map[string]any)
 	container, _ := innerMap["container"].(map[string]any)
 	contextManagement, _ := innerMap["context_management"].(map[string]any)
 	usageReport, _ := data["usage_report"].(map[string]any)
@@ -173,7 +173,7 @@ func parseAssistantMessage(data map[string]any, src []byte) Message {
 		Model:                         inner.Model,
 		ParentToolUseID:               w.ParentToolUseID,
 		Error:                         w.Error,
-		Usage:                         usage,
+		Usage:                         usageFromMap(usageMap),
 		MessageID:                     inner.ID,
 		StopReason:                    inner.StopReason,
 		SessionID:                     w.SessionID,
@@ -321,7 +321,8 @@ func parseResultMessage(data map[string]any, src []byte) Message {
 	}
 	decodeLenient(src, &w)
 	m := &w.ResultMessage
-	m.Usage, _ = data["usage"].(map[string]any)
+	usage, _ := data["usage"].(map[string]any)
+	m.Usage = usageFromMap(usage)
 	m.Errors = normalizeResultErrors(data["errors"])
 	m.Origin = parseOrigin(data)
 	m.Data = data

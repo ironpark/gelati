@@ -3,6 +3,8 @@ package codex
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
+	"iter"
 	"testing"
 	"time"
 )
@@ -59,7 +61,7 @@ func TestStartThread(t *testing.T) {
 	if thread.ID != "thr_123" || thread.SessionID != "thr_123" {
 		t.Fatalf("thread = %+v", thread)
 	}
-	if client.ThreadEvents("thr_123") == nil {
+	if client.lookup("thr_123") == nil {
 		t.Fatal("thread/start did not subscribe")
 	}
 }
@@ -111,7 +113,7 @@ func TestResumeAndForkThread(t *testing.T) {
 	if forked.ID != "thr_456" || forked.ForkedFromID != "thr_123" {
 		t.Fatalf("forked = %+v", forked)
 	}
-	if client.ThreadEvents("thr_456") == nil {
+	if client.lookup("thr_456") == nil {
 		t.Fatal("fork did not subscribe")
 	}
 }
@@ -134,7 +136,7 @@ func TestReadThread(t *testing.T) {
 		}})
 	})
 
-	thread, err := client.ReadThread(context.Background(), "thr_123", true)
+	thread, err := client.ReadThread(context.Background(), ReadThreadParams{ThreadID: "thr_123", IncludeTurns: true})
 	<-done
 	if err != nil {
 		t.Fatalf("ReadThread: %v", err)
@@ -143,7 +145,7 @@ func TestReadThread(t *testing.T) {
 		t.Fatalf("status = %+v", thread.Status)
 	}
 	// thread/read must not subscribe.
-	if client.ThreadEvents("thr_123") != nil {
+	if client.lookup("thr_123") != nil {
 		t.Fatal("thread/read subscribed to the thread")
 	}
 }
@@ -307,10 +309,7 @@ func TestUnsubscribeThread(t *testing.T) {
 	if _, err := client.StartThread(context.Background(), StartThreadParams{}); err != nil {
 		t.Fatalf("StartThread: %v", err)
 	}
-	events := client.ThreadEvents("thr_1")
-	if events == nil {
-		t.Fatal("no subscription")
-	}
+	events, errs := watchThread(t, client, "thr_1")
 
 	status, err := client.UnsubscribeThread(context.Background(), "thr_1")
 	<-done
@@ -323,12 +322,15 @@ func TestUnsubscribeThread(t *testing.T) {
 	select {
 	case _, ok := <-events:
 		if ok {
-			t.Fatal("event channel still open")
+			t.Fatal("ThreadEvents still running")
+		}
+		if err := <-errs; err != nil {
+			t.Fatalf("ThreadEvents ended with %v, want a clean end", err)
 		}
 	case <-time.After(fakeTimeout):
-		t.Fatal("event channel not closed by unsubscribe")
+		t.Fatal("ThreadEvents not ended by unsubscribe")
 	}
-	if client.ThreadEvents("thr_1") != nil {
+	if client.lookup("thr_1") != nil {
 		t.Fatal("subscription not removed")
 	}
 }
@@ -349,8 +351,8 @@ func TestThreadNotificationRouting(t *testing.T) {
 	}
 	<-done
 
-	first := client.ThreadEvents("thr_1")
-	second := client.ThreadEvents("thr_2")
+	first, _ := watchThread(t, client, "thr_1")
+	second, _ := watchThread(t, client, "thr_2")
 
 	server.notify(MethodThreadStatusChanged, map[string]any{
 		"threadId": "thr_1",
@@ -394,9 +396,10 @@ func TestThreadStartedNotificationCarriesThread(t *testing.T) {
 	}
 	<-done
 
+	events, _ := watchThread(t, client, "thr_1")
 	server.notify(MethodThreadStarted, map[string]any{"thread": map[string]any{"id": "thr_1", "preview": "hello"}})
 
-	event := recvThreadEvent(t, client.ThreadEvents("thr_1"))
+	event := recvThreadEvent(t, events)
 	if event.Thread == nil || event.Thread.Preview != "hello" {
 		t.Fatalf("event = %+v", event)
 	}
@@ -417,16 +420,115 @@ func TestThreadEventsClosedOnShutdown(t *testing.T) {
 	}
 	<-done
 
-	events := client.ThreadEvents("thr_1")
+	events, errs := watchThread(t, client, "thr_1")
 	_ = client.Close()
 
 	select {
 	case _, ok := <-events:
 		if ok {
-			t.Fatal("channel still open after Close")
+			t.Fatal("ThreadEvents still running after Close")
+		}
+		if err := <-errs; !errors.Is(err, ErrClosed) {
+			t.Fatalf("ThreadEvents ended with %v, want ErrClosed", err)
 		}
 	case <-time.After(fakeTimeout):
-		t.Fatal("channel not closed after Close")
+		t.Fatal("ThreadEvents not ended after Close")
+	}
+
+	// A loop started after the shutdown ends at once with the client's error.
+	for _, err := range client.ThreadEvents(context.Background(), "thr_1") {
+		if !errors.Is(err, ErrClosed) {
+			t.Fatalf("late ThreadEvents = %v, want ErrClosed", err)
+		}
+	}
+}
+
+func TestThreadEventsNotSubscribed(t *testing.T) {
+	client, _ := connect(t, Options{})
+	var got error
+	for _, err := range client.ThreadEvents(context.Background(), "thr_missing") {
+		got = err
+	}
+	if got == nil {
+		t.Fatal("ThreadEvents on an unsubscribed thread yielded no error")
+	}
+}
+
+func TestThreadEventsContextAndFanOut(t *testing.T) {
+	client, server := connect(t, Options{})
+	done := serve(t, func() {
+		req := server.expect("thread/start")
+		server.respond(req, map[string]any{"thread": map[string]any{"id": "thr_1"}})
+	})
+	if _, err := client.StartThread(context.Background(), StartThreadParams{}); err != nil {
+		t.Fatalf("StartThread: %v", err)
+	}
+	<-done
+
+	first, _ := watchThread(t, client, "thr_1")
+	ctx, cancel := context.WithCancel(context.Background())
+	second, secondErrs := watchSeq(t, client.lookup("thr_1").events, client.ThreadEvents(ctx, "thr_1"))
+
+	server.notify(MethodThreadArchived, map[string]any{"threadId": "thr_1"})
+	if got := recvThreadEvent(t, first); got.Method != MethodThreadArchived {
+		t.Fatalf("first = %+v", got)
+	}
+	if got := recvThreadEvent(t, second); got.Method != MethodThreadArchived {
+		t.Fatalf("second = %+v", got)
+	}
+
+	cancel()
+	for range second {
+	}
+	if err := <-secondErrs; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled loop ended with %v", err)
+	}
+	waitFor(t, func() bool { return client.lookup("thr_1").events.listenerCount() == 1 })
+}
+
+// watchThread ranges over ThreadEvents for threadID on a goroutine until the
+// test ends, forwarding events. It returns once the loop is registered.
+func watchThread(t *testing.T, client *Client, threadID string) (<-chan ThreadEvent, <-chan error) {
+	t.Helper()
+	sub := client.lookup(threadID)
+	if sub == nil {
+		t.Fatalf("thread %s not subscribed", threadID)
+	}
+	return watchSeq(t, sub.events, client.ThreadEvents(t.Context(), threadID))
+}
+
+// watchSeq ranges over seq on a goroutine, forwarding values until it ends;
+// the error it ended with, or nil, follows on the second channel. It returns
+// once seq has registered a listener on b.
+func watchSeq[T any](t *testing.T, b *broadcast[T], seq iter.Seq2[T, error]) (<-chan T, <-chan error) {
+	t.Helper()
+	before := b.listenerCount()
+	values := make(chan T, 64)
+	errs := make(chan error, 1)
+	go func() {
+		defer close(values)
+		for v, err := range seq {
+			if err != nil {
+				errs <- err
+				return
+			}
+			values <- v
+		}
+		errs <- nil
+	}()
+	waitFor(t, func() bool { return b.listenerCount() > before })
+	return values, errs
+}
+
+// waitFor polls cond until it holds or the fake timeout passes.
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(fakeTimeout)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("condition not met in time")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

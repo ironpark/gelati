@@ -21,17 +21,17 @@ func main() {
 	fmt.Println("  Save directory:", saveDir)
 
 	fmt.Println("\n  === Session 1: establishing context ===")
-	id := session(ctx, agy.Config{SaveDir: saveDir}, "Remember this: my favorite color is blue.")
+	id := session(ctx, agy.Options{SaveDir: saveDir}, "Remember this: my favorite color is blue.")
 	fmt.Println("  Assigned conversation ID:", id)
 
 	fmt.Println("\n  === Session 2: resuming and verifying recall ===")
-	session(ctx, agy.Config{SaveDir: saveDir, ConversationID: id}, "What is my favorite color?")
+	session(ctx, agy.Options{SaveDir: saveDir, ConversationID: id}, "What is my favorite color?")
 }
 
 // session runs one agent session with a single prompt and returns its
 // conversation ID.
-func session(ctx context.Context, cfg agy.Config, prompt string) string {
-	agent, err := agy.NewAgent(cfg)
+func session(ctx context.Context, opts agy.Options, prompt string) string {
+	agent, err := agy.NewAgent(opts)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -41,14 +41,14 @@ func session(ctx context.Context, cfg agy.Config, prompt string) string {
 	defer agent.Close()
 
 	fmt.Println("  User:", prompt)
-	resp, err := agent.Chat(ctx, agy.Text(prompt))
+	stream, err := agent.Chat(ctx, agy.Text(prompt))
 	if err != nil {
 		log.Fatal(err)
 	}
-	text, err := resp.WaitText(ctx)
+	res, err := stream.Result(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("  Agent:", text)
+	fmt.Println("  Agent:", res.Text())
 	return agent.ConversationID()
 }

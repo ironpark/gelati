@@ -48,8 +48,8 @@ func (c *Client) SetThreadGoal(ctx context.Context, params SetThreadGoalParams) 
 	return &result.Goal, nil
 }
 
-// ThreadGoal returns a thread's goal, or nil when it has none.
-func (c *Client) ThreadGoal(ctx context.Context, threadID string) (*ThreadGoal, error) {
+// ReadThreadGoal returns a thread's goal, or nil when it has none.
+func (c *Client) ReadThreadGoal(ctx context.Context, threadID string) (*ThreadGoal, error) {
 	var result struct {
 		Goal *ThreadGoal `json:"goal"`
 	}
