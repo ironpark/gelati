@@ -22,14 +22,12 @@
 package sessionstoretest
 
 import (
-	"encoding/json/v2"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/ironpark/gelati/claude"
-
 	"github.com/ironpark/gelati/internal/jsonx"
 )
 
@@ -122,12 +120,12 @@ func sub(k claude.SessionKey, subpath string) claude.SessionKey {
 // normalize round-trips v through JSON.
 func normalize(t *testing.T, v any) any {
 	t.Helper()
-	b, err := json.Marshal(v, json.Deterministic(true))
+	b, err := jsonx.Marshal(v)
 	if err != nil {
 		t.Fatalf("marshal %v: %v", v, err)
 	}
 	var out any
-	if err := json.Unmarshal(b, &out, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(b, &out); err != nil {
 		t.Fatal(err)
 	}
 	return out

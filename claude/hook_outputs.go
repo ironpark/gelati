@@ -98,7 +98,7 @@ func (h HookOutput) MarshalJSON() ([]byte, error) {
 func (h *HookOutput) UnmarshalJSON(data []byte) error {
 	type alias HookOutput
 	var a alias
-	if err := json.Unmarshal(data, &a, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(data, &a); err != nil {
 		return err
 	}
 	extra, err := jsonx.ExtraFields(data, func(k string) bool { return hookOutputFields[k] })
@@ -291,7 +291,7 @@ func (o *PermissionRequestHookSpecificOutput) MarshalJSON() ([]byte, error) {
 		}
 		out["decision"] = decision
 	}
-	return json.Marshal(out, marshalOpts)
+	return json.Marshal(out, jsonx.LegacyEncode)
 }
 
 // ElicitationHookSpecificOutput answers an Elicitation hook on the user's

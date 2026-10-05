@@ -3,7 +3,6 @@ package agy
 import (
 	"bytes"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"fmt"
 	"os"
 	"strings"
@@ -127,7 +126,7 @@ type resultField struct {
 // of a field's names that is present wins.
 func decodeResultObject(s string, fields ...resultField) bool {
 	var obj map[string]jsontext.Value
-	if err := json.Unmarshal([]byte(s), &obj, jsonx.Foreign); err != nil || obj == nil {
+	if err := jsonx.Unmarshal([]byte(s), &obj); err != nil || obj == nil {
 		return false
 	}
 	for _, f := range fields {
@@ -139,7 +138,7 @@ func decodeResultObject(s string, fields ...resultField) bool {
 			if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 				return false
 			}
-			if err := json.Unmarshal(raw, f.dst, jsonx.Foreign); err != nil {
+			if err := jsonx.Unmarshal(raw, f.dst); err != nil {
 				return false
 			}
 			break

@@ -2,7 +2,6 @@ package codex
 
 import (
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"fmt"
 
 	"github.com/ironpark/gelati/internal/jsonx"
@@ -241,27 +240,27 @@ func (MentionInput) inputItem()    {}
 
 // MarshalJSON emits the tagged text input item.
 func (i TextInput) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{"type": "text", "text": i.Text}, json.Deterministic(true))
+	return jsonx.Marshal(map[string]any{"type": "text", "text": i.Text})
 }
 
 // MarshalJSON emits the tagged image input item.
 func (i ImageInput) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{"type": "image", "url": i.URL}, json.Deterministic(true))
+	return jsonx.Marshal(map[string]any{"type": "image", "url": i.URL})
 }
 
 // MarshalJSON emits the tagged local image input item.
 func (i LocalImageInput) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{"type": "localImage", "path": i.Path}, json.Deterministic(true))
+	return jsonx.Marshal(map[string]any{"type": "localImage", "path": i.Path})
 }
 
 // MarshalJSON emits the tagged skill input item.
 func (i SkillInput) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{"type": "skill", "name": i.Name, "path": i.Path}, json.Deterministic(true))
+	return jsonx.Marshal(map[string]any{"type": "skill", "name": i.Name, "path": i.Path})
 }
 
 // MarshalJSON emits the tagged mention input item.
 func (i MentionInput) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{"type": "mention", "name": i.Name, "path": i.Path}, json.Deterministic(true))
+	return jsonx.Marshal(map[string]any{"type": "mention", "name": i.Name, "path": i.Path})
 }
 
 // Text is shorthand for a single text input item.
@@ -422,7 +421,7 @@ func (e *TurnError) HTTPStatusCode() (int, bool) {
 	var obj struct {
 		HTTPStatusCode *int `json:"httpStatusCode"`
 	}
-	if err := json.Unmarshal(detail, &obj, jsonx.Foreign); err != nil || obj.HTTPStatusCode == nil {
+	if err := jsonx.Unmarshal(detail, &obj); err != nil || obj.HTTPStatusCode == nil {
 		return 0, false
 	}
 	return *obj.HTTPStatusCode, true
@@ -435,11 +434,11 @@ func (e *TurnError) errorInfo() (string, jsontext.Value) {
 		return "", nil
 	}
 	var s string
-	if err := json.Unmarshal(e.CodexErrorInfo, &s, jsonx.Foreign); err == nil {
+	if err := jsonx.Unmarshal(e.CodexErrorInfo, &s); err == nil {
 		return s, nil
 	}
 	var obj map[string]jsontext.Value
-	if err := json.Unmarshal(e.CodexErrorInfo, &obj, jsonx.Foreign); err != nil || len(obj) != 1 {
+	if err := jsonx.Unmarshal(e.CodexErrorInfo, &obj); err != nil || len(obj) != 1 {
 		return "", nil
 	}
 	for kind, detail := range obj {
@@ -815,12 +814,12 @@ func (t *ThreadItem) UnmarshalJSON(data []byte) error {
 		Type string `json:"type"`
 		ID   string `json:"id"`
 	}
-	if err := json.Unmarshal(data, &head, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(data, &head); err != nil {
 		return fmt.Errorf("codex: decode thread item: %w", err)
 	}
 
 	decode := func(v Item) error {
-		if err := json.Unmarshal(data, v, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(data, v); err != nil {
 			return fmt.Errorf("codex: decode %s item: %w", head.Type, err)
 		}
 		t.Item = v
@@ -870,7 +869,7 @@ func (t ThreadItem) MarshalJSON() ([]byte, error) {
 	if t.Item == nil {
 		return []byte("null"), nil
 	}
-	return json.Marshal(t.Item)
+	return jsonx.Marshal(t.Item)
 }
 
 // ---------------------------------------------------------------------------

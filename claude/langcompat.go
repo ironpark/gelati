@@ -6,6 +6,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // Helpers reproducing Python and JavaScript semantics (whitespace, string
@@ -263,6 +265,6 @@ func jsStrictEqual(a any, aok bool, b any, bok bool) bool {
 // jsJSONStringify serializes a decoded JSON value for equality checks.
 // Keys are sorted, so (unlike JSON.stringify) key order is ignored.
 func jsJSONStringify(v any) string {
-	b, _ := json.Marshal(v, marshalOpts)
+	b, _ := json.Marshal(v, jsonx.LegacyEncode)
 	return string(b)
 }

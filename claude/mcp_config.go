@@ -3,6 +3,8 @@ package claude
 import (
 	"encoding/json/v2"
 	"reflect"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // ---------------------------------------------------------------------------
@@ -39,7 +41,7 @@ func (c *MCPStdioServerConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type string `json:"type"`
 		*alias
-	}{"stdio", (*alias)(c)}, marshalOpts)
+	}{"stdio", (*alias)(c)}, jsonx.LegacyEncode)
 }
 
 // MCPSSEServerConfig connects to an MCP server over server-sent events.
@@ -63,7 +65,7 @@ func (c *MCPSSEServerConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type string `json:"type"`
 		*alias
-	}{"sse", (*alias)(c)}, marshalOpts)
+	}{"sse", (*alias)(c)}, jsonx.LegacyEncode)
 }
 
 // MCPHTTPServerConfig connects to an MCP server over streamable HTTP.
@@ -87,7 +89,7 @@ func (c *MCPHTTPServerConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type string `json:"type"`
 		*alias
-	}{"http", (*alias)(c)}, marshalOpts)
+	}{"http", (*alias)(c)}, jsonx.LegacyEncode)
 }
 
 // MCPSDKServerConfig serves an in-process MCP server to the CLI over the
@@ -124,7 +126,7 @@ func (c *MCPSDKServerConfig) MarshalJSON() ([]byte, error) {
 	if c.Timeout > 0 {
 		out["timeout"] = c.Timeout
 	}
-	return json.Marshal(out, marshalOpts)
+	return json.Marshal(out, jsonx.LegacyEncode)
 }
 
 // MCPServerToolPolicy sets the permission policy of one tool of an SSE or HTTP

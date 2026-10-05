@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -142,7 +141,7 @@ func IsOverloaded(err error) bool {
 		return false
 	}
 	var data any
-	if json.Unmarshal(rpcErr.Data, &data, jsonx.Foreign) != nil {
+	if jsonx.Unmarshal(rpcErr.Data, &data) != nil {
 		return false
 	}
 	return mentionsOverload(data)

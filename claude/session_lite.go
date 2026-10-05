@@ -3,7 +3,6 @@ package claude
 import (
 	"bytes"
 	"cmp"
-	"encoding/json/v2"
 	"errors"
 	"io"
 	"math"
@@ -74,7 +73,7 @@ func unescapeJSONString(raw string) string {
 		return raw
 	}
 	var s string
-	if err := json.Unmarshal([]byte(`"`+raw+`"`), &s, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal([]byte(`"`+raw+`"`), &s); err != nil {
 		return raw
 	}
 	return s
@@ -164,7 +163,7 @@ func lastTypedStringField(text, typ, field string) (string, bool) {
 		end = i
 		if strings.Contains(line, fieldNeedle) && strings.Contains(line, typeNeedle) {
 			var obj map[string]any
-			if json.Unmarshal([]byte(line), &obj, jsonx.Foreign) == nil && obj["type"] == typ {
+			if jsonx.Unmarshal([]byte(line), &obj) == nil && obj["type"] == typ {
 				if v, ok := obj[field].(string); ok {
 					return v, true
 				}
@@ -186,7 +185,7 @@ func firstLineStringField(text, field string) (string, bool) {
 			continue
 		}
 		var obj map[string]any
-		if json.Unmarshal([]byte(line), &obj, jsonx.Foreign) == nil {
+		if jsonx.Unmarshal([]byte(line), &obj) == nil {
 			if v, ok := obj[field].(string); ok {
 				return v, true
 			}
@@ -352,7 +351,7 @@ func extractFirstPromptFromHead(head string) string {
 			continue
 		}
 		var entry map[string]any
-		if json.Unmarshal([]byte(line), &entry, jsonx.Foreign) != nil || entry == nil {
+		if jsonx.Unmarshal([]byte(line), &entry) != nil || entry == nil {
 			continue
 		}
 		if prompt, ok := promptFromUserEntry(entry, &commandFallback); ok {
@@ -449,7 +448,7 @@ func mtimeFromJSONLTail(jsonl string) int64 {
 	trimmed := strings.TrimRightFunc(jsonl, pyIsSpace)
 	lastLine := trimmed[strings.LastIndexByte(trimmed, '\n')+1:]
 	var obj map[string]any
-	if json.Unmarshal([]byte(lastLine), &obj, jsonx.Foreign) == nil {
+	if jsonx.Unmarshal([]byte(lastLine), &obj) == nil {
 		if ts, ok := obj["timestamp"].(string); ok {
 			if ms, ok := isoToEpochMillis(ts); ok {
 				return ms
@@ -590,7 +589,7 @@ func readCustomTitleSidecar(transcriptPath, sessionID string) string {
 		return ""
 	}
 	var obj map[string]any
-	if json.Unmarshal(b, &obj, jsonx.Foreign) != nil {
+	if jsonx.Unmarshal(b, &obj) != nil {
 		return ""
 	}
 	title, _ := obj["customTitle"].(string)
@@ -622,7 +621,7 @@ func continuedInSessionID(tail string) string {
 		isMessage := strings.Contains(line, `"type":"user"`) || strings.Contains(line, `"type":"assistant"`)
 		if isMarker || isMessage {
 			var obj any
-			if json.Unmarshal([]byte(line), &obj, jsonx.Foreign) == nil {
+			if jsonx.Unmarshal([]byte(line), &obj) == nil {
 				m, _ := obj.(map[string]any)
 				if isMarker && m["type"] == "continued-in" {
 					if id, ok := m["continuedInSessionId"].(string); ok {

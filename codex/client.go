@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"fmt"
 	"io"
 	"log/slog"
@@ -246,7 +245,7 @@ func routeIDs(params jsontext.Value) (threadID, turnID string) {
 		return "", ""
 	}
 	var env notificationEnvelope
-	if err := json.Unmarshal(params, &env, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(params, &env); err != nil {
 		return "", ""
 	}
 	threadID, turnID = env.ThreadID, env.TurnID

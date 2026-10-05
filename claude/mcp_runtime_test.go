@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 func TestMCPToolMetaAndInstructions(t *testing.T) {
@@ -34,7 +36,7 @@ func TestMCPToolMetaAndInstructions(t *testing.T) {
 	if init["instructions"] != "Use srv for math." {
 		t.Fatalf("initialize = %#v", init)
 	}
-	if caps, _ := json.Marshal(init["capabilities"], json.Deterministic(true)); string(caps) != `{"tools":{"listChanged":true}}` {
+	if caps, _ := jsonx.Marshal(init["capabilities"]); string(caps) != `{"tools":{"listChanged":true}}` {
 		t.Fatalf("capabilities = %s", caps)
 	}
 
@@ -46,7 +48,7 @@ func TestMCPToolMetaAndInstructions(t *testing.T) {
 		`{"anthropic/alwaysLoad":false,"ui":{"resourceUri":"ui://x"}}`,
 	}
 	for i, tool := range tools {
-		meta, _ := json.Marshal(tool.(map[string]any)["_meta"], json.Deterministic(true))
+		meta, _ := jsonx.Marshal(tool.(map[string]any)["_meta"])
 		if string(meta) != want[i] {
 			t.Fatalf("tool %d _meta = %s, want %s", i, meta, want[i])
 		}
@@ -85,7 +87,7 @@ func TestToolResultWire(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := json.Marshal(tc.result.wire(), json.Deterministic(true))
+			got, err := jsonx.Marshal(tc.result.wire())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -117,7 +119,7 @@ func TestMCPServerConfigJSONTSFields(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := json.Marshal(tc.cfg, json.Deterministic(true))
+			got, err := jsonx.Marshal(tc.cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -150,7 +152,7 @@ func (h *funcHandler) HandleMCPMessage(ctx context.Context, raw jsontext.Value) 
 	if err != nil || out == nil {
 		return nil, err
 	}
-	return json.Marshal(out, json.Deterministic(true))
+	return jsonx.Marshal(out)
 }
 
 func (h *funcHandler) ConnectMCP(send MCPSendFunc) func() {
@@ -198,15 +200,15 @@ func TestSDKMCPInitializeFields(t *testing.T) {
 	}}
 	fields := sdkMCPInitializeFields(sdkMCPServers(opts))
 
-	names, _ := json.Marshal(fields["sdkMcpServers"], json.Deterministic(true))
+	names, _ := jsonx.Marshal(fields["sdkMcpServers"])
 	if string(names) != `["calc","failing","noTools","slow"]` {
 		t.Fatalf("sdkMcpServers = %s", names)
 	}
-	configs, _ := json.Marshal(fields["sdkMcpServerConfigs"], json.Deterministic(true))
+	configs, _ := jsonx.Marshal(fields["sdkMcpServerConfigs"])
 	if string(configs) != `{"calc":{"timeout":5000}}` {
 		t.Fatalf("sdkMcpServerConfigs = %s", configs)
 	}
-	manifests, _ := json.Marshal(fields["sdkMcpServerManifests"], json.Deterministic(true))
+	manifests, _ := jsonx.Marshal(fields["sdkMcpServerManifests"])
 	want := `{"calc":{"initializeResult":{"capabilities":{"tools":{"listChanged":true}},"instructions":"hi","protocolVersion":"2025-11-25","serverInfo":{"name":"calc","version":"2.0.0"}},` +
 		`"toolsListResult":{"tools":[{"description":"","inputSchema":{"properties":{},"type":"object"},"name":"add"}]}},` +
 		`"noTools":{"initializeResult":{"capabilities":{},"protocolVersion":"2025-11-25","serverInfo":{"name":"x","version":"1"}}}}`
@@ -258,7 +260,7 @@ func TestEngineMCPNotificationAckShape(t *testing.T) {
 	t.Parallel()
 	_, ft := mcpEngine(t, map[string]MCPServerConfig{"calc": NewSDKMCPServer("calc", "")})
 	pushMCP(ft, "n1", "calc", map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
-	got, _ := json.Marshal(ft.nextResponse(t)["response"], json.Deterministic(true))
+	got, _ := jsonx.Marshal(ft.nextResponse(t)["response"])
 	if string(got) != `{"mcp_response":{"id":0,"jsonrpc":"2.0","result":{}}}` {
 		t.Fatalf("ack = %s", got)
 	}
@@ -324,7 +326,7 @@ func TestMCPServerNotifiesConnectedSessions(t *testing.T) {
 	if id, _ := frame["request_id"].(string); len(id) != 36 {
 		t.Fatalf("request_id = %v, want a UUID", frame["request_id"])
 	}
-	msg, _ := json.Marshal(request["message"], json.Deterministic(true))
+	msg, _ := jsonx.Marshal(request["message"])
 	if string(msg) != `{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}` {
 		t.Fatalf("message = %s", msg)
 	}
@@ -343,7 +345,7 @@ func TestMCPServerNotifiesConnectedSessions(t *testing.T) {
 	if err := server.Notify(t.Context(), "notifications/message", map[string]any{"level": "info", "data": "x"}); err != nil {
 		t.Fatalf("notify: %v", err)
 	}
-	msg, _ = json.Marshal(ft.nextWrite(t)["request"].(map[string]any)["message"], json.Deterministic(true))
+	msg, _ = jsonx.Marshal(ft.nextWrite(t)["request"].(map[string]any)["message"])
 	if string(msg) != `{"jsonrpc":"2.0","method":"notifications/message","params":{"data":"x","level":"info"}}` {
 		t.Fatalf("message = %s", msg)
 	}

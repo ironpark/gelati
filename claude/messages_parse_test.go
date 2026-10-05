@@ -4,6 +4,8 @@ import (
 	"encoding/json/v2"
 	"reflect"
 	"testing"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // TestParseLenient checks that frames missing fields the TypeScript types mark
@@ -709,7 +711,7 @@ func TestContentBlockWireRoundTrip(t *testing.T) {
 		t.Run(b.BlockType(), func(t *testing.T) {
 			t.Parallel()
 			// Struct JSON round trip.
-			data, err := json.Marshal(b, json.Deterministic(true))
+			data, err := jsonx.Marshal(b)
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -721,7 +723,7 @@ func TestContentBlockWireRoundTrip(t *testing.T) {
 				t.Fatalf("round trip = %#v, want %#v (json %s)", back, b, data)
 			}
 			// Wire form parses back to the same block.
-			wire, err := json.Marshal(wireBlock{b}, json.Deterministic(true))
+			wire, err := jsonx.Marshal(wireBlock{b})
 			if err != nil {
 				t.Fatalf("wire: %v", err)
 			}

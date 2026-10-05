@@ -8,6 +8,7 @@ import (
 
 	"github.com/ironpark/gelati/claude"
 	"github.com/ironpark/gelati/claude/sessionstoretest"
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 func TestInMemorySessionStore(t *testing.T) {
@@ -38,7 +39,7 @@ func (s *minimalStore) Append(_ context.Context, key claude.SessionKey, entries 
 			return err
 		}
 	}
-	b, err := json.Marshal(append(all, entries...), json.Deterministic(true))
+	b, err := jsonx.Marshal(append(all, entries...))
 	if err != nil {
 		return err
 	}

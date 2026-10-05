@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // ---------------------------------------------------------------------------
@@ -754,7 +756,7 @@ func TestSessionFork(t *testing.T) {
 		if cr["sessionId"] != res.SessionID || !uuidLike.MatchString(str(cr["uuid"])) || cr["timestamp"] != fu2["timestamp"] {
 			t.Errorf("content replacement = %v", cr)
 		}
-		if got, _ := json.Marshal(cr["replacements"], json.Deterministic(true)); string(got) != `[{"a":2,"toolUseId":"t1","z":1}]` {
+		if got, _ := jsonx.Marshal(cr["replacements"]); string(got) != `[{"a":2,"toolUseId":"t1","z":1}]` {
 			t.Errorf("replacements = %s", got)
 		}
 		if ff := fa1["forkedFrom"].(map[string]any); ff["messageUuid"] != a1 {

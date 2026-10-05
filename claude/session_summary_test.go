@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 var summaryTestKey = SessionKey{ProjectKey: storeTestKey, SessionID: "11111111-1111-4111-8111-111111111111"}
@@ -309,7 +311,7 @@ func TestSummaryRoundTripsThroughJSON(t *testing.T) {
 		{"type": "tag", "tag": "wip"},
 	})
 	folded.MTime = 7
-	b, err := json.Marshal(folded, json.Deterministic(true))
+	b, err := jsonx.Marshal(folded)
 	if err != nil {
 		t.Fatal(err)
 	}

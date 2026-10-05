@@ -54,7 +54,7 @@ func ApplyNetworkPolicyAmendment(host, action string) Decision {
 // that the plain decisions remain untyped constants; MarshalJSON emits the
 // object unquoted.
 func objectDecision(kind, field string, value any) Decision {
-	b, _ := json.Marshal(map[string]any{kind: map[string]any{field: value}}, json.Deterministic(true)) // cannot fail
+	b, _ := jsonx.Marshal(map[string]any{kind: map[string]any{field: value}}) // cannot fail
 	return Decision(b)
 }
 
@@ -367,7 +367,7 @@ func (c *Client) handleServerRequest(ctx context.Context, method string, params 
 	switch method {
 	case MethodCommandApproval:
 		req := &CommandApprovalRequest{}
-		if err := json.Unmarshal(params, req, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(params, req); err != nil {
 			return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
 		}
 		req.Params = params
@@ -382,7 +382,7 @@ func (c *Client) handleServerRequest(ctx context.Context, method string, params 
 
 	case MethodFileChangeApproval:
 		req := &FileChangeApprovalRequest{}
-		if err := json.Unmarshal(params, req, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(params, req); err != nil {
 			return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
 		}
 		req.Params = params
@@ -397,7 +397,7 @@ func (c *Client) handleServerRequest(ctx context.Context, method string, params 
 
 	case MethodPermissionsApproval:
 		req := &PermissionsRequest{}
-		if err := json.Unmarshal(params, req, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(params, req); err != nil {
 			return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
 		}
 		req.Params = params
@@ -416,7 +416,7 @@ func (c *Client) handleServerRequest(ctx context.Context, method string, params 
 	case MethodChatGPTTokenRefresh:
 		if refresher, ok := c.opts.Approvals.(TokenRefresher); ok {
 			req := &TokenRefreshRequest{}
-			if err := json.Unmarshal(params, req, jsonx.Foreign); err != nil {
+			if err := jsonx.Unmarshal(params, req); err != nil {
 				return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
 			}
 			req.Params = params

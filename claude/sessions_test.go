@@ -1,7 +1,6 @@
 package claude
 
 import (
-	"encoding/json/v2"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // ---------------------------------------------------------------------------
@@ -26,8 +27,8 @@ func jsonObj(kv ...any) string {
 		if i > 0 {
 			sb.WriteByte(',')
 		}
-		k, _ := json.Marshal(kv[i], json.Deterministic(true))
-		v, err := json.Marshal(kv[i+1], json.Deterministic(true))
+		k, _ := jsonx.Marshal(kv[i])
+		v, err := jsonx.Marshal(kv[i+1])
 		if err != nil {
 			panic(err)
 		}
@@ -1308,7 +1309,7 @@ func TestSessionGetSubagentMessages(t *testing.T) {
 		case string:
 			writeFile(t, filepath.Join(dir, "agent-"+agentID+".meta.json"), m)
 		default:
-			b, _ := json.Marshal(m, json.Deterministic(true))
+			b, _ := jsonx.Marshal(m)
 			writeFile(t, filepath.Join(dir, "agent-"+agentID+".meta.json"), string(b))
 		}
 		return u1, a1

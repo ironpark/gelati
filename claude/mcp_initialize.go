@@ -140,7 +140,7 @@ func captureSDKMCPManifest(ctx context.Context, handler MCPHandler) (manifest sd
 		return manifest, false
 	}
 	manifest.InitializeResult = initResult
-	notification, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}, marshalOpts)
+	notification, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}, jsonx.LegacyEncode)
 	if _, err := handler.HandleMCPMessage(ctx, notification); err != nil {
 		return manifest, false
 	}
@@ -161,7 +161,7 @@ func captureSDKMCPManifest(ctx context.Context, handler MCPHandler) (manifest sd
 		var page struct {
 			NextCursor *jsontext.Value `json:"nextCursor"`
 		}
-		if json.Unmarshal(listResult, &page, jsonx.Foreign) == nil && page.NextCursor == nil {
+		if jsonx.Unmarshal(listResult, &page) == nil && page.NextCursor == nil {
 			manifest.ToolsListResult = listResult
 		}
 	}
@@ -171,7 +171,7 @@ func captureSDKMCPManifest(ctx context.Context, handler MCPHandler) (manifest sd
 // mcpCaptureCall sends one request and returns its result object, or false
 // when the server answered with an error or nothing usable.
 func mcpCaptureCall(ctx context.Context, handler MCPHandler, request map[string]any) (jsontext.Value, bool) {
-	raw, err := json.Marshal(request, marshalOpts)
+	raw, err := json.Marshal(request, jsonx.LegacyEncode)
 	if err != nil {
 		return nil, false
 	}
@@ -182,7 +182,7 @@ func mcpCaptureCall(ctx context.Context, handler MCPHandler, request map[string]
 	var envelope struct {
 		Result jsontext.Value `json:"result"`
 	}
-	if json.Unmarshal(reply, &envelope, jsonx.Foreign) != nil || len(envelope.Result) == 0 || envelope.Result[0] != '{' {
+	if jsonx.Unmarshal(reply, &envelope) != nil || len(envelope.Result) == 0 || envelope.Result[0] != '{' {
 		return nil, false
 	}
 	return envelope.Result, true

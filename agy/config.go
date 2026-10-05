@@ -2,7 +2,6 @@ package agy
 
 import (
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/ironpark/gelati/agy/internal/wire"
+	"github.com/ironpark/gelati/internal/jsonx"
 	"github.com/ironpark/gelati/internal/logx"
 )
 
@@ -290,16 +290,16 @@ func (c *Config) responseSchemaJSON() (string, error) {
 		}
 		return string(s), nil
 	case map[string]any:
-		b, err := json.Marshal(s, json.Deterministic(true))
+		b, err := jsonx.Marshal(s)
 		if err != nil {
 			return "", &ValidationError{Message: "response_schema is not JSON-encodable: " + err.Error(), Err: err}
 		}
 		return string(b), nil
 	case reflect.Type:
-		b, err := json.Marshal(schemaForType(s), json.Deterministic(true))
+		b, err := jsonx.Marshal(schemaForType(s))
 		return string(b), err
 	}
-	b, err := json.Marshal(schemaForType(reflect.TypeOf(c.ResponseSchema)), json.Deterministic(true))
+	b, err := jsonx.Marshal(schemaForType(reflect.TypeOf(c.ResponseSchema)))
 	return string(b), err
 }
 

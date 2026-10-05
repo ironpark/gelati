@@ -3,10 +3,11 @@ package claude
 import (
 	"context"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"reflect"
 	"sync"
 	"testing"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 func TestClientSetMCPServers(t *testing.T) {
@@ -59,7 +60,7 @@ func TestClientSetMCPServers(t *testing.T) {
 	}
 
 	mu.Lock()
-	got, _ := json.Marshal(requests[0], json.Deterministic(true))
+	got, _ := jsonx.Marshal(requests[0])
 	mu.Unlock()
 	want := `{"servers":{"added":{"name":"added","timeout":5000,"type":"sdk"},"fs":{"command":"node","timeout":2000,"type":"stdio"}},"subtype":"mcp_set_servers"}`
 	if string(got) != want {
@@ -92,7 +93,7 @@ func TestClientSetMCPServers(t *testing.T) {
 		t.Fatal(err)
 	}
 	mu.Lock()
-	got, _ = json.Marshal(requests[1]["servers"], json.Deterministic(true))
+	got, _ = jsonx.Marshal(requests[1]["servers"])
 	mu.Unlock()
 	if string(got) != `{"added":{"name":"added","timeout":5000,"type":"sdk"}}` {
 		t.Fatalf("servers = %s", got)
@@ -103,7 +104,7 @@ func TestClientSetMCPServers(t *testing.T) {
 		t.Fatal(err)
 	}
 	mu.Lock()
-	got, _ = json.Marshal(requests[2]["servers"], json.Deterministic(true))
+	got, _ = jsonx.Marshal(requests[2]["servers"])
 	mu.Unlock()
 	if string(got) != `{}` {
 		t.Fatalf("servers = %s", got)

@@ -2,7 +2,6 @@ package claude
 
 import (
 	"bytes"
-	"encoding/json/v2"
 	"errors"
 	"io"
 	"io/fs"
@@ -78,7 +77,7 @@ func skipPrecompactLines(b []byte) []byte {
 		}
 		if idx := bytes.Index(line, marker); terminated && idx >= 0 && idx < precompactBoundaryWindow {
 			var entry map[string]any
-			if json.Unmarshal(line, &entry, jsonx.Foreign) == nil && entry["type"] == "system" && entry["subtype"] == "compact_boundary" {
+			if jsonx.Unmarshal(line, &entry) == nil && entry["type"] == "system" && entry["subtype"] == "compact_boundary" {
 				meta, _ := entry["compactMetadata"].(map[string]any)
 				if !jsTruthy(meta["preservedSegment"]) && !jsTruthy(meta["preservedMessages"]) {
 					out, lastSnap = out[:0], nil
@@ -118,7 +117,7 @@ func parseJSONLObjects(content []byte) []map[string]any {
 			continue
 		}
 		var entry map[string]any
-		if json.Unmarshal(line, &entry, jsonx.Foreign) == nil && entry != nil {
+		if jsonx.Unmarshal(line, &entry) == nil && entry != nil {
 			out = append(out, entry)
 		}
 	}
@@ -198,7 +197,7 @@ func readAgentMetadataSidecar(transcriptPath string) (map[string]any, error) {
 		return nil, nil // Python's UnicodeDecodeError is a ValueError
 	}
 	var meta map[string]any
-	if json.Unmarshal(b, &meta, jsonx.Foreign) != nil {
+	if jsonx.Unmarshal(b, &meta) != nil {
 		return nil, nil
 	}
 	return meta, nil

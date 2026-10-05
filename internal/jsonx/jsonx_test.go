@@ -1,7 +1,9 @@
 package jsonx
 
 import (
+	"encoding/json/jsontext"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -58,5 +60,28 @@ func TestExtraFields(t *testing.T) {
 	}
 	if _, err := ExtraFields([]byte(`[1]`), known); err == nil {
 		t.Fatal("want an error for a non-object")
+	}
+}
+
+func TestReadValueKeepsNumbers(t *testing.T) {
+	dec := jsontext.NewDecoder(strings.NewReader(`{"a":[1e400,2],"b":{"c":null,"d":"x"},"a":true}`), Foreign)
+	v, err := ReadValue(dec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"a": true, "b": map[string]any{"c": nil, "d": "x"}}
+	if !reflect.DeepEqual(v, want) {
+		t.Fatalf("ReadValue = %#v", v)
+	}
+	b, err := Marshal([]any{Number("1e400"), Number("2")})
+	if err != nil || string(b) != "[1e400,2]" {
+		t.Fatalf("Number encodes as %s, %v", b, err)
+	}
+}
+
+func TestMarshalSortsKeys(t *testing.T) {
+	b, err := Marshal(map[string]int{"b": 1, "a": 2, "c": 3})
+	if err != nil || string(b) != `{"a":2,"b":1,"c":3}` {
+		t.Fatalf("Marshal = %s, %v", b, err)
 	}
 }

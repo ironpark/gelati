@@ -449,13 +449,13 @@ func stripSettingsForResume(content []byte) []byte {
 }
 
 // decodeJSONObject parses b as exactly one JSON object, keeping numbers as
-// jsonNumber so they re-serialize unchanged.
+// jsonx.Number so they re-serialize unchanged.
 func decodeJSONObject(b []byte) (map[string]any, bool) {
 	dec := jsontext.NewDecoder(bytes.NewReader(b), jsonx.Foreign)
 	if dec.PeekKind() != '{' {
 		return nil, false
 	}
-	v, err := readJSONValue(dec)
+	v, err := jsonx.ReadValue(dec)
 	if err != nil {
 		return nil, false
 	}
@@ -463,53 +463,6 @@ func decodeJSONObject(b []byte) (map[string]any, bool) {
 		return nil, false // trailing data
 	}
 	return v.(map[string]any), true
-}
-
-// readJSONValue reads the next value from dec as a generic JSON value whose
-// numbers are jsonNumber. A repeated object member keeps its last value.
-func readJSONValue(dec *jsontext.Decoder) (any, error) {
-	tok, err := dec.ReadToken()
-	if err != nil {
-		return nil, err
-	}
-	switch tok.Kind() {
-	case 'n':
-		return nil, nil
-	case 't', 'f':
-		return tok.Bool(), nil
-	case '"':
-		return tok.String(), nil
-	case '0':
-		return jsonNumber(tok.String()), nil
-	case '{':
-		obj := map[string]any{}
-		for dec.PeekKind() != '}' {
-			name, err := dec.ReadToken()
-			if err != nil {
-				return nil, err
-			}
-			k := name.String()
-			v, err := readJSONValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			obj[k] = v
-		}
-		_, err := dec.ReadToken()
-		return obj, err
-	case '[':
-		arr := []any{}
-		for dec.PeekKind() != ']' {
-			v, err := readJSONValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			arr = append(arr, v)
-		}
-		_, err := dec.ReadToken()
-		return arr, err
-	}
-	return nil, fmt.Errorf("claude: unexpected JSON token %v", tok)
 }
 
 // hasOverflowingNumber reports whether v holds a number outside the range of
@@ -555,7 +508,7 @@ func writeRedactedCredentials(creds []byte, dst string) error {
 		if oauth, ok := data["claudeAiOauth"].(map[string]any); ok {
 			if _, ok := oauth["refreshToken"]; ok {
 				delete(oauth, "refreshToken")
-				if b, err := json.Marshal(data, marshalOpts); err == nil {
+				if b, err := json.Marshal(data, jsonx.LegacyEncode); err == nil {
 					out = b
 				}
 			}
@@ -673,7 +626,7 @@ func materializeSubkeys(ctx context.Context, store SessionStore, lister SessionS
 		}
 		if metadata != nil {
 			delete(metadata, "type") // the synthetic discriminator
-			b, err := json.Marshal(metadata, marshalOpts)
+			b, err := json.Marshal(metadata, jsonx.LegacyEncode)
 			if err != nil {
 				return fmt.Errorf("claude: encoding agent metadata for %s: %w", subpath, err)
 			}

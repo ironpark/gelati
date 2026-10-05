@@ -626,7 +626,7 @@ func (g *gen) structDecl(name string, t *Type, path, doc string) error {
 		g.printf("// MarshalJSON encodes the declared fields followed by Extra.\n")
 		g.printf("func (v %s) MarshalJSON() ([]byte, error) {\n\ttype plain %s\n\treturn marshalWithExtra(plain(v), v.Extra, %sKnown)\n}\n\n", name, name, lower)
 		g.printf("// UnmarshalJSON decodes the declared fields and collects the rest in Extra.\n")
-		g.printf("func (v *%s) UnmarshalJSON(data []byte) error {\n\ttype plain %s\n\tvar p plain\n\tif err := json.Unmarshal(data, &p, jsonx.Foreign); err != nil {\n\t\treturn err\n\t}\n", name, name)
+		g.printf("func (v *%s) UnmarshalJSON(data []byte) error {\n\ttype plain %s\n\tvar p plain\n\tif err := jsonx.Unmarshal(data, &p); err != nil {\n\t\treturn err\n\t}\n", name, name)
 		g.printf("\textra, err := extraFields(data, %sKnown)\n\tif err != nil {\n\t\treturn err\n\t}\n\t*v = %s(p)\n\tv.Extra = extra\n\treturn nil\n}\n\n", lower, name)
 	}
 	return nil
@@ -657,13 +657,13 @@ func (g *gen) sealedDecl(name string, members []*Type, disc string, vals [][]str
 	}
 	g.printf("// Unmarshal%s decodes data into the %s variant selected by its %q property.\n", name, name, disc)
 	g.printf("func Unmarshal%s(data []byte) (%s, error) {\n", name, name)
-	g.printf("\tvar probe struct {\n\t\tD string `json:%q`\n\t}\n\tif err := json.Unmarshal(data, &probe, jsonx.Foreign); err != nil {\n\t\treturn nil, err\n\t}\n\tswitch probe.D {\n", disc)
+	g.printf("\tvar probe struct {\n\t\tD string `json:%q`\n\t}\n\tif err := jsonx.Unmarshal(data, &probe); err != nil {\n\t\treturn nil, err\n\t}\n\tswitch probe.D {\n", disc)
 	for i := range members {
 		quoted := make([]string, len(vals[i]))
 		for j, v := range vals[i] {
 			quoted[j] = strconv.Quote(v)
 		}
-		g.printf("\tcase %s:\n\t\tvar v %s\n\t\terr := json.Unmarshal(data, &v, jsonx.Foreign)\n\t\treturn v, err\n", strings.Join(quoted, ", "), variants[i])
+		g.printf("\tcase %s:\n\t\tvar v %s\n\t\terr := jsonx.Unmarshal(data, &v)\n\t\treturn v, err\n", strings.Join(quoted, ", "), variants[i])
 	}
 	g.printf("\t}\n\treturn nil, fmt.Errorf(\"tools: unknown %s %s %%q\", probe.D)\n}\n\n", name, disc)
 	return nil
@@ -715,13 +715,13 @@ func (g *gen) kindedDecl(name string, members []*Type, path, doc string) error {
 	g.printf("// MarshalJSON encodes whichever alternative is set (null if none).\n")
 	g.printf("func (u %s) MarshalJSON() ([]byte, error) {\n\tswitch {\n", name)
 	for _, a := range alts {
-		g.printf("\tcase u.%s != nil:\n\t\treturn json.Marshal(u.%s, marshalOpts)\n", a.kind, a.kind)
+		g.printf("\tcase u.%s != nil:\n\t\treturn json.Marshal(u.%s, jsonx.LegacyEncode)\n", a.kind, a.kind)
 	}
 	g.printf("\t}\n\treturn []byte(\"null\"), nil\n}\n\n")
 	g.printf("// UnmarshalJSON selects the alternative from the JSON value kind.\n")
 	g.printf("func (u *%s) UnmarshalJSON(data []byte) error {\n\t*u = %s{}\n\tswitch k := jsonValueKind(data); k {\n", name, name)
 	for _, a := range alts {
-		g.printf("\tcase %s:\n\t\treturn json.Unmarshal(data, &u.%s, jsonx.Foreign)\n", kindConst[a.kind], a.kind)
+		g.printf("\tcase %s:\n\t\treturn jsonx.Unmarshal(data, &u.%s)\n", kindConst[a.kind], a.kind)
 	}
 	g.printf("\tcase kindNull:\n\t\treturn nil\n\tdefault:\n\t\treturn fmt.Errorf(\"tools: cannot decode JSON %%s into %s\", k)\n\t}\n}\n\n", name)
 	return nil

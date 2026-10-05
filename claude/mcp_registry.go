@@ -10,9 +10,8 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/ironpark/gelati/internal/safecall"
-
 	"github.com/ironpark/gelati/internal/jsonx"
+	"github.com/ironpark/gelati/internal/safecall"
 )
 
 // MCPHandler is an in-process MCP server as the SDK sees it: something that
@@ -286,10 +285,10 @@ func (e *sdkMCPEntry) cancelRequest(key string) {
 // values do.
 func jsonIDKey(raw jsontext.Value) string {
 	var v any
-	if json.Unmarshal(raw, &v, jsonx.Foreign) != nil {
+	if jsonx.Unmarshal(raw, &v) != nil {
 		return string(raw)
 	}
-	b, err := json.Marshal(v, marshalOpts)
+	b, err := json.Marshal(v, jsonx.LegacyEncode)
 	if err != nil {
 		return string(raw)
 	}
@@ -327,7 +326,7 @@ func (r *sdkMCPRegistry) handleControl(ctx context.Context, request map[string]a
 	if serverName == "" || !ok || message == nil {
 		return nil, errors.New("Missing server_name or message for MCP request")
 	}
-	raw, err := json.Marshal(message, marshalOpts)
+	raw, err := json.Marshal(message, jsonx.LegacyEncode)
 	if err != nil {
 		return nil, fmt.Errorf("claude: encoding mcp message: %w", err)
 	}
@@ -350,7 +349,7 @@ func (r *sdkMCPRegistry) handleControl(ctx context.Context, request map[string]a
 		return map[string]any{"mcp_response": map[string]any{"jsonrpc": "2.0", "result": map[string]any{}, "id": 0}}, nil
 	}
 	var decoded any
-	if err := json.Unmarshal(response, &decoded, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(response, &decoded); err != nil {
 		return nil, fmt.Errorf("claude: decoding mcp response: %w", err)
 	}
 	return map[string]any{"mcp_response": decoded}, nil

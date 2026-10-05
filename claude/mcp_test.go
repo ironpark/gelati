@@ -7,6 +7,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 type addArgs struct {
@@ -64,7 +66,7 @@ func calculatorServer(t *testing.T) *MCPServer {
 // rpc sends one JSON-RPC message to the server and decodes the reply.
 func rpc(t *testing.T, s *MCPServer, message map[string]any) map[string]any {
 	t.Helper()
-	raw, err := json.Marshal(message, json.Deterministic(true))
+	raw, err := jsonx.Marshal(message)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +254,7 @@ func TestMCPToolContentConversion(t *testing.T) {
 		},
 	})
 	result := callTool(t, cfg.Instance.(*MCPServer), "mixed", nil)
-	got, err := json.Marshal(result["content"], json.Deterministic(true))
+	got, err := jsonx.Marshal(result["content"])
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,13 +2,11 @@ package agy
 
 import (
 	"context"
-	"encoding/json/v2"
 	"log/slog"
 	"strings"
 
-	"github.com/ironpark/gelati/internal/jsonx"
-
 	"github.com/ironpark/gelati/agy/internal/wire"
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // hookRouter answers the harness's CallHookRequests by dispatching them to
@@ -88,7 +86,7 @@ func (r *hookRouter) preTool(ctx context.Context, turn *HookContext, req *wire.C
 		// request, as upstream.
 		var args map[string]any
 		if s := pta.GetArgumentsJson(); s != "" {
-			if err := json.Unmarshal([]byte(s), &args, jsonx.Foreign); err != nil {
+			if err := jsonx.Unmarshal([]byte(s), &args); err != nil {
 				return err
 			}
 		}

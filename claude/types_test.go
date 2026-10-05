@@ -8,6 +8,8 @@ import (
 	"math"
 	"reflect"
 	"testing"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 func TestContentBlockJSONRoundTrip(t *testing.T) {
@@ -30,7 +32,7 @@ func TestContentBlockJSONRoundTrip(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := json.Marshal(tc.block, json.Deterministic(true))
+			got, err := jsonx.Marshal(tc.block)
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -71,7 +73,7 @@ func TestMessageOriginRoundTrip(t *testing.T) {
 	if len(o.Extra) != 0 {
 		t.Fatalf("extra = %v, want none", o.Extra)
 	}
-	out, err := json.Marshal(o, json.Deterministic(true))
+	out, err := jsonx.Marshal(o)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -90,7 +92,7 @@ func TestMessageOriginExtraRoundTrip(t *testing.T) {
 	if o.Extra["hop"] != float64(2) {
 		t.Fatalf("extra = %v, want hop 2", o.Extra)
 	}
-	out, err := json.Marshal(o, json.Deterministic(true))
+	out, err := jsonx.Marshal(o)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -143,7 +145,7 @@ func TestPermissionUpdateWireFormat(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := json.Marshal(tc.u, json.Deterministic(true))
+			got, err := jsonx.Marshal(tc.u)
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -182,7 +184,7 @@ func TestHookOutputWireFormat(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := json.Marshal(tc.out, json.Deterministic(true))
+			got, err := jsonx.Marshal(tc.out)
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -214,7 +216,7 @@ func TestMCPServerConfigJSON(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := json.Marshal(tc.cfg, json.Deterministic(true))
+			got, err := jsonx.Marshal(tc.cfg)
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -241,12 +243,12 @@ func TestOptionsBufferSize(t *testing.T) {
 
 func TestAgentDefinitionJSON(t *testing.T) {
 	t.Parallel()
-	got, err := json.Marshal(AgentDefinition{
+	got, err := jsonx.Marshal(AgentDefinition{
 		Description: "reviewer",
 		Prompt:      "review code",
 		Tools:       []string{"Read"},
 		Model:       "sonnet",
-	}, json.Deterministic(true))
+	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -413,7 +415,7 @@ func TestMessageOriginUnmarshalUnclassified(t *testing.T) {
 
 func TestPermissionUpdateKeepsEmptyLists(t *testing.T) {
 	t.Parallel()
-	got, err := json.Marshal(PermissionUpdate{Type: PermissionUpdateReplaceRules, Rules: []PermissionRuleValue{}}, json.Deterministic(true))
+	got, err := jsonx.Marshal(PermissionUpdate{Type: PermissionUpdateReplaceRules, Rules: []PermissionRuleValue{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +426,7 @@ func TestPermissionUpdateKeepsEmptyLists(t *testing.T) {
 
 func TestHookOutputEmptySpecificMap(t *testing.T) {
 	t.Parallel()
-	got, err := json.Marshal(HookOutput{HookSpecificOutput: map[string]any{}}, json.Deterministic(true))
+	got, err := jsonx.Marshal(HookOutput{HookSpecificOutput: map[string]any{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -461,7 +463,7 @@ func TestPermissionDecisionWire(t *testing.T) {
 			if !ok {
 				t.Fatal("not ok")
 			}
-			got, err := json.Marshal(out, json.Deterministic(true))
+			got, err := jsonx.Marshal(out)
 			if err != nil {
 				t.Fatal(err)
 			}

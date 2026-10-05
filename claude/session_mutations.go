@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"context"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -487,7 +486,7 @@ func parseForkLine(line string) (forkEntry, bool) {
 		if err != nil {
 			return forkEntry{}, false
 		}
-		field, err := readJSONValue(jsontext.NewDecoder(bytes.NewReader(v), jsonx.Foreign))
+		field, err := jsonx.ReadValue(jsontext.NewDecoder(bytes.NewReader(v), jsonx.Foreign))
 		if err != nil {
 			return forkEntry{}, false
 		}
@@ -525,7 +524,7 @@ func parseForkTranscript(content, sessionID string) ([]forkEntry, []any) {
 			transcript = append(transcript, e)
 		} else if isOwnContentReplacement(e.fields, sessionID) {
 			var list []jsontext.Value
-			if json.Unmarshal(e.raw["replacements"], &list, jsonx.Foreign) == nil {
+			if jsonx.Unmarshal(e.raw["replacements"], &list) == nil {
 				for _, r := range list {
 					replacements = append(replacements, r)
 				}
@@ -848,7 +847,7 @@ func ForkSessionViaStore(ctx context.Context, store SessionStore, sessionID stri
 	// from the transcript mirror.
 	entries := make([]SessionStoreEntry, len(lines))
 	for i, line := range lines {
-		if err := json.Unmarshal([]byte(line), &entries[i], jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal([]byte(line), &entries[i]); err != nil {
 			return nil, fmt.Errorf("claude: fork session %s: %w", sessionID, err)
 		}
 	}

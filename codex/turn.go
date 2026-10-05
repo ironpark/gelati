@@ -3,7 +3,6 @@ package codex
 import (
 	"context"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"iter"
 	"sync"
@@ -419,7 +418,7 @@ func buildEvent(note queuedNotification) (Event, bool) {
 	switch note.method {
 	case MethodTurnStarted, MethodTurnCompleted:
 		var payload TurnParams
-		if err := json.Unmarshal(note.params, &payload, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(note.params, &payload); err != nil {
 			return event, false
 		}
 		event.Turn = &payload.Turn
@@ -433,7 +432,7 @@ func buildEvent(note queuedNotification) (Event, bool) {
 		}
 	case MethodItemStarted, MethodItemCompleted:
 		var payload ItemParams
-		if err := json.Unmarshal(note.params, &payload, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(note.params, &payload); err != nil {
 			return event, false
 		}
 		item := payload.Item
@@ -447,7 +446,7 @@ func buildEvent(note queuedNotification) (Event, bool) {
 	case MethodAgentMessageDelta, MethodPlanDelta, MethodReasoningTextDelta,
 		MethodReasoningSummaryTextDelta, MethodReasoningSummaryPartAdded:
 		var payload DeltaParams
-		if err := json.Unmarshal(note.params, &payload, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(note.params, &payload); err != nil {
 			return event, false
 		}
 		event.ItemID = payload.ItemID
@@ -464,7 +463,7 @@ func buildEvent(note queuedNotification) (Event, bool) {
 		}
 	case MethodCommandExecutionOutputDelta:
 		var payload CommandOutputDeltaParams
-		if err := json.Unmarshal(note.params, &payload, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(note.params, &payload); err != nil {
 			return event, false
 		}
 		event.Kind = EventCommandOutputDelta
@@ -472,7 +471,7 @@ func buildEvent(note queuedNotification) (Event, bool) {
 		event.Delta = payload.Delta
 	case MethodTurnPlan:
 		var payload TurnPlanParams
-		if err := json.Unmarshal(note.params, &payload, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(note.params, &payload); err != nil {
 			return event, false
 		}
 		event.Kind = EventPlanUpdated
@@ -480,14 +479,14 @@ func buildEvent(note queuedNotification) (Event, bool) {
 		event.Explanation = payload.Explanation
 	case MethodTurnDiff:
 		var payload TurnDiffParams
-		if err := json.Unmarshal(note.params, &payload, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(note.params, &payload); err != nil {
 			return event, false
 		}
 		event.Kind = EventDiffUpdated
 		event.Diff = payload.Diff
 	case MethodTokenUsageUpdated:
 		var payload TokenUsageParams
-		if err := json.Unmarshal(note.params, &payload, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(note.params, &payload); err != nil {
 			return event, false
 		}
 		event.Kind = EventTokenUsageUpdated
@@ -495,7 +494,7 @@ func buildEvent(note queuedNotification) (Event, bool) {
 		event.Usage = &usage
 	case MethodError:
 		var payload ErrorParams
-		if err := json.Unmarshal(note.params, &payload, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(note.params, &payload); err != nil {
 			return event, false
 		}
 		event.Kind = EventError

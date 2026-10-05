@@ -2,7 +2,6 @@ package agy
 
 import (
 	"context"
-	"encoding/json/v2"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/ironpark/gelati/agy/internal/harness"
 	"github.com/ironpark/gelati/agy/internal/wire"
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // connectLocal launches the localharness binary and opens a Connection to
@@ -203,7 +203,7 @@ func buildHarnessConfig(cc *compiledConfig, resolvedModels []ModelTarget) (*wire
 
 // toolProto declares a custom tool to the harness.
 func toolProto(t *Tool) (*wire.Tool, error) {
-	b, err := json.Marshal(t.Schema(), json.Deterministic(true))
+	b, err := jsonx.Marshal(t.Schema())
 	if err != nil {
 		return nil, fmt.Errorf("agy: encode schema of tool %q: %w", t.name, err)
 	}

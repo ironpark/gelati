@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // fakeTransport is an in-memory Transport standing in for the CLI subprocess.
@@ -119,7 +121,7 @@ func (f *fakeTransport) Ready() bool {
 
 // push queues one frame for the SDK to read.
 func (f *fakeTransport) push(v any) {
-	raw, err := json.Marshal(v, json.Deterministic(true))
+	raw, err := jsonx.Marshal(v)
 	if err != nil {
 		panic(err)
 	}

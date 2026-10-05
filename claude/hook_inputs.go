@@ -448,7 +448,7 @@ var hookInputFactories = map[HookEvent]func() HookInput{
 // had an unexpected JSON type. Nested values with their own decoders, such as
 // permission suggestions, are read leniently and keep their zero values.
 func DecodeHookInput(raw map[string]any) (HookInput, error) {
-	payload, err := json.Marshal(raw, marshalOpts)
+	payload, err := json.Marshal(raw, jsonx.LegacyEncode)
 	if err != nil {
 		return nil, fmt.Errorf("claude: encoding hook input: %w", err)
 	}
@@ -456,13 +456,13 @@ func DecodeHookInput(raw map[string]any) (HookInput, error) {
 	factory, ok := hookInputFactories[event]
 	if !ok {
 		unknown := &UnknownHookInput{Raw: raw}
-		if err := json.Unmarshal(payload, &unknown.BaseHookInput, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(payload, &unknown.BaseHookInput); err != nil {
 			return nil, fmt.Errorf("claude: decoding %q hook input: %w", event, err)
 		}
 		return unknown, nil
 	}
 	in := factory()
-	if err := json.Unmarshal(payload, in, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(payload, in); err != nil {
 		return nil, fmt.Errorf("claude: decoding %s hook input: %w", event, err)
 	}
 	return in, nil

@@ -2,7 +2,6 @@ package agy
 
 import (
 	"context"
-	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/ironpark/gelati/agy/internal/harness"
 	"github.com/ironpark/gelati/agy/internal/wire"
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // The test binary doubles as a fake localharness: when fakeHarnessEnv is set
@@ -276,7 +276,7 @@ func (s *fakeSession) runTurn(ev *wire.InputEvent) {
 				s.say(2, "denied: "+res.GetReason())
 				break
 			} else if res.GetModifiedArgs() != nil {
-				b, _ := json.Marshal(res.GetModifiedArgs().AsMap(), json.Deterministic(true))
+				b, _ := jsonx.Marshal(res.GetModifiedArgs().AsMap())
 				args = string(b)
 			}
 		}

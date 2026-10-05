@@ -3,7 +3,6 @@ package codex
 import (
 	"context"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"fmt"
 
 	"github.com/ironpark/gelati/internal/jsonx"
@@ -224,7 +223,7 @@ func (c *Client) routeAccountNotification(method string, params jsontext.Value) 
 	switch method {
 	case MethodLoginCompleted:
 		var payload LoginCompletedParams
-		if err := json.Unmarshal(params, &payload, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(params, &payload); err != nil {
 			c.logger.Debug("codex: bad login/completed payload", "error", err)
 			return
 		}
@@ -252,7 +251,7 @@ func (c *Client) routeAccountNotification(method string, params jsontext.Value) 
 		}
 	case MethodAccountUpdated:
 		var payload AccountUpdate
-		if err := json.Unmarshal(params, &payload, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(params, &payload); err != nil {
 			c.logger.Debug("codex: bad account/updated payload", "error", err)
 			return
 		}

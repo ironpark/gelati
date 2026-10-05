@@ -2,7 +2,6 @@ package claude
 
 import (
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // importEntry mirrors the Python tests' _entry.
@@ -31,7 +32,7 @@ func writeImportJSONL(t *testing.T, path string, entries ...SessionStoreEntry) {
 	t.Helper()
 	var lines []string
 	for _, e := range entries {
-		b, err := json.Marshal(e, json.Deterministic(true))
+		b, err := jsonx.Marshal(e)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -115,9 +116,9 @@ func TestSessionImportMainTranscript(t *testing.T) {
 	t.Run("skips blank lines and accepts CRLF", func(t *testing.T) {
 		t.Parallel()
 		root, cwd, pk, dir := importFixture(t)
-		b0, _ := json.Marshal(importEntry(0), json.Deterministic(true))
-		b1, _ := json.Marshal(importEntry(1), json.Deterministic(true))
-		b2, _ := json.Marshal(importEntry(2), json.Deterministic(true))
+		b0, _ := jsonx.Marshal(importEntry(0))
+		b1, _ := jsonx.Marshal(importEntry(1))
+		b2, _ := jsonx.Marshal(importEntry(2))
 		writeFile(t, filepath.Join(dir, importSID+".jsonl"), string(b0)+"\n\n"+string(b1)+"\r\n\r\n"+string(b2)) // no final newline
 		store := NewInMemorySessionStore()
 		if err := newLocalSessions(root).importSession(ctx, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {
@@ -165,8 +166,8 @@ func TestSessionImportMainTranscript(t *testing.T) {
 		t.Parallel()
 		for _, bad := range []string{"not json", "[1,2]", "42", "null", "   "} {
 			root, cwd, pk, dir := importFixture(t)
-			b0, _ := json.Marshal(importEntry(0), json.Deterministic(true))
-			b1, _ := json.Marshal(importEntry(1), json.Deterministic(true))
+			b0, _ := jsonx.Marshal(importEntry(0))
+			b1, _ := jsonx.Marshal(importEntry(1))
 			writeFile(t, filepath.Join(dir, importSID+".jsonl"), string(b0)+"\n"+bad+"\n"+string(b1)+"\n")
 			store := NewInMemorySessionStore()
 			if err := newLocalSessions(root).importSession(ctx, importSID, store, &ImportSessionOptions{Directory: cwd}, noEnv); err != nil {

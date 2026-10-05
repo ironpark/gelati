@@ -10,9 +10,8 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/ironpark/gelati/internal/safecall"
-
 	"github.com/ironpark/gelati/internal/jsonx"
+	"github.com/ironpark/gelati/internal/safecall"
 )
 
 // DefaultMCPProtocolVersion is offered when the client does not name one.
@@ -213,7 +212,7 @@ func NewTool[T any](name, description string, schema map[string]any, handler fun
 		Handler: func(ctx context.Context, raw jsontext.Value) (ToolResult, error) {
 			var args T
 			if len(raw) > 0 {
-				if err := json.Unmarshal(raw, &args, jsonx.Foreign); err != nil {
+				if err := jsonx.Unmarshal(raw, &args); err != nil {
 					return ErrorResult("Input validation error: %s", err), nil
 				}
 			}
@@ -370,7 +369,7 @@ func (s *MCPServer) Notify(ctx context.Context, method string, params any) error
 	if params != nil {
 		message["params"] = params
 	}
-	raw, err := json.Marshal(message, marshalOpts)
+	raw, err := json.Marshal(message, jsonx.LegacyEncode)
 	if err != nil {
 		return fmt.Errorf("claude: encoding mcp notification: %w", err)
 	}
@@ -421,7 +420,7 @@ type jsonRPCRequest struct {
 // which get no reply.
 func (s *MCPServer) HandleMCPMessage(ctx context.Context, message jsontext.Value) (jsontext.Value, error) {
 	var req jsonRPCRequest
-	if err := json.Unmarshal(message, &req, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(message, &req); err != nil {
 		return jsonRPCErrorReply(nil, jsonRPCInvalidRequest, "Invalid JSON-RPC message")
 	}
 	if len(req.ID) == 0 || string(req.ID) == "null" {
@@ -506,7 +505,7 @@ func (s *MCPServer) callTool(ctx context.Context, params jsontext.Value) (result
 		Arguments jsontext.Value `json:"arguments"`
 	}
 	if len(params) > 0 {
-		if err := json.Unmarshal(params, &call, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(params, &call); err != nil {
 			return ErrorResult("Input validation error: %s", err)
 		}
 	}
@@ -535,7 +534,7 @@ func (s *MCPServer) callTool(ctx context.Context, params jsontext.Value) (result
 
 // jsonRPCReply encodes a JSON-RPC success response.
 func jsonRPCReply(id jsontext.Value, result any) (jsontext.Value, error) {
-	return json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": result}, marshalOpts)
+	return json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": result}, jsonx.LegacyEncode)
 }
 
 // jsonRPCErrorReply encodes a JSON-RPC error response. A missing id is sent as
@@ -545,7 +544,7 @@ func jsonRPCErrorReply(id jsontext.Value, code int, message string) (jsontext.Va
 	if len(id) > 0 {
 		rawID = id
 	}
-	return json.Marshal(jsonRPCError(rawID, code, message), marshalOpts)
+	return json.Marshal(jsonRPCError(rawID, code, message), jsonx.LegacyEncode)
 }
 
 // jsonRPCError builds a JSON-RPC error response object.
@@ -563,7 +562,7 @@ func negotiateProtocolVersion(params jsontext.Value) string {
 	var p struct {
 		ProtocolVersion string `json:"protocolVersion"`
 	}
-	if len(params) > 0 && json.Unmarshal(params, &p, jsonx.Foreign) == nil && p.ProtocolVersion != "" {
+	if len(params) > 0 && jsonx.Unmarshal(params, &p) == nil && p.ProtocolVersion != "" {
 		return p.ProtocolVersion
 	}
 	return DefaultMCPProtocolVersion
@@ -579,7 +578,7 @@ func validateAgainstSchema(schema map[string]any, raw jsontext.Value) error {
 	}
 	args := map[string]any{}
 	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &args, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(raw, &args); err != nil {
 			return fmt.Errorf("arguments must be an object: %w", err)
 		}
 	}

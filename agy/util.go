@@ -15,7 +15,7 @@ import (
 // decodeJSONObject decodes s into a map when it holds a JSON object.
 func decodeJSONObject(s string) (map[string]any, bool) {
 	var m map[string]any
-	if err := json.Unmarshal([]byte(s), &m, jsonx.Foreign); err != nil || m == nil {
+	if err := jsonx.Unmarshal([]byte(s), &m); err != nil || m == nil {
 		return nil, false
 	}
 	return m, true
@@ -38,7 +38,7 @@ func jsonConvert(src, dst any) error {
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(b, dst, jsonx.Foreign)
+	return jsonx.Unmarshal(b, dst)
 }
 
 // toJSONValue converts v to its generic JSON form (nil, bool, float64,

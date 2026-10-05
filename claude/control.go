@@ -17,9 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ironpark/gelati/internal/lifecycle"
-
 	"github.com/ironpark/gelati/internal/jsonx"
+	"github.com/ironpark/gelati/internal/lifecycle"
 )
 
 // DefaultInitializeTimeout bounds the initialize handshake when the caller's
@@ -188,7 +187,7 @@ func controlCancelFrame(id string) map[string]any {
 
 // encodeFrame encodes one outgoing stream-json frame.
 func encodeFrame(frame map[string]any) ([]byte, error) {
-	payload, err := json.Marshal(frame, marshalOpts)
+	payload, err := json.Marshal(frame, jsonx.LegacyEncode)
 	if err != nil {
 		return nil, fmt.Errorf("claude: encoding %s frame: %w", cmp.Or(str(frame["type"]), "stream-json"), err)
 	}
@@ -242,7 +241,7 @@ func (e *engine) readLoop(ctx context.Context) {
 			return
 		}
 		var frame map[string]any
-		if json.Unmarshal(raw, &frame, jsonx.Foreign) != nil || frame == nil {
+		if jsonx.Unmarshal(raw, &frame) != nil || frame == nil {
 			// Frames that are not JSON objects carry no message; skip
 			// them like the TypeScript SDK instead of failing the run.
 			e.cfg.logger.Debug("claude: skipped non-object frame", "frame", raw)

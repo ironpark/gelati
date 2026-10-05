@@ -3,7 +3,6 @@ package claude
 import (
 	"context"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"os"
 	"os/exec"
@@ -13,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 func TestInitializeExtras(t *testing.T) {
@@ -62,7 +63,7 @@ func TestInitializeExtras(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := json.Marshal(initializeExtras(t, tc.opts), json.Deterministic(true))
+			got, err := jsonx.Marshal(initializeExtras(t, tc.opts))
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -175,7 +176,7 @@ func TestSandboxSettingsMarshalJSON(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := json.Marshal(tc.in, json.Deterministic(true))
+			got, err := jsonx.Marshal(tc.in)
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -183,7 +184,7 @@ func TestSandboxSettingsMarshalJSON(t *testing.T) {
 				t.Fatalf("json = %s, want %s", got, tc.want)
 			}
 			// The pointer form encodes identically.
-			ptr, _ := json.Marshal(&tc.in, json.Deterministic(true))
+			ptr, _ := jsonx.Marshal(&tc.in)
 			if string(ptr) != tc.want {
 				t.Fatalf("pointer json = %s, want %s", ptr, tc.want)
 			}
@@ -227,7 +228,7 @@ func TestFilterEscalatingDefaultMode(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			before, _ := json.Marshal(tc.in, json.Deterministic(true))
+			before, _ := jsonx.Marshal(tc.in)
 			got := FilterEscalatingDefaultMode(tc.in)
 			_, has := defaultModeOf(got)
 			if has == tc.stripped {
@@ -239,7 +240,7 @@ func TestFilterEscalatingDefaultMode(t *testing.T) {
 					t.Fatalf("other permission keys lost: %v", got)
 				}
 			}
-			after, _ := json.Marshal(tc.in, json.Deterministic(true))
+			after, _ := jsonx.Marshal(tc.in)
 			if string(before) != string(after) {
 				t.Fatalf("input modified: %s -> %s", before, after)
 			}

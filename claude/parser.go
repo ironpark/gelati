@@ -2,7 +2,6 @@ package claude
 
 import (
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"fmt"
 
 	"github.com/ironpark/gelati/internal/jsonx"
@@ -18,7 +17,7 @@ import (
 // when data is not a JSON object.
 func ParseMessage(data []byte) (Message, error) {
 	var raw map[string]any
-	if err := json.Unmarshal(data, &raw, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(data, &raw); err != nil {
 		return nil, NewMessageParseError(
 			fmt.Sprintf("Invalid message data: %v", err), jsontext.Value(data))
 	}

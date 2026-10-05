@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // Transcript mirroring: the CLI, started with --session-mirror, interleaves
@@ -140,7 +142,7 @@ func newMirrorBatcherForOptions(opts *Options, projectsDir string, onError func(
 func (b *transcriptMirrorBatcher) enqueue(filePath string, entries []SessionStoreEntry) {
 	// Approximate wire size: one encode per frame keeps this cheap.
 	size := 0
-	if raw, err := json.Marshal(entries, marshalOpts); err == nil {
+	if raw, err := json.Marshal(entries, jsonx.LegacyEncode); err == nil {
 		size = len(raw)
 	}
 	b.mu.Lock()

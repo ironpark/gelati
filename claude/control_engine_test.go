@@ -2,11 +2,12 @@ package claude
 
 import (
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // respondBySubtype answers every control request the SDK sends: with the
@@ -594,11 +595,11 @@ func TestValidateCallbackOptions(t *testing.T) {
 // assertJSONEqual compares two values by their JSON encoding.
 func assertJSONEqual(t *testing.T, got, want any) {
 	t.Helper()
-	g, err := json.Marshal(got, json.Deterministic(true))
+	g, err := jsonx.Marshal(got)
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, err := json.Marshal(want, json.Deterministic(true))
+	w, err := jsonx.Marshal(want)
 	if err != nil {
 		t.Fatal(err)
 	}

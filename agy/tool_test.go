@@ -3,13 +3,14 @@ package agy
 import (
 	"context"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 type weatherArgs struct {
@@ -37,7 +38,7 @@ func TestNewToolSchema(t *testing.T) {
 		"required": []any{"location"},
 	}
 	if !reflect.DeepEqual(got, want) {
-		gb, _ := json.Marshal(got, json.Deterministic(true))
+		gb, _ := jsonx.Marshal(got)
 		t.Fatalf("schema %s", gb)
 	}
 	if tool.Name() != "get_weather" || tool.Description() != "Gets the weather." {
@@ -155,7 +156,7 @@ func TestNormalizeSchema(t *testing.T) {
 		"additionalProperties": false,
 	}
 	if !reflect.DeepEqual(got, want) {
-		gb, _ := json.Marshal(got, json.Deterministic(true))
+		gb, _ := jsonx.Marshal(got)
 		t.Fatalf("normalized %s", gb)
 	}
 	if NormalizeSchema("STRING") != "string" || NormalizeSchema("Hello") != "Hello" || NormalizeSchema(5) != 5 {

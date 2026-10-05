@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // JSONL serialization of transcript entries, shared by the store readers,
@@ -55,7 +57,7 @@ func newJSONAppender() *jsonAppender {
 // append appends v to dst. On error dst is returned unchanged.
 func (a *jsonAppender) append(dst []byte, v any) ([]byte, error) {
 	a.buf.Reset()
-	if err := json.MarshalWrite(&a.buf, v, marshalOpts); err != nil {
+	if err := json.MarshalWrite(&a.buf, v, jsonx.LegacyEncode); err != nil {
 		return dst, err
 	}
 	return append(dst, a.buf.Bytes()...), nil

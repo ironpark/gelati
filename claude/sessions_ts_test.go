@@ -1,12 +1,13 @@
 package claude
 
 import (
-	"encoding/json/v2"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // Unit tests for the behavior aligned with the TypeScript SDK. They run
@@ -403,7 +404,7 @@ func TestSessionJSONLByteSize(t *testing.T) {
 	}
 	var want int64
 	for _, e := range entries {
-		b, _ := json.Marshal(e, json.Deterministic(true))
+		b, _ := jsonx.Marshal(e)
 		want += int64(len(b)) + 1
 	}
 	// Like JSON.stringify, encoding/json/v2 writes <, >, & and U+2028 raw.

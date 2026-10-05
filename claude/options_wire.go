@@ -58,7 +58,7 @@ func resolveLaunch(opts *Options) (*launchConfig, error) {
 		return nil, err
 	}
 	if opts.ManagedSettings != nil {
-		payload, err := json.Marshal(opts.ManagedSettings, marshalOpts)
+		payload, err := json.Marshal(opts.ManagedSettings, jsonx.LegacyEncode)
 		if err != nil {
 			return nil, fmt.Errorf("claude: encoding managed settings: %w", err)
 		}
@@ -69,7 +69,7 @@ func resolveLaunch(opts *Options) (*launchConfig, error) {
 			// In-process SDK servers are declared in the initialize
 			// request (sdkMcpServers), as the TypeScript SDK does, not
 			// here.
-			payload, err := json.Marshal(map[string]any{"mcpServers": servers}, marshalOpts)
+			payload, err := json.Marshal(map[string]any{"mcpServers": servers}, jsonx.LegacyEncode)
 			if err != nil {
 				return nil, fmt.Errorf("claude: encoding mcp servers: %w", err)
 			}
@@ -308,7 +308,7 @@ func (l *launchConfig) addOutputFormat(opts *Options) error {
 	if !ok {
 		return nil
 	}
-	payload, err := json.Marshal(schema, marshalOpts)
+	payload, err := json.Marshal(schema, jsonx.LegacyEncode)
 	if err != nil {
 		return fmt.Errorf("claude: encoding output schema: %w", err)
 	}
@@ -424,7 +424,7 @@ func buildSettingsValue(opts *Options) (string, error) {
 			return "", err
 		}
 		if ok {
-			encoded, err := json.Marshal(obj, marshalOpts)
+			encoded, err := json.Marshal(obj, jsonx.LegacyEncode)
 			if err != nil {
 				return "", fmt.Errorf("claude: encoding Options.Settings: %w", err)
 			}
@@ -449,12 +449,12 @@ func buildSettingsValue(opts *Options) (string, error) {
 	}
 	settings := map[string]any{}
 	if strings.TrimSpace(text) != "" {
-		if err := json.Unmarshal([]byte(text), &settings, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal([]byte(text), &settings); err != nil {
 			return "", fmt.Errorf("claude: parsing inline settings: %w", err)
 		}
 	}
 	settings["sandbox"] = sandbox
-	payload, err := json.Marshal(settings, marshalOpts)
+	payload, err := json.Marshal(settings, jsonx.LegacyEncode)
 	if err != nil {
 		return "", fmt.Errorf("claude: encoding settings: %w", err)
 	}
@@ -484,7 +484,7 @@ func encodeJSONObject(v any, what string) (map[string]any, bool, error) {
 	case []byte:
 		raw = value
 	default:
-		encoded, err := json.Marshal(value, marshalOpts)
+		encoded, err := json.Marshal(value, jsonx.LegacyEncode)
 		if err != nil {
 			return nil, false, fmt.Errorf("claude: encoding %s: %w", what, err)
 		}
@@ -495,7 +495,7 @@ func encodeJSONObject(v any, what string) (map[string]any, bool, error) {
 		return nil, false, nil
 	}
 	var obj map[string]any
-	if err := json.Unmarshal(raw, &obj, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(raw, &obj); err != nil {
 		return nil, false, fmt.Errorf("claude: %s must be a JSON object: %w", what, err)
 	}
 	return obj, true, nil

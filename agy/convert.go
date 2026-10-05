@@ -2,15 +2,14 @@ package agy
 
 import (
 	"cmp"
-	"encoding/json/v2"
 	"fmt"
 	"reflect"
 	"slices"
 
-	"github.com/ironpark/gelati/internal/jsonx"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/ironpark/gelati/agy/internal/wire"
-	"google.golang.org/protobuf/proto"
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // Conversions between wire messages and the SDK types.
@@ -194,7 +193,7 @@ func stepFromUpdate(su *wire.StepUpdate) *Step {
 	if step.Type == StepTypeFinish {
 		if out := su.GetFinish().GetOutputString(); out != "" {
 			var v any
-			if err := json.Unmarshal([]byte(out), &v, jsonx.Foreign); err == nil {
+			if err := jsonx.Unmarshal([]byte(out), &v); err == nil {
 				step.StructuredOutput = v
 			}
 		}
@@ -440,7 +439,7 @@ func toolResponse(r *ToolResult) (*wire.ToolResponse, error) {
 		}
 		res.Result = cleaned
 	}
-	b, err := json.Marshal(toolResultPayload(&res), json.Deterministic(true))
+	b, err := jsonx.Marshal(toolResultPayload(&res))
 	if err != nil {
 		return nil, err
 	}

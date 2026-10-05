@@ -3,7 +3,6 @@ package codex
 import (
 	"context"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"iter"
 	"sync"
 
@@ -154,17 +153,17 @@ func (c *Client) routeThreadNotification(method string, params jsontext.Value, t
 	switch method {
 	case MethodThreadStarted:
 		var payload ThreadStartedParams
-		if err := json.Unmarshal(params, &payload, jsonx.Foreign); err == nil {
+		if err := jsonx.Unmarshal(params, &payload); err == nil {
 			event.Thread = &payload.Thread
 		}
 	case MethodThreadStatusChanged:
 		var payload ThreadStatusChangedParams
-		if err := json.Unmarshal(params, &payload, jsonx.Foreign); err == nil {
+		if err := jsonx.Unmarshal(params, &payload); err == nil {
 			event.Status = &payload.Status
 		}
 	case MethodThreadNameUpdated:
 		var payload ThreadNameUpdatedParams
-		if err := json.Unmarshal(params, &payload, jsonx.Foreign); err == nil {
+		if err := jsonx.Unmarshal(params, &payload); err == nil {
 			event.Name = payload.Name
 		}
 	}

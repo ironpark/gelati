@@ -2,7 +2,6 @@ package claude
 
 import (
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -11,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // mirrorStoreFake is a SessionStore that records every Append call. The zero
@@ -814,7 +815,7 @@ func TestEngineReportMirrorError(t *testing.T) {
 		t.Fatalf("uuid = %q", u)
 	}
 	// The payload parses back to the same message.
-	raw, err := json.Marshal(d, json.Deterministic(true))
+	raw, err := jsonx.Marshal(d)
 	if err != nil {
 		t.Fatal(err)
 	}

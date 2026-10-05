@@ -198,21 +198,21 @@ func UnmarshalAgentOutput(data []byte) (AgentOutput, error) {
 	var probe struct {
 		D string `json:"status"`
 	}
-	if err := json.Unmarshal(data, &probe, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(data, &probe); err != nil {
 		return nil, err
 	}
 	switch probe.D {
 	case "completed":
 		var v AgentOutputCompleted
-		err := json.Unmarshal(data, &v, jsonx.Foreign)
+		err := jsonx.Unmarshal(data, &v)
 		return v, err
 	case "async_launched":
 		var v AgentOutputAsyncLaunched
-		err := json.Unmarshal(data, &v, jsonx.Foreign)
+		err := jsonx.Unmarshal(data, &v)
 		return v, err
 	case "remote_launched":
 		var v AgentOutputRemoteLaunched
-		err := json.Unmarshal(data, &v, jsonx.Foreign)
+		err := jsonx.Unmarshal(data, &v)
 		return v, err
 	}
 	return nil, fmt.Errorf("tools: unknown AgentOutput status %q", probe.D)
@@ -351,33 +351,33 @@ func UnmarshalFileReadOutput(data []byte) (FileReadOutput, error) {
 	var probe struct {
 		D string `json:"type"`
 	}
-	if err := json.Unmarshal(data, &probe, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(data, &probe); err != nil {
 		return nil, err
 	}
 	switch probe.D {
 	case "text":
 		var v FileReadOutputText
-		err := json.Unmarshal(data, &v, jsonx.Foreign)
+		err := jsonx.Unmarshal(data, &v)
 		return v, err
 	case "image":
 		var v FileReadOutputImage
-		err := json.Unmarshal(data, &v, jsonx.Foreign)
+		err := jsonx.Unmarshal(data, &v)
 		return v, err
 	case "notebook":
 		var v FileReadOutputNotebook
-		err := json.Unmarshal(data, &v, jsonx.Foreign)
+		err := jsonx.Unmarshal(data, &v)
 		return v, err
 	case "pdf":
 		var v FileReadOutputPDF
-		err := json.Unmarshal(data, &v, jsonx.Foreign)
+		err := jsonx.Unmarshal(data, &v)
 		return v, err
 	case "parts":
 		var v FileReadOutputParts
-		err := json.Unmarshal(data, &v, jsonx.Foreign)
+		err := jsonx.Unmarshal(data, &v)
 		return v, err
 	case "file_unchanged":
 		var v FileReadOutputFileUnchanged
-		err := json.Unmarshal(data, &v, jsonx.Foreign)
+		err := jsonx.Unmarshal(data, &v)
 		return v, err
 	}
 	return nil, fmt.Errorf("tools: unknown FileReadOutput type %q", probe.D)
@@ -575,11 +575,11 @@ type McpOutput struct {
 func (u McpOutput) MarshalJSON() ([]byte, error) {
 	switch {
 	case u.String != nil:
-		return json.Marshal(u.String, marshalOpts)
+		return json.Marshal(u.String, jsonx.LegacyEncode)
 	case u.Array != nil:
-		return json.Marshal(u.Array, marshalOpts)
+		return json.Marshal(u.Array, jsonx.LegacyEncode)
 	case u.Object != nil:
-		return json.Marshal(u.Object, marshalOpts)
+		return json.Marshal(u.Object, jsonx.LegacyEncode)
 	}
 	return []byte("null"), nil
 }
@@ -589,11 +589,11 @@ func (u *McpOutput) UnmarshalJSON(data []byte) error {
 	*u = McpOutput{}
 	switch k := jsonValueKind(data); k {
 	case kindString:
-		return json.Unmarshal(data, &u.String, jsonx.Foreign)
+		return jsonx.Unmarshal(data, &u.String)
 	case kindArray:
-		return json.Unmarshal(data, &u.Array, jsonx.Foreign)
+		return jsonx.Unmarshal(data, &u.Array)
 	case kindObject:
-		return json.Unmarshal(data, &u.Object, jsonx.Foreign)
+		return jsonx.Unmarshal(data, &u.Object)
 	case kindNull:
 		return nil
 	default:
@@ -623,7 +623,7 @@ func (v McpContentBlock) MarshalJSON() ([]byte, error) {
 func (v *McpContentBlock) UnmarshalJSON(data []byte) error {
 	type plain McpContentBlock
 	var p plain
-	if err := json.Unmarshal(data, &p, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(data, &p); err != nil {
 		return err
 	}
 	extra, err := extraFields(data, mcpContentBlockKnown)
@@ -904,9 +904,9 @@ type ArtifactWatchEntrySince struct {
 func (u ArtifactWatchEntrySince) MarshalJSON() ([]byte, error) {
 	switch {
 	case u.String != nil:
-		return json.Marshal(u.String, marshalOpts)
+		return json.Marshal(u.String, jsonx.LegacyEncode)
 	case u.Number != nil:
-		return json.Marshal(u.Number, marshalOpts)
+		return json.Marshal(u.Number, jsonx.LegacyEncode)
 	}
 	return []byte("null"), nil
 }
@@ -916,9 +916,9 @@ func (u *ArtifactWatchEntrySince) UnmarshalJSON(data []byte) error {
 	*u = ArtifactWatchEntrySince{}
 	switch k := jsonValueKind(data); k {
 	case kindString:
-		return json.Unmarshal(data, &u.String, jsonx.Foreign)
+		return jsonx.Unmarshal(data, &u.String)
 	case kindNumber:
-		return json.Unmarshal(data, &u.Number, jsonx.Foreign)
+		return jsonx.Unmarshal(data, &u.Number)
 	case kindNull:
 		return nil
 	default:
@@ -1094,37 +1094,37 @@ func UnmarshalProjectsOutput(data []byte) (ProjectsOutput, error) {
 	var probe struct {
 		D string `json:"method"`
 	}
-	if err := json.Unmarshal(data, &probe, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(data, &probe); err != nil {
 		return nil, err
 	}
 	switch probe.D {
 	case "project_info":
 		var v ProjectsOutputProjectInfo
-		err := json.Unmarshal(data, &v, jsonx.Foreign)
+		err := jsonx.Unmarshal(data, &v)
 		return v, err
 	case "project_read":
 		var v ProjectsOutputProjectRead
-		err := json.Unmarshal(data, &v, jsonx.Foreign)
+		err := jsonx.Unmarshal(data, &v)
 		return v, err
 	case "project_search":
 		var v ProjectsOutputProjectSearch
-		err := json.Unmarshal(data, &v, jsonx.Foreign)
+		err := jsonx.Unmarshal(data, &v)
 		return v, err
 	case "project_write":
 		var v ProjectsOutputProjectWrite
-		err := json.Unmarshal(data, &v, jsonx.Foreign)
+		err := jsonx.Unmarshal(data, &v)
 		return v, err
 	case "project_delete":
 		var v ProjectsOutputProjectDelete
-		err := json.Unmarshal(data, &v, jsonx.Foreign)
+		err := jsonx.Unmarshal(data, &v)
 		return v, err
 	case "project_memory_list":
 		var v ProjectsOutputProjectMemoryList
-		err := json.Unmarshal(data, &v, jsonx.Foreign)
+		err := jsonx.Unmarshal(data, &v)
 		return v, err
 	case "project_memory_read":
 		var v ProjectsOutputProjectMemoryRead
-		err := json.Unmarshal(data, &v, jsonx.Foreign)
+		err := jsonx.Unmarshal(data, &v)
 		return v, err
 	}
 	return nil, fmt.Errorf("tools: unknown ProjectsOutput method %q", probe.D)
@@ -1286,7 +1286,7 @@ func (v ExitPlanModeInput) MarshalJSON() ([]byte, error) {
 func (v *ExitPlanModeInput) UnmarshalJSON(data []byte) error {
 	type plain ExitPlanModeInput
 	var p plain
-	if err := json.Unmarshal(data, &p, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(data, &p); err != nil {
 		return err
 	}
 	extra, err := extraFields(data, exitPlanModeInputKnown)
@@ -2590,9 +2590,9 @@ type WebSearchResult struct {
 func (u WebSearchResult) MarshalJSON() ([]byte, error) {
 	switch {
 	case u.String != nil:
-		return json.Marshal(u.String, marshalOpts)
+		return json.Marshal(u.String, jsonx.LegacyEncode)
 	case u.Object != nil:
-		return json.Marshal(u.Object, marshalOpts)
+		return json.Marshal(u.Object, jsonx.LegacyEncode)
 	}
 	return []byte("null"), nil
 }
@@ -2602,9 +2602,9 @@ func (u *WebSearchResult) UnmarshalJSON(data []byte) error {
 	*u = WebSearchResult{}
 	switch k := jsonValueKind(data); k {
 	case kindString:
-		return json.Unmarshal(data, &u.String, jsonx.Foreign)
+		return jsonx.Unmarshal(data, &u.String)
 	case kindObject:
-		return json.Unmarshal(data, &u.Object, jsonx.Foreign)
+		return jsonx.Unmarshal(data, &u.Object)
 	case kindNull:
 		return nil
 	default:

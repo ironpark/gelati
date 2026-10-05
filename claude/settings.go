@@ -81,17 +81,17 @@ type SandboxRipgrepConfig struct {
 // MarshalJSON emits the typed fields merged over Extra.
 func (s SandboxSettings) MarshalJSON() ([]byte, error) {
 	type alias SandboxSettings
-	typed, err := json.Marshal(alias(s), marshalOpts)
+	typed, err := json.Marshal(alias(s), jsonx.LegacyEncode)
 	if err != nil || len(s.Extra) == 0 {
 		return typed, err
 	}
 	merged := maps.Clone(s.Extra)
 	var fields map[string]any
-	if err := json.Unmarshal(typed, &fields, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(typed, &fields); err != nil {
 		return nil, err
 	}
 	maps.Copy(merged, fields)
-	return json.Marshal(merged, marshalOpts)
+	return json.Marshal(merged, jsonx.LegacyEncode)
 }
 
 // ---------------------------------------------------------------------------

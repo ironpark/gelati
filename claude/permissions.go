@@ -3,6 +3,8 @@ package claude
 import (
 	"context"
 	"encoding/json/v2"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // PermissionMode selects how the session handles permission prompts.
@@ -85,7 +87,7 @@ func (u PermissionUpdate) MarshalJSON() ([]byte, error) {
 	case PermissionUpdateAddDirectories, PermissionUpdateRemoveDirectories:
 		out.Directories = u.Directories
 	}
-	return json.Marshal(out, marshalOpts)
+	return json.Marshal(out, jsonx.LegacyEncode)
 }
 
 // UnmarshalJSON reads the control-protocol shape produced by MarshalJSON. A

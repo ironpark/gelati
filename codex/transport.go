@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -156,7 +155,7 @@ func (t *transport) Call(ctx context.Context, method string, params any, result 
 		if result == nil || len(resp.Result) == 0 {
 			return nil
 		}
-		if err := json.Unmarshal(resp.Result, result, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(resp.Result, result); err != nil {
 			return fmt.Errorf("codex: decode result of %s: %w", method, err)
 		}
 		return nil
@@ -193,7 +192,7 @@ func (t *transport) Close() error {
 
 // write serializes v as one compact JSON line.
 func (t *transport) write(v any) error {
-	b, err := json.Marshal(v, json.Deterministic(true))
+	b, err := jsonx.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("codex: encode message: %w", err)
 	}
@@ -227,7 +226,7 @@ func (t *transport) readLoop() {
 			continue
 		}
 		var msg wireMessage
-		if err := json.Unmarshal(line, &msg, jsonx.Foreign); err != nil {
+		if err := jsonx.Unmarshal(line, &msg); err != nil {
 			// Malformed input is skipped rather than fatal: a stray line on
 			// the stream must not tear down a working connection.
 			continue

@@ -479,7 +479,7 @@ type Options struct {
 	// Settings adds flag-tier settings, passed to --settings. It is a
 	// string holding a settings file path or an inline JSON object, or a
 	// value encoded as a JSON object: Settings, map[string]any,
-	// jsontext.Value (json.RawMessage) or any JSON-marshalable struct. A file path cannot be
+	// jsontext.Value or any JSON-marshalable struct. A file path cannot be
 	// combined with Sandbox.
 	Settings any
 
@@ -495,7 +495,7 @@ type Options struct {
 
 	// Sandbox holds sandbox settings, merged into the --settings object as
 	// its "sandbox" key: a *SandboxSettings, a map[string]any, a
-	// jsontext.Value (json.RawMessage) or any value encoded as a JSON object. When it
+	// jsontext.Value or any value encoded as a JSON object. When it
 	// enables the sandbox without setting failIfUnavailable, the SDK sets
 	// failIfUnavailable to true so a missing sandbox fails the run instead
 	// of silently running unsandboxed.

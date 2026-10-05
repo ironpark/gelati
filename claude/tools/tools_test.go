@@ -6,6 +6,8 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // allNames lists every tool-name constant.
@@ -178,7 +180,7 @@ func TestInputRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, _ := json.Marshal(back, json.Deterministic(true))
+			got, _ := jsonx.Marshal(back)
 			if !jsonEqual(t, got, []byte(s.json)) {
 				t.Errorf("round trip mismatch:\n got %s\nwant %s", got, s.json)
 			}
@@ -203,7 +205,7 @@ func TestOutputRoundTrip(t *testing.T) {
 				if reflect.TypeOf(v) != reflect.TypeOf(s.want) {
 					t.Fatalf("DecodeOutput returned %T, want %T", v, s.want)
 				}
-				got, err := json.Marshal(v, json.Deterministic(true))
+				got, err := jsonx.Marshal(v)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -270,11 +272,11 @@ func TestExtraPreserved(t *testing.T) {
 	if in.Extra["plan"] != "do it" || in.Extra["planFilePath"] != "/p.md" || in.AllowedPrompts != nil {
 		t.Fatalf("Extra = %v", in.Extra)
 	}
-	b, err := json.Marshal(ExitPlanModeInput{}, json.Deterministic(true))
+	b, err := jsonx.Marshal(ExitPlanModeInput{})
 	if err != nil || string(b) != "{}" {
 		t.Fatalf("empty marshal = %s, %v", b, err)
 	}
-	b, err = json.Marshal(ExitPlanModeInput{Extra: map[string]any{"b": 1, "a": "x", "allowedPrompts": "ignored"}}, json.Deterministic(true))
+	b, err = jsonx.Marshal(ExitPlanModeInput{Extra: map[string]any{"b": 1, "a": "x", "allowedPrompts": "ignored"}})
 	if err != nil || string(b) != `{"a":"x","b":1}` {
 		t.Fatalf("extra-only marshal = %s, %v", b, err)
 	}

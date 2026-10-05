@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // ---------------------------------------------------------------------------
@@ -146,7 +148,7 @@ func (w wireBlock) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(m, marshalOpts)
+	return json.Marshal(m, jsonx.LegacyEncode)
 }
 
 // textOrList picks the populated one of a text-or-list content pair, or nil.

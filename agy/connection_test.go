@@ -13,6 +13,7 @@ import (
 
 	"github.com/ironpark/gelati/agy/internal/harness"
 	"github.com/ironpark/gelati/agy/internal/wire"
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 func TestConnectionStartsIdleWithHistory(t *testing.T) {
@@ -567,7 +568,7 @@ func TestToolResultPayload(t *testing.T) {
 		{&ToolResult{Result: make(chan int)}, `{"result":"`},
 		{&ToolResult{Error: "bad"}, `{"error":"bad"}`},
 	} {
-		b, _ := json.Marshal(toolResultPayload(tc.res), json.Deterministic(true))
+		b, _ := jsonx.Marshal(toolResultPayload(tc.res))
 		if !strings.HasPrefix(string(b), tc.want) {
 			t.Errorf("payload of %+v = %s, want %s", tc.res, b, tc.want)
 		}

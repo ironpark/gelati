@@ -1,7 +1,6 @@
 package claude
 
 import (
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"maps"
 
@@ -123,19 +122,7 @@ func (b ToolResultBlock) MarshalJSON() ([]byte, error) {
 // as its "content" member. The content fields of the result blocks are tagged
 // "-", so their own encoding never has that key and nothing is checked.
 func marshalWithContent(block, content any) ([]byte, error) {
-	b, err := json.Marshal(block, marshalOpts)
-	if err != nil {
-		return nil, err
-	}
-	extra := contentMember(content)
-	if extra != nil {
-		c, err := json.Marshal(content, marshalOpts)
-		if err != nil {
-			return nil, err
-		}
-		extra["content"] = jsontext.Value(c)
-	}
-	return jsonx.MarshalWithExtra(jsontext.Value(b), extra, func(string) bool { return false })
+	return jsonx.MarshalWithExtra(block, contentMember(content), func(string) bool { return false }, jsonx.LegacyEncode)
 }
 
 // UnmarshalJSON reads the wire shape produced by MarshalJSON. A member of an
@@ -422,7 +409,7 @@ func (b *UnknownBlock) BlockType() string { return b.Type }
 
 // MarshalJSON writes Raw, with Type as its "type" key.
 func (b UnknownBlock) MarshalJSON() ([]byte, error) {
-	return json.Marshal(b.wire(), marshalOpts)
+	return json.Marshal(b.wire(), jsonx.LegacyEncode)
 }
 
 // UnmarshalJSON keeps the whole object in Raw. A value that is not an object

@@ -3,6 +3,8 @@ package codex
 import (
 	"encoding/json/v2"
 	"testing"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 func TestDecodeThreadStartResult(t *testing.T) {
@@ -310,7 +312,7 @@ func TestDecodeThreadItems(t *testing.T) {
 
 func mustMarshal(t *testing.T, v any) []byte {
 	t.Helper()
-	b, err := json.Marshal(v, json.Deterministic(true))
+	b, err := jsonx.Marshal(v)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

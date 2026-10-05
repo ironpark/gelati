@@ -88,7 +88,7 @@ process.stdout.write(JSON.stringify(out));
 // store used by calls with Store set.
 func runTS(t *testing.T, sdk, configDir string, calls []tsCall, appends []tsAppend, env ...string) []any {
 	t.Helper()
-	in, err := json.Marshal(map[string]any{"calls": calls, "appends": appends}, json.Deterministic(true))
+	in, err := jsonx.Marshal(map[string]any{"calls": calls, "appends": appends})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func cliLine(kv ...any) string {
 			sb.WriteByte(',')
 		}
 		for j, v := range []any{kv[i], kv[i+1]} {
-			b, err := json.Marshal(v, json.Deterministic(true))
+			b, err := jsonx.Marshal(v)
 			if err != nil {
 				panic(err)
 			}
@@ -542,7 +542,7 @@ func TestSessionParityWithTypeScript(t *testing.T) {
 		var entries []SessionStoreEntry
 		for _, l := range lines {
 			var e SessionStoreEntry
-			if err := json.Unmarshal([]byte(l), &e, jsonx.Foreign); err != nil {
+			if err := jsonx.Unmarshal([]byte(l), &e); err != nil {
 				t.Fatal(err)
 			}
 			entries = append(entries, e)
@@ -681,8 +681,8 @@ func TestSessionParityLargeTranscript(t *testing.T) {
 		got := tsShape(t, tsSessionMessages(localSessionsSkipping(root, tt.skip).getSessionMessages(b.sid, opts)))
 		want := runTS(t, sdk, configDir, calls, nil, tt.env...)[0]
 		if !reflect.DeepEqual(got, want) {
-			gj, _ := json.Marshal(got, json.Deterministic(true))
-			wj, _ := json.Marshal(want, json.Deterministic(true))
+			gj, _ := jsonx.Marshal(got)
+			wj, _ := jsonx.Marshal(want)
 			t.Errorf("%s:\nGo: %.2000s\nTS: %.2000s", tt.name, gj, wj)
 		}
 		if n := len(got.([]any)); (tt.skip && n != 2) || (!tt.skip && n != 6) {

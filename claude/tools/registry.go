@@ -113,7 +113,7 @@ func tool[In, Out any](name string) Tool {
 		Output: reflect.TypeFor[Out](),
 		decodeOut: func(b []byte) (any, error) {
 			var v Out
-			err := json.Unmarshal(b, &v, jsonx.Foreign)
+			err := jsonx.Unmarshal(b, &v)
 			return v, err
 		},
 	}
@@ -224,12 +224,12 @@ func DecodeInput(name string, input map[string]any) (any, error) {
 	if t.Name == McpPrefix {
 		return McpInput(input), nil
 	}
-	b, err := json.Marshal(input, marshalOpts)
+	b, err := json.Marshal(input, jsonx.LegacyEncode)
 	if err != nil {
 		return nil, fmt.Errorf("tools: encode %s input: %w", name, err)
 	}
 	v := reflect.New(t.Input)
-	if err := json.Unmarshal(b, v.Interface(), jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(b, v.Interface()); err != nil {
 		return nil, fmt.Errorf("tools: decode %s input: %w", name, err)
 	}
 	return v.Elem().Interface(), nil
@@ -254,7 +254,7 @@ func DecodeOutput(name string, output any) (any, error) {
 		b = o
 	default:
 		var err error
-		if b, err = json.Marshal(output, marshalOpts); err != nil {
+		if b, err = json.Marshal(output, jsonx.LegacyEncode); err != nil {
 			return nil, fmt.Errorf("tools: encode %s output: %w", name, err)
 		}
 	}
@@ -272,11 +272,11 @@ func DecodeOutput(name string, output any) (any, error) {
 // It does not check the tool name; use DecodeInput to dispatch by name.
 func As[T any](input map[string]any) (T, error) {
 	var v T
-	b, err := json.Marshal(input, marshalOpts)
+	b, err := json.Marshal(input, jsonx.LegacyEncode)
 	if err != nil {
 		return v, err
 	}
-	err = json.Unmarshal(b, &v, jsonx.Foreign)
+	err = jsonx.Unmarshal(b, &v)
 	return v, err
 }
 
@@ -284,12 +284,12 @@ func As[T any](input map[string]any) (T, error) {
 // object) back into the map[string]any form used by ToolUseBlock.Input and
 // PermissionResultAllow.UpdatedInput.
 func ToMap(v any) (map[string]any, error) {
-	b, err := json.Marshal(v, marshalOpts)
+	b, err := json.Marshal(v, jsonx.LegacyEncode)
 	if err != nil {
 		return nil, err
 	}
 	var m map[string]any
-	if err := json.Unmarshal(b, &m, jsonx.Foreign); err != nil {
+	if err := jsonx.Unmarshal(b, &m); err != nil {
 		return nil, fmt.Errorf("tools: %T does not encode to a JSON object: %w", v, err)
 	}
 	return m, nil

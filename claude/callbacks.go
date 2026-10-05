@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // Public types of the callbacks that answer the CLI's inbound control
@@ -139,9 +141,9 @@ type UserDialogResult struct {
 // {"behavior":"cancelled"}.
 func (r UserDialogResult) MarshalJSON() ([]byte, error) {
 	if r.Behavior == UserDialogCancelled {
-		return json.Marshal(map[string]any{"behavior": UserDialogCancelled}, marshalOpts)
+		return json.Marshal(map[string]any{"behavior": UserDialogCancelled}, jsonx.LegacyEncode)
 	}
-	return json.Marshal(map[string]any{"behavior": UserDialogCompleted, "result": r.Result}, marshalOpts)
+	return json.Marshal(map[string]any{"behavior": UserDialogCompleted, "result": r.Result}, jsonx.LegacyEncode)
 }
 
 // OnUserDialog renders a dialog the CLI requested and returns the user's
