@@ -1,0 +1,64 @@
+// Printed from the descriptors in the google-antigravity v0.1.20 wheel
+// (google/antigravity/proto/genai_json_annotations_pb2.py) by testdata/protoextract.
+
+edition = "2024";
+
+package gaos.parsing;
+
+import "google/protobuf/descriptor.proto";
+
+message StaticJsonField {
+  string key = 1;
+
+  string value = 2;
+}
+
+enum JsonType {
+  JSON_TYPE_UNSPECIFIED = 0;
+
+  JSON_TYPE_OBJECT = 1;
+
+  JSON_TYPE_ARRAY = 2;
+
+  JSON_TYPE_VALUE = 3;
+}
+
+extend google.protobuf.OneofOptions {
+  bool is_union = 525000029;
+
+  bool subtype_source = 525000030;
+
+  bool is_required = 525000031;
+
+  string union_name = 525000032;
+}
+
+extend google.protobuf.FieldOptions {
+  string json_discriminator = 525000215;
+
+  string json_discriminator_value = 525000216;
+
+  bool subtype_source_field = 525000217;
+
+  string json_only_discriminator = 525000218;
+
+  bool additional_properties = 525000219;
+
+  repeated string json_discriminator_values = 525000220;
+
+  repeated string add_union_value = 525000221;
+
+  bool flexible_map = 525000222;
+
+  string sub_content_name = 525000227;
+}
+
+extend google.protobuf.EnumValueOptions {
+  string enum_value_name = 535802949;
+}
+
+extend google.protobuf.MessageOptions {
+  StaticJsonField add_static_field = 535801962;
+
+  JsonType message_json_type = 535801963;
+}

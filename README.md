@@ -8,17 +8,19 @@ Go SDKs for driving coding agents from Go programs.
 | [`claude/tools`](./claude/tools) | Typed inputs and outputs for Claude Code's built-in tools (Bash, Read, Edit, Agent, …) |
 | [`claude/sessionstoretest`](./claude/sessionstoretest) | Conformance suite for custom `claude.SessionStore` adapters |
 | [`codex`](./codex) | Client for the Codex agent over the `codex app-server` JSON-RPC protocol |
-| [`antigravity`](./antigravity) | Port of Google's Antigravity Python SDK: drives the `localharness` agent runtime over WebSocket |
-| [`antigravity/policy`](./antigravity/policy) | Tool-call policy builders (allow/deny/ask-user, workspace-only, safe defaults) |
+| [`agy`](./agy) | Port of Google's Antigravity Python SDK: drives the `localharness` agent runtime over WebSocket |
+| [`agy/policy`](./agy/policy) | Tool-call policy builders (allow/deny/ask-user, workspace-only, safe defaults) |
 
-The module depends only on the Go standard library and [`coder/websocket`](https://github.com/coder/websocket) (used by `antigravity`).
+Besides the Go standard library, the module depends only on
+[`coder/websocket`](https://github.com/coder/websocket) and
+[`google.golang.org/protobuf`](https://pkg.go.dev/google.golang.org/protobuf), both used by `agy`.
 
 ## Requirements
 
 - Go 1.27 or newer
 - For `claude`: the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) (`claude`) on `PATH`, or `Options.CLIPath`
 - For `codex`: the `codex` CLI
-- For `antigravity`: the `localharness` binary from the
+- For `agy`: the `localharness` binary from the
   [`google-antigravity`](https://pypi.org/project/google-antigravity/) wheel
   (via `ANTIGRAVITY_HARNESS_PATH`, `PATH` or `Config.CLIPath`), and a
   `GEMINI_API_KEY` (or Vertex AI credentials, or a local OpenAI-compatible server)
@@ -32,7 +34,7 @@ go get github.com/ironpark/gelati
 The three packages follow their upstream SDKs, so their lifecycles differ,
 but the pieces around them line up:
 
-| | `claude` | `codex` | `antigravity` |
+| | `claude` | `codex` | `agy` |
 |---|---|---|---|
 | Create | `NewClient(*Options)` | `New(ctx, Options)` (starts the process) | `NewAgent(Config)` |
 | Start | `Connect(ctx)` | — | `Start(ctx)` |
@@ -42,7 +44,7 @@ but the pieces around them line up:
 | Session end | `Done()` / `Err()` | `Done()` / `Err()` | `Done()` / `Err()` |
 | Executable | `Options.CLIPath` | `Options.CLIPath` | `Config.CLIPath` |
 | Diagnostics | `Options.Logger` | `Options.Logger` | `Config.Logger` |
-| Error marker | `claude.Error` | `codex.Error` | `antigravity.Error` |
+| Error marker | `claude.Error` | `codex.Error` | `agy.Error` |
 | Unmodeled data | `*UnknownMessage`, `*UnknownBlock` | `*UnknownItem`, `EventNotification` | — |
 
 `Done` is closed once the session ends for any reason, and `Err` then reports
@@ -56,14 +58,14 @@ its upstream's model:
 |---|---|
 | `claude` | The CLI decides from `PermissionMode`, `AllowedTools` / `DisallowedTools` and its settings; set `CanUseTool` to answer the prompts it would show a user |
 | `codex` | Commands and file changes are declined, permission requests grant nothing and MCP elicitations are declined (upstream's Python SDK accepts); set `Options.Approvals` |
-| `antigravity` | Builtin tools run except `run_command`, which is denied; set `Config.Policies` |
+| `agy` | Builtin tools run except `run_command`, which is denied; set `Config.Policies` |
 
 Each package has runnable programs under `examples/`:
 
 ```sh
 go run ./claude/examples/hello_world
 go run ./codex/examples/streaming
-go run ./antigravity/examples/hooks
+go run ./agy/examples/hooks
 ```
 
 ## claude
@@ -300,9 +302,9 @@ does not wrap are available through `Client.Call`.
 [`codex/examples`](./codex/examples): `hello_world` (`Run`), `streaming`
 (`StartTurn` events) and `approvals` (`ApprovalFuncs`).
 
-## antigravity
+## agy
 
-`antigravity` is a Go port of Google's
+`agy` is a Go port of Google's
 [Antigravity Python SDK](https://pypi.org/project/google-antigravity/) (v0.1.20).
 The agent loop runs in the SDK's `localharness` binary; the package launches it,
 configures it, streams its steps over WebSocket, and runs custom tools, hooks,
@@ -328,8 +330,8 @@ with a project and location or an API key to use Vertex AI instead.
 
 ```go
 ctx := context.Background()
-agent, err := antigravity.NewAgent(antigravity.Config{
-	SystemInstructions: antigravity.TextSystemInstructions("Answer briefly."),
+agent, err := agy.NewAgent(agy.Config{
+	SystemInstructions: agy.TextSystemInstructions("Answer briefly."),
 })
 if err != nil {
 	log.Fatal(err)
@@ -339,7 +341,7 @@ if err := agent.Start(ctx); err != nil {
 }
 defer agent.Close()
 
-resp, err := agent.Chat(ctx, antigravity.Text("What is the capital of France?"))
+resp, err := agent.Chat(ctx, agy.Text("What is the capital of France?"))
 if err != nil {
 	log.Fatal(err)
 }
@@ -375,7 +377,7 @@ for delta, err := range resp.Text(ctx) {
 fmt.Println(resp.StopReason(), resp.UsageMetadata())
 ```
 
-`resp.Cancel` aborts the turn (the stream ends with `*antigravity.CancelledError`),
+`resp.Cancel` aborts the turn (the stream ends with `*agy.CancelledError`),
 and `Config.ResponseSchema` plus `resp.DecodeStructuredOutput` return typed
 structured output.
 
@@ -390,15 +392,15 @@ type weatherArgs struct {
 	City string `json:"city" description:"The city to look up."`
 }
 
-weather := antigravity.NewTool("get_weather", "Returns the weather for a city.",
-	func(ctx context.Context, tc *antigravity.ToolContext, in weatherArgs) (string, error) {
+weather := agy.NewTool("get_weather", "Returns the weather for a city.",
+	func(ctx context.Context, tc *agy.ToolContext, in weatherArgs) (string, error) {
 		return "sunny in " + in.City, nil
 	})
 
-agent, err := antigravity.NewAgent(antigravity.Config{
-	Tools: []*antigravity.Tool{weather},
-	MCPServers: []antigravity.MCPServer{
-		&antigravity.MCPStdioServer{Name: "fs", Command: "npx", Args: []string{"-y", "@modelcontextprotocol/server-filesystem", "."}},
+agent, err := agy.NewAgent(agy.Config{
+	Tools: []*agy.Tool{weather},
+	MCPServers: []agy.MCPServer{
+		&agy.MCPStdioServer{Name: "fs", Command: "npx", Args: []string{"-y", "@modelcontextprotocol/server-filesystem", "."}},
 	},
 })
 ```
@@ -411,33 +413,33 @@ with `CapabilitiesConfig.EnabledTools` / `DisabledTools` and presets such as
 ### Hooks and policies
 
 Hooks are function types listed in `Config.Hooks`; policies (built with the
-`antigravity/policy` package) decide which tool calls run, are evaluated by
+`agy/policy` package) decide which tool calls run, are evaluated by
 the harness, and call back into Go for predicates and ask-user handlers.
 
 ```go
-cfg := antigravity.Config{
-	Hooks: []antigravity.Hook{
-		antigravity.PreToolCallHook(func(ctx context.Context, hc *antigravity.HookContext,
-			call *antigravity.ToolCall) (antigravity.HookResult, error) {
+cfg := agy.Config{
+	Hooks: []agy.Hook{
+		agy.PreToolCallHook(func(ctx context.Context, hc *agy.HookContext,
+			call *agy.ToolCall) (agy.HookResult, error) {
 			log.Printf("tool call: %s %v", call.Name, call.Args)
-			return antigravity.HookResult{}, nil
+			return agy.HookResult{}, nil
 		}),
-		antigravity.StopHook(func(ctx context.Context, hc *antigravity.HookContext,
-			args antigravity.StopArgs) (antigravity.StopHookResult, error) {
+		agy.StopHook(func(ctx context.Context, hc *agy.HookContext,
+			args agy.StopArgs) (agy.StopHookResult, error) {
 			if args.ContinuationCount == 0 && !strings.Contains(args.ResponseText, "DONE") {
-				return antigravity.StopHookResult{Decision: antigravity.StopDecisionContinue,
+				return agy.StopHookResult{Decision: agy.StopDecisionContinue,
 					Reason: "Finish the task and end with DONE."}, nil
 			}
-			return antigravity.StopHookResult{}, nil
+			return agy.StopHookResult{}, nil
 		}),
 	},
-	Policies: []antigravity.Policy{
+	Policies: []agy.Policy{
 		policy.DenyAll(),
 		policy.Allow("view_file"),
 		policy.AskUser("run_command", policy.Handler(confirm)),
 	},
-	Triggers: []antigravity.Trigger{
-		antigravity.Every(time.Hour, func(ctx context.Context, tc *antigravity.TriggerContext) error {
+	Triggers: []agy.Trigger{
+		agy.Every(time.Hour, func(ctx context.Context, tc *agy.TriggerContext) error {
 			return tc.Send(ctx, "Hourly check: summarize anything new in the workspace.")
 		}),
 	},
@@ -450,22 +452,22 @@ cfg := antigravity.Config{
 or LM Studio, with no Gemini credentials (upstream `LocalOpenAIAgentConfig`):
 
 ```go
-cfg := antigravity.Config{
+cfg := agy.Config{
 	Model:  "gemma3",
-	OpenAI: &antigravity.OpenAIEndpoint{BaseURL: "http://localhost:11434/v1"},
+	OpenAI: &agy.OpenAIEndpoint{BaseURL: "http://localhost:11434/v1"},
 }.Lightweight()
 ```
 
 ### Examples
 
-[`antigravity/examples`](./antigravity/examples) ports upstream's
+[`agy/examples`](./agy/examples) ports upstream's
 getting-started examples as runnable programs: `hello_world`, `streaming`,
 `custom_tools`, `hooks`, `policies`, `structured_output`, `mcp_tools`,
 `subagents`, `persistence`, `multimodal`, `triggers`, `cancellation`, `vertex`
 and `local_models`.
 
 ```sh
-go run ./antigravity/examples/hello_world
+go run ./agy/examples/hello_world
 ```
 
 ### Differences from upstream
@@ -484,7 +486,7 @@ go run ./antigravity/examples/hello_world
   server), OpenTelemetry instrumentation, and the interactive terminal helpers.
   `DebugConfig` is replaced by `Config.Logger`.
 
-The package documentation (`go doc github.com/ironpark/gelati/antigravity`)
+The package documentation (`go doc github.com/ironpark/gelati/agy`)
 has the full Python-to-Go name mapping.
 
 ## Development
@@ -492,6 +494,14 @@ has the full Python-to-Go name mapping.
 ```sh
 go vet ./...
 go test -race ./...
+```
+
+`agy`'s wire messages are generated from the upstream `.proto` definitions
+(`agy/internal/wire/proto`) with [buf](https://buf.build) and `protoc-gen-go`,
+which is pinned as a tool in `go.mod`:
+
+```sh
+go generate ./agy/internal/wire   # runs buf generate
 ```
 
 Optional suites:
@@ -502,5 +512,5 @@ Optional suites:
 | `GELATI_TS_SDK=/path/to/sdk.mjs` | Session parity tests against the real TypeScript SDK runtime (needs `node`) |
 | `GELATI_SDK_TOOLS_DTS=/path/to/sdk-tools.d.ts` | Checks that `claude/tools` is up to date with the given schema |
 | `GELATI_CODEX_E2E=1` | End-to-end test against the installed `codex` CLI (needs a signed-in account; spends a few tokens) |
-| `GELATI_ANTIGRAVITY_HARNESS=/path/to/localharness` | Integration tests against the real Antigravity harness, with no credentials (an invalid API key and a fake OpenAI-compatible server) |
-| `GELATI_ANTIGRAVITY_E2E=1` | End-to-end test against Gemini through the real harness (needs `GEMINI_API_KEY` and the harness on `ANTIGRAVITY_HARNESS_PATH` or `PATH`; costs a little) |
+| `GELATI_AGY_HARNESS=/path/to/localharness` | Integration tests against the real Antigravity harness, with no credentials (an invalid API key and a fake OpenAI-compatible server) |
+| `GELATI_AGY_E2E=1` | End-to-end test against Gemini through the real harness (needs `GEMINI_API_KEY` and the harness on `ANTIGRAVITY_HARNESS_PATH` or `PATH`; costs a little) |

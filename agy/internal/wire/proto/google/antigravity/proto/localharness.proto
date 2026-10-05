@@ -1,0 +1,1352 @@
+// Printed from the descriptors in the google-antigravity v0.1.20 wheel
+// (google/antigravity/proto/localharness_pb2.py) by testdata/protoextract.
+
+edition = "2024";
+
+package antigravity.localharness;
+
+import "google/antigravity/proto/content.proto";
+
+message InputConfig {
+  string storage_directory = 1;
+
+  uint32 port = 2;
+
+  string bind_address = 3 [default = "localhost"];
+
+  ClientInfo client_info = 4;
+
+  map<string, string> env = 5;
+
+  bool use_interactions_api = 6;
+}
+
+message InitializeConversationEvent {
+  HarnessConfig config = 1;
+}
+
+message ClientInfo {
+  string language = 1;
+
+  string version = 2;
+
+  string language_version = 3;
+
+  string os = 4;
+
+  string os_version = 5;
+}
+
+message HarnessConfig {
+  extensions 1000 to 1999, 2000 to max;
+
+  string cascade_id = 1;
+
+  SessionContinuationMode session_continuation_mode = 19;
+
+  SystemInstructions system_instructions = 4;
+
+  repeated Tool tools = 5;
+
+  HarnessSideTools harness_side_tools = 6;
+
+  uint32 compaction_threshold = 7;
+
+  repeated Workspace workspaces = 8;
+
+  repeated string skills_paths = 9;
+
+  string finish_tool_schema_json = 10;
+
+  bytes initial_trajectory = 11;
+
+  string app_data_dir = 12;
+
+  repeated McpServerConfig mcp_servers = 14;
+
+  repeated ModelConfig models = 15;
+
+  repeated LifecycleHook enabled_hooks = 16;
+
+  repeated CustomAgent custom_subagents = 17;
+
+  ToolOutputTruncation tool_output_truncation = 18;
+
+  RetryConfig retry_config = 20;
+
+  PolicyConfig policy_config = 21;
+
+  AgentBehavior agent_behavior = 22;
+
+  BudgetConfig budget_config = 23;
+
+  CompactionConfig compaction_config = 24;
+
+  SkillsConfig skills_config = 27;
+
+  RulesConfig rules_config = 28;
+
+  enum SessionContinuationMode {
+    SESSION_CONTINUATION_MODE_UNSPECIFIED = 0;
+
+    RESUME = 1;
+
+    CREATE_OR_RESUME = 2;
+
+    CREATE_ONLY = 3;
+  }
+}
+
+message RulesConfig {
+  repeated string filenames = 1;
+}
+
+message ModelAPIRetryConfig {
+  uint32 max_retries = 1;
+
+  uint32 initial_sleep_duration_ms = 2;
+
+  double exponential_multiplier = 3;
+
+  double jitter_range = 4;
+}
+
+message ModelOutputRetryConfig {
+  uint32 max_retries = 1;
+}
+
+message RetryConfig {
+  ModelAPIRetryConfig api_retry = 1;
+
+  ModelOutputRetryConfig model_output_retry = 2;
+}
+
+message Workspace {
+  oneof workspace_type {
+    FilesystemWorkspace filesystem_workspace = 1;
+  }
+}
+
+message FilesystemWorkspace {
+  string directory = 1;
+}
+
+message GeminiModelOptions {
+  string thinking_level = 1;
+
+  string service_tier = 2;
+}
+
+message GeminiAPIEndpoint {
+  string base_url = 1;
+
+  map<string, string> http_headers = 2;
+
+  string api_key = 3;
+
+  GeminiModelOptions options = 4;
+}
+
+message VertexEndpoint {
+  string base_url = 1;
+
+  map<string, string> http_headers = 2;
+
+  string project = 3;
+
+  string location = 4;
+
+  GeminiModelOptions options = 5;
+
+  string api_key = 6;
+}
+
+message ModelConfig {
+  oneof endpoint {
+    GeminiAPIEndpoint gemini_api_endpoint = 3;
+
+    VertexEndpoint vertex_endpoint = 4;
+
+    GemmaEndpoint gemma_endpoint = 6;
+
+    CustomEndpoint custom_endpoint = 7;
+  }
+
+  string name = 1;
+
+  repeated ModelType types = 2;
+}
+
+message GemmaEndpoint {
+  string base_url = 1;
+}
+
+message CustomEndpoint {
+  string backend_type = 1;
+
+  string config_json = 2;
+}
+
+message SystemInstructions {
+  oneof type {
+    CustomSystemInstructions custom = 1;
+
+    AppendedSystemInstructions appended = 2;
+  }
+}
+
+message CustomSystemInstructions {
+  repeated Part part = 1;
+
+  message Part {
+    oneof part {
+      string text = 1;
+
+      SystemInstructionTemplate template = 2;
+
+      string builtin_section = 3;
+    }
+  }
+}
+
+message SystemInstructionTemplate {
+  string name = 1;
+
+  repeated Arg args = 2;
+
+  message Arg {
+    string name = 1;
+
+    string value = 2;
+  }
+}
+
+message AppendedSystemInstructions {
+  string custom_identity = 1;
+
+  repeated Section appended_sections = 2;
+
+  message Section {
+    string title = 1;
+
+    string content = 2;
+  }
+}
+
+message Tool {
+  extensions 1000 to 1999, 2000 to max;
+
+  string name = 1;
+
+  string description = 2;
+
+  string parameters_json_schema = 3;
+
+  string response_json_schema = 4;
+
+  bool defer_loading = 5;
+}
+
+message HarnessSideTools {
+  extensions 1000 to 1999, 2000 to max;
+
+  FindToolConfig find = 1;
+
+  RunCommandToolConfig run_command = 2;
+
+  SubagentsConfig subagents = 3;
+
+  UserQuestionsConfig user_questions = 4;
+
+  FileEditToolConfig file_edit = 5;
+
+  ViewFileToolConfig view_file = 6;
+
+  WriteToFileToolConfig write_to_file = 7;
+
+  GrepSearchToolConfig grep_search = 8;
+
+  ListDirToolConfig list_dir = 9;
+
+  PermissionsConfig permissions = 10;
+
+  GenerateImageToolConfig generate_image = 11;
+
+  SearchWebToolConfig search_web = 12;
+
+  ReadUrlContentToolConfig read_url_content = 14;
+
+  ToolSearchConfig tool_search_config = 15;
+
+  ManageTaskToolConfig manage_task = 16;
+
+  ScheduleToolConfig schedule = 17;
+}
+
+message FindToolConfig {
+  extensions 1000 to 1999, 2000 to max;
+
+  bool enabled = 1;
+}
+
+message RunCommandToolConfig {
+  bool enabled = 1;
+
+  uint32 max_timeout_ms = 2;
+
+  bool enable_daemon_commands = 3;
+
+  bool enable_sandbox = 4;
+
+  ToolExecutionMode execution_mode = 5;
+}
+
+message SubagentsConfig {
+  bool enabled = 1;
+
+  int32 max_nesting_depth = 2 [default = 1];
+
+  repeated string allowed_subagents = 3;
+}
+
+message UserQuestionsConfig {
+  bool enabled = 1;
+}
+
+message FileEditToolConfig {
+  bool enabled = 1;
+}
+
+message ViewFileToolConfig {
+  bool enabled = 1;
+}
+
+message WriteToFileToolConfig {
+  bool enabled = 1;
+}
+
+message GrepSearchToolConfig {
+  extensions 1000 to 1999, 2000 to max;
+
+  bool enabled = 1;
+}
+
+message ListDirToolConfig {
+  bool enabled = 1;
+}
+
+message GenerateImageToolConfig {
+  bool enabled = 1;
+}
+
+message SearchWebToolConfig {
+  bool enabled = 1;
+}
+
+message ReadUrlContentToolConfig {
+  bool enabled = 1;
+}
+
+message ToolSearchConfig {
+  extensions 1000 to max;
+
+  bool enabled = 1;
+}
+
+message SkillSource {
+  reserved 1;
+
+  string directory_path = 2;
+}
+
+message SkillsConfig {
+  bool enabled = 1 [default = true];
+
+  repeated SkillSource skills = 2;
+}
+
+message ManageTaskToolConfig {
+  bool enabled = 1;
+}
+
+message ScheduleToolConfig {
+  bool enabled = 1;
+}
+
+message PermissionsConfig {
+  bool enforce_workspace_validation = 1;
+}
+
+message OutputConfig {
+  int32 port = 1;
+
+  string api_key = 2;
+}
+
+message OutputEvent {
+  oneof event {
+    StepUpdate step_update = 10;
+
+    TrajectoryStateUpdate trajectory_state_update = 11;
+
+    ToolCall tool_call = 12;
+
+    InitializeConversationResponse initialize_conversation_response = 13;
+
+    CallHookRequest call_hook_request = 14;
+
+    bool session_end_response = 15;
+
+    PolicyDecisionRequest policy_decision_request = 16;
+
+    UsageUpdate usage_update = 17;
+  }
+
+  int64 seq_num = 1;
+
+  int64 timestamp_micros = 2;
+}
+
+message SandboxStatus {
+  bool available = 1;
+
+  string unavailable_reason = 2;
+}
+
+message InitializeConversationResponse {
+  string cascade_id = 1;
+
+  repeated StepUpdate history = 2;
+
+  UsageMetadata cumulative_usage = 3;
+
+  repeated TrajectoryUsageEntry trajectory_usage = 4;
+
+  SandboxStatus sandbox_status = 5;
+}
+
+message StepUpdate {
+  string cascade_id = 1;
+
+  string trajectory_id = 2;
+
+  string parent_trajectory_id = 40;
+
+  uint32 step_index = 3;
+
+  State state = 4;
+
+  Source source = 5;
+
+  Target target = 6;
+
+  string error_message = 7;
+
+  string thinking = 8;
+
+  string text_delta = 9;
+
+  string thinking_delta = 10;
+
+  string text = 20;
+
+  ActionListDirectory list_directory = 21;
+
+  ActionFindFile find_file = 22;
+
+  ActionSearchDirectory search_directory = 23;
+
+  ActionViewFile view_file = 24;
+
+  ActionCreateFile create_file = 25;
+
+  ActionEditFile edit_file = 26;
+
+  ActionRunCommand run_command = 27;
+
+  ActionCompaction compaction = 28;
+
+  ActionInvokeSubagent invoke_subagent = 29;
+
+  ActionGenerateImage generate_image = 30;
+
+  ActionFinish finish = 31;
+
+  ActionError error = 32;
+
+  ActionMcpTool mcp_tool = 33;
+
+  ActionSearchWeb search_web = 34;
+
+  ActionReadUrlContent read_url_content = 35;
+
+  ActionCustomTool custom_tool = 36;
+
+  ActionSkillLookup skill_lookup = 37;
+
+  string request_text = 50;
+
+  ToolConfirmationRequest tool_confirmation_request = 51;
+
+  UserQuestionsRequest questions_request = 52;
+
+  enum State {
+    STATE_UNSPECIFIED = 0;
+
+    STATE_ACTIVE = 1;
+
+    STATE_DONE = 2;
+
+    STATE_WAITING_FOR_USER = 3;
+
+    STATE_ERROR = 4;
+  }
+
+  enum Source {
+    SOURCE_UNSPECIFIED = 0;
+
+    SOURCE_SYSTEM = 1;
+
+    SOURCE_USER = 2;
+
+    SOURCE_MODEL = 3;
+  }
+
+  enum Target {
+    TARGET_UNSPECIFIED = 0;
+
+    TARGET_USER = 1;
+
+    TARGET_MODEL = 2;
+
+    TARGET_ENVIRONMENT = 3;
+  }
+}
+
+message ActionGenerateImage {
+  string prompt = 1;
+
+  repeated string image_paths = 2;
+
+  string image_name = 3;
+
+  string aspect_ratio = 4;
+
+  string output_path = 5;
+}
+
+message ActionSearchWeb {
+  string query = 1;
+
+  string domain = 2;
+
+  string summary = 3;
+}
+
+message ActionReadUrlContent {
+  string url = 1;
+
+  string title = 2;
+
+  string summary = 3;
+
+  string content_path = 4;
+}
+
+message ActionFinish {
+  string output_string = 1;
+}
+
+message ActionError {
+  string error_message = 1;
+
+  uint32 http_code = 2;
+}
+
+message ActionListDirectory {
+  string directory_path = 1;
+
+  repeated Result results = 2;
+
+  message Result {
+    oneof info {
+      bool is_directory = 2;
+
+      uint64 file_size = 3;
+    }
+
+    string name = 1;
+  }
+}
+
+message ActionFindFile {
+  string directory_path = 1;
+
+  string query = 2;
+
+  string output = 3;
+}
+
+message ActionSearchDirectory {
+  string directory_path = 1;
+
+  string query = 2;
+
+  int32 num_results = 3;
+}
+
+message ActionViewFile {
+  string file_path = 1;
+
+  uint32 start_line = 2;
+
+  uint32 end_line = 3;
+
+  int32 content_offset = 4;
+}
+
+message ActionCreateFile {
+  string file_path = 1;
+
+  string contents = 2;
+}
+
+message ActionEditFile {
+  string file_path = 1;
+
+  repeated DiffBlock diff_block = 2;
+
+  message DiffLine {
+    string text = 1;
+
+    LineAction action = 2;
+
+    enum LineAction {
+      LINE_ACTION_UNSPECIFIED = 0;
+
+      LINE_ACTION_INSERT = 1;
+
+      LINE_ACTION_DELETE = 2;
+
+      LINE_ACTION_NONE = 3;
+    }
+  }
+
+  message DiffBlock {
+    int32 start_line = 1;
+
+    int32 end_line = 2;
+
+    repeated DiffLine lines = 3;
+  }
+}
+
+message ActionRunCommand {
+  string command_line = 1;
+
+  string working_dir = 2;
+
+  int32 exit_code = 4;
+
+  string combined_output = 5;
+}
+
+message ActionCompaction {}
+
+message ActionInvokeSubagent {}
+
+message ToolConfirmationRequest {}
+
+message UserQuestionsRequest {
+  repeated UserQuestion questions = 1;
+}
+
+message UserQuestion {
+  oneof question_type {
+    MultipleChoice multiple_choice = 1;
+  }
+}
+
+message MultipleChoice {
+  string question = 1;
+
+  repeated string choices = 2;
+
+  bool is_multi_select = 3;
+}
+
+message InputEvent {
+  oneof event {
+    UserInput user_input = 7;
+
+    ToolConfirmation tool_confirmation = 2;
+
+    ToolResponse tool_response = 3;
+
+    UserQuestionsResponse question_response = 4;
+
+    bool halt_request = 5;
+
+    string automated_trigger = 6;
+
+    CallHookResponse call_hook_response = 8;
+
+    bool session_end_request = 9;
+
+    PolicyDecisionResponse policy_decision_response = 10;
+  }
+}
+
+message UserInput {
+  repeated Part parts = 1;
+
+  message Media {
+    string mime_type = 1;
+
+    string description = 2;
+
+    bytes data = 3;
+  }
+
+  message SlashCommand {
+    string name = 1;
+  }
+
+  message Part {
+    oneof part {
+      string text = 1;
+
+      Media media = 2;
+
+      SlashCommand slash_command = 3;
+    }
+  }
+}
+
+message ToolConfirmation {
+  string trajectory_id = 1;
+
+  uint32 step_index = 2;
+
+  bool accepted = 3;
+}
+
+message TrajectoryStateUpdate {
+  string trajectory_id = 2;
+
+  string parent_trajectory_id = 6;
+
+  int32 depth = 7;
+
+  State state = 3;
+
+  string error = 4;
+
+  string error_code = 8;
+
+  StopReason stop_reason = 5;
+
+  enum State {
+    STATE_UNSPECIFIED = 0;
+
+    STATE_RUNNING = 1;
+
+    STATE_FULLY_IDLE = 2;
+
+    STATE_CANCELLED = 3;
+
+    STATE_WAITING_FOR_TASKS = 4;
+  }
+
+  enum StopReason {
+    STOP_REASON_UNSPECIFIED = 0;
+
+    STOP_REASON_MAX_MODEL_CALLS_EXCEEDED = 1;
+
+    STOP_REASON_MAX_TOOL_CALLS_EXCEEDED = 2;
+
+    STOP_REASON_MAX_INPUT_TOKENS_EXCEEDED = 3;
+
+    STOP_REASON_MAX_OUTPUT_TOKENS_EXCEEDED = 4;
+
+    STOP_REASON_MAX_TOTAL_TOKENS_EXCEEDED = 5;
+
+    STOP_REASON_QUOTA_EXHAUSTED = 6;
+  }
+}
+
+message TrajectoryUsageEntry {
+  string trajectory_id = 1;
+
+  UsageMetadata usage = 2;
+}
+
+message UsageUpdate {
+  repeated TrajectoryUsageEntry agents = 1;
+
+  UsageMetadata total = 2;
+}
+
+message ToolCall {
+  extensions 1000 to 1999, 2000 to max;
+
+  string id = 1;
+
+  string name = 2;
+
+  string arguments_json = 3;
+
+  genai.Struct arguments = 4;
+
+  string trajectory_id = 6;
+}
+
+message ToolResponse {
+  extensions 1000 to 1999, 2000 to max;
+
+  string id = 1;
+
+  string response_json = 2;
+
+  repeated Media supplemental_media = 3;
+
+  genai.Struct response = 4;
+
+  string error_message = 5;
+}
+
+message UserQuestionsResponse {
+  oneof result {
+    bool cancelled = 3;
+
+    QuestionsResponse response = 4;
+  }
+
+  string trajectory_id = 1;
+
+  uint32 step_index = 2;
+
+  message QuestionsResponse {
+    repeated UserQuestionAnswer answers = 1;
+  }
+}
+
+message UserQuestionAnswer {
+  oneof answer {
+    bool unanswered = 1;
+
+    MultipleChoiceAnswer multiple_choice_answer = 2;
+  }
+}
+
+message MultipleChoiceAnswer {
+  repeated int32 selected_choice_indices = 1;
+
+  string freeform_response = 2;
+}
+
+message Media {
+  string mime_type = 1;
+
+  string description = 2;
+
+  bytes data = 3;
+}
+
+message ModalityTokenCount {
+  Modality modality = 1;
+
+  uint64 token_count = 2;
+}
+
+message UsageMetadata {
+  uint64 prompt_token_count = 1;
+
+  uint64 cached_content_token_count = 5;
+
+  uint64 candidates_token_count = 2;
+
+  uint64 thoughts_token_count = 4;
+
+  uint64 total_token_count = 3;
+
+  string service_tier = 6;
+
+  repeated ModalityTokenCount prompt_tokens_details = 7;
+
+  repeated ModalityTokenCount cache_tokens_details = 8;
+
+  repeated ModalityTokenCount candidates_tokens_details = 9;
+
+  repeated ModalityTokenCount tool_use_prompt_tokens_details = 10;
+}
+
+message McpServerConfig {
+  oneof transport {
+    McpStdioTransport stdio = 2;
+
+    McpHttpTransport http = 3;
+  }
+
+  string name = 1;
+
+  repeated string enabled_tools = 4;
+
+  repeated string disabled_tools = 5;
+
+  AuthProviderType auth_provider_type = 6;
+
+  int32 timeout_seconds = 7;
+
+  enum AuthProviderType {
+    AUTH_PROVIDER_TYPE_UNSPECIFIED = 0;
+
+    AUTH_PROVIDER_TYPE_GOOGLE_CREDENTIALS = 1;
+  }
+}
+
+message McpStdioTransport {
+  string command = 1;
+
+  repeated string args = 2;
+
+  map<string, string> env = 3;
+}
+
+message McpHttpTransport {
+  string url = 1;
+
+  map<string, string> headers = 2;
+}
+
+message ActionMcpTool {
+  string server_name = 1;
+
+  string tool_name = 2;
+
+  string arguments_json = 3;
+}
+
+message ActionCustomTool {
+  ToolCall tool_call = 1;
+
+  ToolResponse tool_response = 2;
+}
+
+message ActionSkillLookup {
+  Operation operation = 1;
+
+  repeated string requested_skill_names = 2;
+
+  repeated string resolved_skill_names = 3;
+
+  string error_message = 4;
+
+  enum Operation {
+    OPERATION_UNSPECIFIED = 0;
+
+    OPERATION_LIST_SKILLS = 1;
+
+    OPERATION_LOOKUP_SKILLS = 2;
+
+    OPERATION_GET_SKILL_RESOURCES = 3;
+  }
+}
+
+message CallHookRequest {
+  oneof args {
+    PreTurnArgs pre_turn_args = 3;
+
+    PostTurnArgs post_turn_args = 4;
+
+    PreToolArgs pre_tool_args = 5;
+
+    PostToolArgs post_tool_args = 6;
+
+    OnToolErrorArgs on_tool_error_args = 8;
+
+    OnCompactionArgs on_compaction_args = 9;
+
+    StopArgs stop_args = 10;
+  }
+
+  string request_id = 1;
+
+  string name = 2;
+
+  LifecycleHook type = 7;
+
+  string client_id = 11;
+}
+
+message CallHookResponse {
+  oneof result {
+    PreTurnResult pre_turn_result = 2;
+
+    PreToolResult pre_tool_result = 3;
+
+    EmptyResult empty_result = 4;
+
+    string error_message = 5;
+
+    OnToolErrorResult on_tool_error_result = 6;
+
+    StopResult stop_result = 7;
+  }
+
+  string request_id = 1;
+}
+
+message PreToolArgs {
+  string tool_name = 1;
+
+  string arguments_json = 2;
+
+  string server_name = 3;
+
+  string call_id = 4;
+
+  string trajectory_id = 5;
+
+  uint32 step_index = 6;
+}
+
+message PostToolArgs {
+  string tool_name = 1;
+
+  string result = 2;
+
+  string error = 3;
+
+  string server_name = 5;
+
+  string call_id = 6;
+
+  string trajectory_id = 7;
+
+  uint32 step_index = 8;
+}
+
+message OnToolErrorArgs {
+  string tool_name = 1;
+
+  string error_message = 2;
+
+  string server_name = 4;
+
+  string call_id = 5;
+
+  string trajectory_id = 6;
+
+  uint32 step_index = 7;
+}
+
+message PreTurnArgs {
+  UserInput user_input = 1;
+
+  string trajectory_id = 2;
+}
+
+message PostTurnArgs {
+  string response_text = 1;
+
+  string trajectory_id = 2;
+}
+
+message OnCompactionArgs {
+  string trajectory_id = 1;
+
+  uint32 step_index = 2;
+
+  string summary = 3;
+}
+
+message StopArgs {
+  string response_text = 1;
+
+  string trajectory_id = 2;
+
+  int32 continuation_count = 3;
+
+  TrajectoryStateUpdate.StopReason stop_reason = 4;
+
+  string error_message = 5;
+}
+
+message EmptyResult {}
+
+message OnToolErrorResult {
+  string custom_error_message = 1;
+}
+
+message PreToolResult {
+  Decision decision = 1;
+
+  string reason = 2;
+
+  genai.Struct modified_args = 4;
+
+  enum Decision {
+    DECISION_UNSPECIFIED = 0;
+
+    ALLOW = 1;
+
+    DENY = 2;
+  }
+}
+
+message PreTurnResult {
+  Decision decision = 1;
+
+  string reason = 2;
+
+  enum Decision {
+    DECISION_UNSPECIFIED = 0;
+
+    ALLOW = 1;
+
+    DENY = 2;
+  }
+}
+
+message StopResult {
+  Decision decision = 1;
+
+  string reason = 2;
+
+  enum Decision {
+    DECISION_UNSPECIFIED = 0;
+
+    ALLOW_STOP = 1;
+
+    CONTINUE = 2;
+  }
+}
+
+message SubagentSkillsConfig {
+  oneof mode {
+    InheritConfig inherit_config = 1;
+
+    NoneConfig none_config = 2;
+
+    OverrideConfig override_config = 3;
+  }
+
+  message InheritConfig {
+    repeated string extra_skills_paths = 1;
+
+    repeated string skill_names = 2;
+  }
+
+  message NoneConfig {}
+
+  message OverrideConfig {
+    repeated string skills_paths = 1;
+  }
+}
+
+message CustomAgent {
+  extensions 1000 to 1999, 2000 to max;
+
+  string name = 1;
+
+  string description = 2;
+
+  SystemInstructions system_instructions = 3;
+
+  HarnessSideTools harness_side_tools = 4;
+
+  repeated Tool tools = 5;
+
+  SubagentSkillsConfig skills_config = 6;
+
+  AgentBehavior agent_behavior = 7;
+
+  ModelConfig model = 10;
+}
+
+message ToolOutputTruncation {
+  oneof strategy {
+    TruncateStrategy truncate = 1;
+
+    ErrorStrategy error = 2;
+  }
+
+  message TruncateStrategy {
+    int32 max_tokens = 1;
+  }
+
+  message ErrorStrategy {
+    int32 max_tokens = 1;
+
+    string error_message = 2;
+  }
+}
+
+message PolicyConfig {
+  repeated PolicyRule rules = 1;
+
+  WorkspaceContainment workspace_containment = 2;
+
+  AutoPolicyConfig auto_config = 3;
+
+  enum WorkspaceContainment {
+    WORKSPACE_CONTAINMENT_UNSPECIFIED = 0;
+
+    WORKSPACE_CONTAINMENT_ENABLED = 1;
+
+    WORKSPACE_CONTAINMENT_DISABLED = 2;
+  }
+}
+
+message AutoPolicyConfig {
+  bool enabled = 1;
+
+  string model = 2;
+}
+
+message PolicyRule {
+  string tool = 1;
+
+  string server_name = 2;
+
+  string name = 3;
+
+  PolicyDecision decision = 4;
+
+  string deny_reason = 5;
+
+  bool is_dynamic = 6;
+
+  string rule_id = 7;
+}
+
+message PolicyDecisionRequest {
+  string request_id = 1;
+
+  string rule_id = 2;
+
+  PreToolArgs tool_args = 3;
+
+  string reason = 4;
+}
+
+message PolicyDecisionResponse {
+  string request_id = 1;
+
+  PolicyEvaluationOutcome outcome = 2;
+
+  string deny_reason = 3;
+}
+
+message BudgetConfig {
+  int32 max_model_calls = 1;
+
+  int32 max_tool_calls = 2;
+
+  int64 max_input_tokens = 3;
+
+  int64 max_output_tokens = 4;
+
+  int64 max_total_tokens = 5;
+
+  BudgetScope scope = 6;
+
+  enum BudgetScope {
+    BUDGET_SCOPE_UNSPECIFIED = 0;
+
+    BUDGET_SCOPE_LIFETIME = 1;
+
+    BUDGET_SCOPE_FORWARD_LOOKING = 2;
+  }
+}
+
+message CompactionConfig {
+  uint32 token_threshold = 1;
+
+  uint32 checkpoint_interval_tokens = 2;
+
+  uint32 max_context_tokens = 3;
+}
+
+enum LifecycleHook {
+  LIFECYCLE_HOOK_UNSPECIFIED = 0;
+
+  LIFECYCLE_HOOK_ON_SESSION_START = 1;
+
+  LIFECYCLE_HOOK_ON_SESSION_END = 2;
+
+  LIFECYCLE_HOOK_PRE_TURN = 3;
+
+  LIFECYCLE_HOOK_POST_TURN = 4;
+
+  LIFECYCLE_HOOK_PRE_TOOL = 5;
+
+  LIFECYCLE_HOOK_POST_TOOL = 6;
+
+  LIFECYCLE_HOOK_ON_TOOL_ERROR = 7;
+
+  LIFECYCLE_HOOK_ON_COMPACTION = 8;
+
+  LIFECYCLE_HOOK_STOP = 9;
+}
+
+enum AgentBehavior {
+  AGENT_BEHAVIOR_UNSPECIFIED = 0;
+
+  AGENT_BEHAVIOR_AUTONOMOUS = 1;
+
+  AGENT_BEHAVIOR_INTERACTIVE = 2;
+
+  AGENT_BEHAVIOR_MINIMAL = 3;
+}
+
+enum ModelType {
+  MODEL_TYPE_UNSPECIFIED = 0;
+
+  MODEL_TYPE_TEXT = 1;
+
+  MODEL_TYPE_IMAGE = 2;
+}
+
+enum Modality {
+  MODALITY_UNSPECIFIED = 0;
+
+  TEXT = 1;
+
+  IMAGE = 2;
+
+  VIDEO = 3;
+
+  AUDIO = 4;
+
+  DOCUMENT = 5;
+}
+
+enum PolicyDecision {
+  POLICY_DECISION_UNSPECIFIED = 0;
+
+  POLICY_DECISION_ALLOW = 1;
+
+  POLICY_DECISION_DENY = 2;
+
+  POLICY_DECISION_ASK_USER = 3;
+}
+
+enum PolicyEvaluationOutcome {
+  POLICY_EVALUATION_OUTCOME_UNSPECIFIED = 0;
+
+  POLICY_EVALUATION_OUTCOME_ALLOW = 1;
+
+  POLICY_EVALUATION_OUTCOME_DENY = 2;
+
+  POLICY_EVALUATION_OUTCOME_NO_MATCH = 3;
+}
+
+enum ToolExecutionMode {
+  TOOL_EXECUTION_MODE_UNSPECIFIED = 0;
+
+  TOOL_EXECUTION_MODE_SYNC = 1;
+
+  TOOL_EXECUTION_MODE_ASYNC = 2;
+}

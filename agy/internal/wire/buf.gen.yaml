@@ -1,0 +1,17 @@
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package
+      path: google/antigravity/proto
+      value: github.com/ironpark/gelati/agy/internal/wire
+plugins:
+  # protoc-gen-go is pinned as a tool dependency in go.mod, so the generated
+  # code always matches the protobuf runtime.
+  - local: ["go", "tool", "protoc-gen-go"]
+    out: .
+    opt:
+      - module=github.com/ironpark/gelati/agy/internal/wire
+      # content.proto (edition 2023) would otherwise get the open API while
+      # localharness.proto (edition 2024) gets the opaque one.
+      - default_api_level=API_OPAQUE
