@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/ironpark/gelati/internal/jsonschema"
 	"github.com/ironpark/gelati/internal/safecall"
 )
 
@@ -39,7 +40,7 @@ func NewTool[In, Out any](name, description string, fn func(ctx context.Context,
 	return &Tool{
 		name:        name,
 		description: description,
-		schema:      schemaForType(reflect.TypeFor[In]()),
+		schema:      jsonschema.For(reflect.TypeFor[In]()), // Schema normalizes it
 		run: func(ctx context.Context, tc *ToolContext, args map[string]any) (any, error) {
 			var in In
 			if err := (ToolCall{Args: args}).DecodeArgs(&in); err != nil {

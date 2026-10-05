@@ -45,6 +45,10 @@ line up around it:
 | Text input | `claude.Text(s)` | `codex.Text(s)` | `agy.Text(s)` |
 | One-shot | `claude.Run(ctx, prompt, Options)` | — (threads carry the settings) | `agy.Run(ctx, prompt, Options)` |
 | Final text | `ResultMessage.Text()` | `TurnResult.Text()` | `TurnResult.Text()` |
+| Structured output | `Options.OutputFormat` | `TurnOptions.OutputSchema` | `Options.ResponseSchema` |
+| Decode it | `ResultMessage.DecodeStructuredOutput(&v)` | `TurnResult.DecodeStructuredOutput(&v)` | `TurnResult.DecodeStructuredOutput(&v)` |
+| Schema from a Go type | `SchemaFor[T]()` | `SchemaFor[T]()` (strict) | `SchemaFor[T]()` |
+| Typed tool | `NewTool(name, desc, fn)` | — | `NewTool(name, desc, fn)` |
 | Conversation id | `SessionID` | `Thread.ID()` | `ConversationID()` |
 | Session end | `Done()` / `Err()` | `Done()` / `Err()` | `Done()` / `Err()` |
 | Executable | `Options.CLIPath` | `Options.CLIPath` | `Options.CLIPath` |
@@ -52,6 +56,11 @@ line up around it:
 | Diagnostics | `Options.Logger` | `Options.Logger` | `Options.Logger` |
 | Errors | `Error`, `ErrCLINotFound`, `ErrClosed`, `*ProcessError` | `Error`, `ErrCLINotFound`, `ErrClosed`, `*ProcessError` | `Error`, `ErrCLINotFound`, `ErrClosed`, `*ProcessError` |
 | Unmodeled data | `*UnknownMessage`, `*UnknownBlock` | `*UnknownItem`, `EventNotification` | — |
+
+`SchemaFor[T]()` derives a JSON schema from a struct's `json`, `description`
+and `enum` tags, the same way in every package. codex's is in the strict form
+OpenAI's structured outputs require (every property required, optional ones
+nullable, no extra properties); the server rejects a schema that is not.
 
 `New` validates the options, starts the process, completes the handshake and
 returns a live handle; on failure nothing is left running. Its ctx bounds the
@@ -99,9 +108,9 @@ The child process is handled the same way everywhere:
   of the process.
 
 JSON goes through `encoding/json/v2`: raw JSON in the APIs (codex `Event.Params`,
-approval `Params`, `UnknownItem.Raw`, agy `Options.ResponseSchema`, …) is a
-`jsontext.Value`, and JSON decoded into your types (tool arguments, structured
-output) matches field names case-sensitively. What the CLIs write is decoded
+approval `Params`, `UnknownItem.Raw`, …) is a `jsontext.Value`, and JSON
+decoded into your types (tool arguments, structured output) matches field
+names case-sensitively. What the CLIs write is decoded
 tolerantly: invalid UTF-8 and repeated keys do not fail a message.
 
 What happens to a tool call nobody approved differs, because each package keeps
@@ -216,16 +225,11 @@ type addArgs struct {
 	B int `json:"b"`
 }
 
-add := claude.NewTool("add", "Add two integers.", map[string]any{
-	"type": "object",
-	"properties": map[string]any{
-		"a": map[string]any{"type": "integer"},
-		"b": map[string]any{"type": "integer"},
-	},
-	"required": []any{"a", "b"},
-}, func(ctx context.Context, args addArgs) (claude.ToolResult, error) {
-	return claude.TextResult("%d", args.A+args.B), nil
-})
+// The input schema is derived from addArgs.
+add := claude.NewTool("add", "Add two integers.",
+	func(ctx context.Context, args addArgs) (claude.ToolResult, error) {
+		return claude.TextResult("%d", args.A+args.B), nil
+	})
 
 opts := &claude.Options{
 	MCPServers: map[string]claude.MCPServerConfig{

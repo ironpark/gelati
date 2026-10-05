@@ -1007,8 +1007,9 @@ type TurnOptions struct {
 	ServiceTier        string `json:"serviceTier,omitempty"`
 	ServiceTierForTurn string `json:"serviceTierForTurn,omitempty"`
 	// OutputSchema is a JSON Schema constraining the final assistant message
-	// of this turn only.
-	OutputSchema jsontext.Value `json:"outputSchema,omitempty"`
+	// of this turn only, in the strict form SchemaFor derives;
+	// TurnResult.DecodeStructuredOutput reads the answer.
+	OutputSchema map[string]any `json:"outputSchema,omitempty"`
 	// TurnTrigger labels what started the turn; it grants no authority.
 	TurnTrigger string `json:"turnTrigger,omitempty"`
 }

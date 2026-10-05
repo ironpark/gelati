@@ -79,6 +79,30 @@ func TestTurnResultText(t *testing.T) {
 	}
 }
 
+func TestTurnResultDecodeStructuredOutput(t *testing.T) {
+	var got struct {
+		Answer int `json:"answer"`
+	}
+	r := &TurnResult{Items: []ThreadItem{{Item: &AgentMessageItem{Text: `{"answer":4}`}}}}
+	if err := r.DecodeStructuredOutput(&got); err != nil || got.Answer != 4 {
+		t.Fatalf("decode = %+v, %v", got, err)
+	}
+	if err := (&TurnResult{}).DecodeStructuredOutput(&got); err == nil {
+		t.Fatal("decoded a turn without a response")
+	}
+}
+
+func TestSchemaForIsStrict(t *testing.T) {
+	type answer struct {
+		Answer int    `json:"answer"`
+		Note   string `json:"note,omitempty"`
+	}
+	s := SchemaFor[answer]()
+	if s["additionalProperties"] != false || len(s["required"].([]any)) != 2 {
+		t.Fatalf("schema = %v", s)
+	}
+}
+
 func TestRunFailedTurn(t *testing.T) {
 	client, server := connect(t, Options{})
 	threadID := startThread(t, client, server, "thr_1")

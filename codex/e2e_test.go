@@ -64,17 +64,19 @@ func TestE2E(t *testing.T) {
 		t.Fatalf("turn = %+v, usage = %+v", result.Turn, result.Usage)
 	}
 
+	type answer struct {
+		Answer int    `json:"answer" description:"The sum."`
+		Note   string `json:"note,omitempty"`
+	}
 	result, err = thread.RunTurn(ctx, TurnRequest{
-		Input: []InputItem{Text(`Return {"answer": 4} for 2+2.`)},
-		TurnOptions: TurnOptions{
-			OutputSchema: []byte(`{"type":"object","properties":{"answer":{"type":"integer"}},` +
-				`"required":["answer"],"additionalProperties":false}`),
-		},
+		Input:       []InputItem{Text("What is 2+2? Leave the note empty.")},
+		TurnOptions: TurnOptions{OutputSchema: SchemaFor[answer]()},
 	})
 	if err != nil {
 		t.Fatalf("RunTurn with output schema: %v", err)
 	}
-	if strings.ReplaceAll(result.Text(), " ", "") != `{"answer":4}` {
-		t.Fatalf("structured response = %q", result.Text())
+	var got answer
+	if err := result.DecodeStructuredOutput(&got); err != nil || got.Answer != 4 {
+		t.Fatalf("structured response = %q: %+v, %v", result.Text(), got, err)
 	}
 }

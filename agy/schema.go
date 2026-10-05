@@ -1,11 +1,10 @@
 package agy
 
 import (
-	"encoding"
-	"encoding/json/jsontext"
 	"reflect"
 	"strings"
-	"time"
+
+	"github.com/ironpark/gelati/internal/jsonschema"
 )
 
 // SchemaProvider lets a type supply its own JSON schema. NewTool and
@@ -16,20 +15,8 @@ type SchemaProvider interface {
 }
 
 // SchemaFor returns the JSON schema of T, as NewTool derives it for tool
-// parameters. It is useful for Options.ResponseSchema.
-func SchemaFor[T any]() map[string]any {
-	return schemaForType(reflect.TypeFor[T]())
-}
-
-var (
-	schemaProviderType = reflect.TypeFor[SchemaProvider]()
-	timeType           = reflect.TypeFor[time.Time]()
-	rawMessageType     = reflect.TypeFor[jsontext.Value]()
-	textMarshalerType  = reflect.TypeFor[encoding.TextMarshaler]()
-)
-
-// schemaForType derives a JSON schema for t, the way the Gemini SDK derives
-// function declarations from Python signatures:
+// parameters. It is useful for Options.ResponseSchema. The schema follows
+// the Gemini SDK's derivation from Python signatures:
 //
 //   - A struct is an object whose properties are its exported fields, named
 //     and skipped by their json tags; embedded structs and fields tagged
@@ -45,150 +32,13 @@ var (
 //   - A type implementing SchemaProvider supplies its own schema.
 //
 // The result is normalized with NormalizeSchema.
+func SchemaFor[T any]() map[string]any {
+	return schemaForType(reflect.TypeFor[T]())
+}
+
+// schemaForType is SchemaFor for a reflect.Type.
 func schemaForType(t reflect.Type) map[string]any {
-	s := (&schemaBuilder{visiting: map[reflect.Type]bool{}}).build(t)
-	if s == nil {
-		s = map[string]any{}
-	}
-	if _, ok := s["type"]; !ok && t.Kind() != reflect.Interface {
-		// Keep tool parameter schemas well-formed objects.
-		if t.Kind() == reflect.Struct || (t.Kind() == reflect.Pointer && t.Elem().Kind() == reflect.Struct) {
-			s["type"] = "object"
-		}
-	}
-	return NormalizeSchema(s).(map[string]any)
-}
-
-type schemaBuilder struct {
-	visiting map[reflect.Type]bool
-}
-
-func (b *schemaBuilder) build(t reflect.Type) map[string]any {
-	if t == nil {
-		return map[string]any{}
-	}
-	if s, ok := providedSchema(t); ok {
-		return s
-	}
-	switch {
-	case t == timeType:
-		return map[string]any{"type": "string", "format": "date-time"}
-	case t == rawMessageType:
-		return map[string]any{}
-	}
-	switch t.Kind() {
-	case reflect.Pointer:
-		return b.build(t.Elem())
-	case reflect.Bool:
-		return map[string]any{"type": "boolean"}
-	case reflect.String:
-		return map[string]any{"type": "string"}
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return map[string]any{"type": "integer"}
-	case reflect.Float32, reflect.Float64:
-		return map[string]any{"type": "number"}
-	case reflect.Slice, reflect.Array:
-		if t.Elem().Kind() == reflect.Uint8 && t.Kind() == reflect.Slice {
-			return map[string]any{"type": "string", "contentEncoding": "base64"}
-		}
-		return map[string]any{"type": "array", "items": b.build(t.Elem())}
-	case reflect.Map:
-		if t.Key().Kind() != reflect.String && !t.Key().Implements(textMarshalerType) {
-			return map[string]any{"type": "object"}
-		}
-		return map[string]any{"type": "object", "additionalProperties": b.build(t.Elem())}
-	case reflect.Struct:
-		if b.visiting[t] {
-			// Recursive type: accept anything below this point.
-			return map[string]any{"type": "object"}
-		}
-		b.visiting[t] = true
-		defer delete(b.visiting, t)
-		props := map[string]any{}
-		var required []any
-		b.addFields(t, props, &required)
-		s := map[string]any{"type": "object", "properties": props}
-		if len(required) > 0 {
-			s["required"] = required
-		}
-		return s
-	}
-	// Interfaces accept anything; so do channels, functions and other kinds
-	// encoding/json cannot encode.
-	return map[string]any{}
-}
-
-func providedSchema(t reflect.Type) (map[string]any, bool) {
-	if t.Kind() == reflect.Interface {
-		return nil, false
-	}
-	var v reflect.Value
-	switch {
-	case t.Implements(schemaProviderType):
-		if t.Kind() == reflect.Pointer {
-			v = reflect.New(t.Elem())
-		} else {
-			v = reflect.Zero(t)
-		}
-	case reflect.PointerTo(t).Implements(schemaProviderType):
-		v = reflect.New(t)
-	default:
-		return nil, false
-	}
-	return v.Interface().(SchemaProvider).JSONSchema(), true
-}
-
-// addFields adds the JSON-visible fields of struct type t to props.
-func (b *schemaBuilder) addFields(t reflect.Type, props map[string]any, required *[]any) {
-	for f := range t.Fields() {
-		tag := f.Tag.Get("json")
-		if tag == "-" {
-			continue
-		}
-		name, opts, _ := strings.Cut(tag, ",")
-		hasOpt := func(o string) bool { return strings.Contains(","+opts+",", ","+o+",") }
-		if hasOpt("unknown") {
-			// Holds the members no other field takes; not a property.
-			continue
-		}
-		if (f.Anonymous && name == "") || hasOpt("inline") {
-			ft := f.Type
-			if ft.Kind() == reflect.Pointer {
-				ft = ft.Elem()
-			}
-			if ft.Kind() == reflect.Struct {
-				b.addFields(ft, props, required)
-				continue
-			}
-			if hasOpt("inline") {
-				// An inlined map holds members of any name; not a property.
-				continue
-			}
-		}
-		if !f.IsExported() {
-			continue
-		}
-		if name == "" {
-			name = f.Name
-		}
-		prop := b.build(f.Type)
-		if d := f.Tag.Get("description"); d != "" {
-			prop["description"] = d
-		}
-		if e := f.Tag.Get("enum"); e != "" {
-			var vals []any
-			for v := range strings.SplitSeq(e, ",") {
-				vals = append(vals, strings.TrimSpace(v))
-			}
-			prop["enum"] = vals
-		}
-		props[name] = prop
-		optional := f.Type.Kind() == reflect.Pointer || hasOpt("omitempty") || hasOpt("omitzero")
-		if !optional {
-			*required = append(*required, name)
-		}
-	}
+	return NormalizeSchema(jsonschema.For(t)).(map[string]any)
 }
 
 // schemaKeywordMap maps snake_case JSON Schema keywords (as produced by

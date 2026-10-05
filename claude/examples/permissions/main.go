@@ -18,14 +18,7 @@ type addArgs struct {
 func main() {
 	ctx := context.Background()
 
-	add := claude.NewTool("add", "Add two integers.", map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"a": map[string]any{"type": "integer"},
-			"b": map[string]any{"type": "integer"},
-		},
-		"required": []any{"a", "b"},
-	}, func(_ context.Context, args addArgs) (claude.ToolResult, error) {
+	add := claude.NewTool("add", "Add two integers.", func(_ context.Context, args addArgs) (claude.ToolResult, error) {
 		return claude.TextResult("%d", args.A+args.B), nil
 	})
 

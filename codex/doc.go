@@ -16,8 +16,10 @@
 // instead: range over Events for typed events or Text for the answer's text
 // deltas, call Result for the collected TurnResult, Cancel to interrupt the
 // turn on the server, or Close to stop reading it. SendTurn and RunTurn take
-// a TurnRequest carrying per-turn options or an ExternalMessage. Client.Close
-// stops the subprocess and releases every waiting caller.
+// a TurnRequest carrying per-turn options or an ExternalMessage; for
+// structured output set TurnOptions.OutputSchema to SchemaFor[T]() and read
+// the answer with TurnResult.DecodeStructuredOutput. Client.Close stops the
+// subprocess and releases every waiting caller.
 //
 //	client, err := codex.New(ctx, codex.Options{})
 //	if err != nil {

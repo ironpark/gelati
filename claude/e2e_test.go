@@ -108,14 +108,7 @@ func TestE2ECallbacks(t *testing.T) {
 		B int `json:"b"`
 	}
 	var toolCalls, hookCalls, permCalls atomic.Int32
-	add := claude.NewTool("add", "Add two integers and return the sum.", map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"a": map[string]any{"type": "integer"},
-			"b": map[string]any{"type": "integer"},
-		},
-		"required": []any{"a", "b"},
-	}, func(ctx context.Context, args addArgs) (claude.ToolResult, error) {
+	add := claude.NewTool("add", "Add two integers and return the sum.", func(ctx context.Context, args addArgs) (claude.ToolResult, error) {
 		toolCalls.Add(1)
 		return claude.TextResult(strconv.Itoa(args.A + args.B)), nil
 	})

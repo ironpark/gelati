@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"sync"
 
+	"github.com/ironpark/gelati/internal/jsonschema"
 	"github.com/ironpark/gelati/internal/jsonx"
 	"github.com/ironpark/gelati/internal/safecall"
 )
@@ -201,14 +203,16 @@ type ToolDef struct {
 	Meta map[string]any
 }
 
-// NewTool builds a ToolDef whose handler receives decoded arguments. Arguments
-// that do not decode into T become an isError result, so a malformed call from
-// the model is reported to it rather than failing the request.
-func NewTool[T any](name, description string, schema map[string]any, handler func(ctx context.Context, args T) (ToolResult, error)) ToolDef {
+// NewTool builds a ToolDef whose handler receives decoded arguments. Its
+// input schema is SchemaFor[T](); give T a JSONSchema method, or build the
+// ToolDef directly, to write the schema yourself. Arguments that do not
+// decode into T become an isError result, so a malformed call from the model
+// is reported to it rather than failing the request.
+func NewTool[T any](name, description string, handler func(ctx context.Context, args T) (ToolResult, error)) ToolDef {
 	return ToolDef{
 		Name:        name,
 		Description: description,
-		InputSchema: schema,
+		InputSchema: SchemaFor[T](),
 		Handler: func(ctx context.Context, raw jsontext.Value) (ToolResult, error) {
 			var args T
 			if len(raw) > 0 {
@@ -219,6 +223,16 @@ func NewTool[T any](name, description string, schema map[string]any, handler fun
 			return handler(ctx, args)
 		},
 	}
+}
+
+// SchemaFor returns the JSON schema of T, for NewTool and for
+// Options.OutputFormat. A struct becomes an object of its exported fields,
+// named by their json tags, with `description` and `enum` tags carried over;
+// a field is required unless it is a pointer or tagged omitempty or
+// omitzero. A type with a JSONSchema() map[string]any method supplies its
+// own schema.
+func SchemaFor[T any]() map[string]any {
+	return jsonschema.For(reflect.TypeFor[T]())
 }
 
 // ---------------------------------------------------------------------------
@@ -270,13 +284,13 @@ type SDKMCPServerOptions struct {
 // NewSDKMCPServer builds an in-process MCP server configuration. An empty
 // version defaults to "1.0.0".
 //
+//	type addArgs struct {
+//		A float64 `json:"a"`
+//		B float64 `json:"b"`
+//	}
 //	calc := claude.NewSDKMCPServer("calculator", "", claude.NewTool(
 //		"add", "Add two numbers",
-//		map[string]any{"type": "object", "properties": map[string]any{
-//			"a": map[string]any{"type": "number"},
-//			"b": map[string]any{"type": "number"}},
-//			"required": []string{"a", "b"}},
-//		func(ctx context.Context, args struct{ A, B float64 }) (claude.ToolResult, error) {
+//		func(ctx context.Context, args addArgs) (claude.ToolResult, error) {
 //			return claude.TextResult("Sum: %v", args.A+args.B), nil
 //		}))
 //	opts := &claude.Options{MCPServers: map[string]claude.MCPServerConfig{"calc": calc}}

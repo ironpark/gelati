@@ -2,7 +2,11 @@ package codex
 
 import (
 	"context"
+	"errors"
+	"reflect"
 
+	"github.com/ironpark/gelati/internal/jsonschema"
+	"github.com/ironpark/gelati/internal/jsonx"
 	"github.com/ironpark/gelati/internal/lifecycle"
 )
 
@@ -27,6 +31,29 @@ func (r *TurnResult) Text() string {
 		return ""
 	}
 	return finalResponse(r.Items)
+}
+
+// DecodeStructuredOutput decodes the turn's final response, the JSON document
+// a TurnOptions.OutputSchema asked for, into v. It fails when the turn
+// produced no response.
+func (r *TurnResult) DecodeStructuredOutput(v any) error {
+	text := r.Text()
+	if text == "" {
+		return errors.New("codex: the turn produced no structured output")
+	}
+	return jsonx.Unmarshal([]byte(text), v)
+}
+
+// SchemaFor returns the JSON schema of T for TurnOptions.OutputSchema. A
+// struct becomes an object of its exported fields, named by their json
+// tags, with `description` and `enum` tags carried over; a type with a
+// JSONSchema() map[string]any method supplies its own schema. The schema is
+// in the strict form OpenAI's structured outputs require: every property is
+// required and no other is allowed, and a field that is a pointer or tagged
+// omitempty or omitzero may be null instead. Maps and interface-typed fields
+// have no strict form, and the server rejects schemas that contain them.
+func SchemaFor[T any]() map[string]any {
+	return jsonschema.Strict(reflect.TypeFor[T]())
 }
 
 // record captures the parts of an event that Result reports. The pump calls

@@ -794,3 +794,16 @@ func TestLenientWrongTypedPointersAreNil(t *testing.T) {
 		t.Fatalf("decodeValue = %+v", value)
 	}
 }
+
+func TestResultMessageDecodeStructuredOutput(t *testing.T) {
+	var got struct {
+		Answer int `json:"answer"`
+	}
+	m := &ResultMessage{StructuredOutput: []byte(`{"answer":4}`)}
+	if err := m.DecodeStructuredOutput(&got); err != nil || got.Answer != 4 {
+		t.Fatalf("decode = %+v, %v", got, err)
+	}
+	if err := (&ResultMessage{}).DecodeStructuredOutput(&got); err == nil {
+		t.Fatal("decoded a result without structured output")
+	}
+}

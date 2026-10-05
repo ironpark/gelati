@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -16,21 +17,12 @@ type addArgs struct {
 	B float64 `json:"b"`
 }
 
-var addSchema = map[string]any{
-	"type": "object",
-	"properties": map[string]any{
-		"a": map[string]any{"type": "number"},
-		"b": map[string]any{"type": "number"},
-	},
-	"required": []string{"a", "b"},
-}
-
 func calculatorServer(t *testing.T) *MCPServer {
 	t.Helper()
 	maxSize := 500000
 	yes := true
 	cfg := NewSDKMCPServer("calculator", "2.0.0",
-		NewTool("add", "Add two numbers", addSchema,
+		NewTool("add", "Add two numbers",
 			func(_ context.Context, args addArgs) (ToolResult, error) {
 				return TextResult("Sum: %v", args.A+args.B), nil
 			}),
@@ -159,11 +151,16 @@ func TestMCPToolsList(t *testing.T) {
 	if add["name"] != "add" || add["description"] != "Add two numbers" {
 		t.Fatalf("tool = %#v", add)
 	}
-	schema := add["inputSchema"].(map[string]any)
-	if schema["type"] != "object" {
-		t.Fatalf("schema = %#v", schema)
+	// The schema NewTool derives from addArgs.
+	addSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"a": map[string]any{"type": "number"},
+			"b": map[string]any{"type": "number"},
+		},
+		"required": []any{"a", "b"},
 	}
-	if _, ok := schema["properties"].(map[string]any)["a"]; !ok {
+	if schema := add["inputSchema"]; !reflect.DeepEqual(schema, addSchema) {
 		t.Fatalf("schema = %#v", schema)
 	}
 	// A tool without a schema still advertises an object schema.
@@ -302,7 +299,7 @@ func TestSDKMCPServersFromOptions(t *testing.T) {
 
 func TestEngineRoutesMCPMessageToServer(t *testing.T) {
 	t.Parallel()
-	cfg := NewSDKMCPServer("calc", "", NewTool("add", "Add", addSchema,
+	cfg := NewSDKMCPServer("calc", "", NewTool("add", "Add",
 		func(_ context.Context, args addArgs) (ToolResult, error) {
 			return TextResult("Sum: %v", args.A+args.B), nil
 		}))

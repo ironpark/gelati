@@ -3,6 +3,7 @@ package claude
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"reflect"
 
 	"github.com/ironpark/gelati/internal/jsonx"
@@ -326,6 +327,15 @@ type Usage struct {
 	// inference_geo, speed, iterations, ...), so a newer CLI loses nothing.
 	// It is merged back in on marshal; modeled fields win.
 	Extra map[string]any `json:"-"`
+}
+
+// DecodeStructuredOutput decodes the turn's structured output (see
+// Options.OutputFormat) into v. It fails when the turn produced none.
+func (m *ResultMessage) DecodeStructuredOutput(v any) error {
+	if m == nil || len(m.StructuredOutput) == 0 {
+		return errors.New("claude: the turn produced no structured output")
+	}
+	return jsonx.Unmarshal(m.StructuredOutput, v)
 }
 
 // ServerToolUse counts the server-side tool requests of a Usage.

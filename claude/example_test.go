@@ -229,14 +229,6 @@ func ExampleNewSDKMCPServer() {
 	}
 	calculator := claude.NewSDKMCPServer("calculator", "1.0.0",
 		claude.NewTool("add", "Add two numbers",
-			map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"a": map[string]any{"type": "number"},
-					"b": map[string]any{"type": "number"},
-				},
-				"required": []string{"a", "b"},
-			},
 			func(_ context.Context, args addArgs) (claude.ToolResult, error) {
 				return claude.TextResult("Sum: %v", args.A+args.B), nil
 			}),
