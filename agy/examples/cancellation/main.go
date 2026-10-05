@@ -53,11 +53,8 @@ func report(err error) {
 
 func main() {
 	ctx := context.Background()
-	agent, err := agy.NewAgent(agy.Options{})
+	agent, err := agy.New(ctx, agy.Options{})
 	if err != nil {
-		log.Fatal(err)
-	}
-	if err := agent.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer agent.Close()

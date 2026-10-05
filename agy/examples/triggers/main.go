@@ -87,11 +87,8 @@ func custom(ctx context.Context) {
 // session sends first, arms the trigger, waits five seconds and sends
 // second.
 func session(ctx context.Context, opts agy.Options, arm *atomic.Bool, first, second string) {
-	agent, err := agy.NewAgent(opts)
+	agent, err := agy.New(ctx, opts)
 	if err != nil {
-		log.Fatal(err)
-	}
-	if err := agent.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer agent.Close()

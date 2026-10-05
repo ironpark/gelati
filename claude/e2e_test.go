@@ -64,14 +64,14 @@ func TestE2EClient(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
 
-	client := claude.NewClient(claude.Options{Tools: claude.ToolList{}})
-	if err := client.Connect(ctx); err != nil {
-		t.Fatalf("connect: %v", err)
+	client, err := claude.New(ctx, claude.Options{Tools: claude.ToolList{}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
 	}
-	defer client.Disconnect()
+	defer client.Close()
 
 	if info := client.ServerInfo(); info == nil {
-		t.Fatal("no server info after connect")
+		t.Fatal("no server info after New")
 	}
 	for _, prompt := range []string{"Remember the number 7.", "What number did I ask you to remember?"} {
 		turn, err := client.Send(ctx, claude.Text(prompt))

@@ -72,15 +72,12 @@ func main() {
 	defer os.RemoveAll(workspace)
 
 	ctx := context.Background()
-	agent, err := agy.NewAgent(agy.Options{
+	agent, err := agy.New(ctx, agy.Options{
 		Tools:      []*agy.Tool{lookupSecret},
 		Policies:   policies,
 		Workspaces: []string{workspace},
 	})
 	if err != nil {
-		log.Fatal(err)
-	}
-	if err := agent.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer agent.Close()

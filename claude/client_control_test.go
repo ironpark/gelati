@@ -2,27 +2,14 @@ package claude
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 )
 
-// connectedClientWith connects a client whose fake CLI answers each control
+// bySubtype is a testClient responder whose fake CLI answers each control
 // request subtype with the given payload (initialize included).
-func connectedClientWith(t *testing.T, opts *Options, answers map[string]map[string]any) (*Client, *fakeTransport) {
-	t.Helper()
-	ft := newFakeTransport()
-	respondBySubtype(ft, answers)
-	if opts == nil {
-		opts = &Options{}
-	}
-	opts.Transport = ft
-	client := NewClient(*opts)
-	if err := client.Connect(t.Context()); err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	t.Cleanup(func() { _ = client.Disconnect() })
-	return client, ft
+func bySubtype(answers map[string]map[string]any) func(*fakeTransport) {
+	return func(ft *fakeTransport) { respondBySubtype(ft, answers) }
 }
 
 // lastRequest returns the request body of the last control request written.
@@ -265,7 +252,7 @@ func TestClientControlRequestShapes(t *testing.T) {
 			if tc.answer != nil {
 				answers[tc.subtype] = tc.answer
 			}
-			client, ft := connectedClientWith(t, nil, answers)
+			client, ft := testClient(t, nil, bySubtype(answers))
 			result, err := tc.call(t.Context(), client)
 			if err != nil {
 				t.Fatalf("call: %v", err)
@@ -280,25 +267,12 @@ func TestClientControlRequestShapes(t *testing.T) {
 
 func TestClientInitializeAccessors(t *testing.T) {
 	t.Parallel()
-	client := NewClient(Options{})
-	if client.InitializationResult() != nil || client.SupportedCommands() != nil ||
-		client.SupportedModels() != nil || client.SupportedAgents() != nil || client.AccountInfo() != nil {
-		t.Fatal("accessors should be nil before Connect")
-	}
-	if _, err := client.Reinitialize(t.Context()); err == nil {
-		t.Fatal("Reinitialize should fail before Connect")
-	}
-	var connErr *ConnectionError
-	if _, err := client.SendControlRequest(t.Context(), "x", nil); !errors.As(err, &connErr) {
-		t.Fatalf("error = %v", err)
-	}
-
-	client, ft := connectedClientWith(t, nil, map[string]map[string]any{"initialize": {
+	client, ft := testClient(t, nil, bySubtype(map[string]map[string]any{"initialize": {
 		"commands": []any{map[string]any{"name": "help", "description": "", "argumentHint": ""}},
 		"models":   []any{map[string]any{"value": "opus", "displayName": "Opus", "description": ""}},
 		"agents":   []any{map[string]any{"name": "Explore", "description": ""}},
 		"account":  map[string]any{"email": "me@x"},
-	}})
+	}}))
 	if client.SupportedCommands()[0].Name != "help" || client.SupportedModels()[0].Value != "opus" ||
 		client.SupportedAgents()[0].Name != "Explore" || client.AccountInfo().Email != "me@x" ||
 		client.InitializationResult().Raw["account"] == nil {
@@ -315,7 +289,7 @@ func TestClientInitializeAccessors(t *testing.T) {
 
 func TestClientControlRequestRoundTrip(t *testing.T) {
 	t.Parallel()
-	client, ft := connectedClientWith(t, nil, nil)
+	client, ft := testClient(t, nil, bySubtype(nil))
 	ctx := t.Context()
 	calls := []struct {
 		name string

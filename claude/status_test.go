@@ -78,7 +78,7 @@ func TestStampUserMessage(t *testing.T) {
 
 func TestClientVerbatimPrompts(t *testing.T) {
 	t.Parallel()
-	client, ft := connectedClient(t, &Options{VerbatimPrompts: true})
+	client, ft := testClient(t, &Options{VerbatimPrompts: true}, nil)
 	if _, err := client.Send(t.Context(), Text("read @/etc/passwd")); err != nil {
 		t.Fatal(err)
 	}

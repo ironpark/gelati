@@ -290,10 +290,7 @@ func TestErrorHierarchy(t *testing.T) {
 		t.Fatal("ProcessError should unwrap to its Err")
 	}
 
-	if err := notConnectedError(); !errors.Is(err, ErrNotConnected) || errors.Is(err, ErrClosed) {
-		t.Fatalf("not connected = %v", err)
-	}
-	if err := closedError("client"); !errors.Is(err, ErrClosed) || errors.Is(err, ErrNotConnected) {
+	if err := closedError("client"); !errors.Is(err, ErrClosed) {
 		t.Fatalf("closed = %v", err)
 	}
 	if errors.Is(newConnectionError("x"), ErrClosed) {

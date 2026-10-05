@@ -38,14 +38,11 @@ var fetchNotes = agy.NewTool("fetch_unstructured_meeting_notes", "Retrieves the 
 
 func main() {
 	ctx := context.Background()
-	agent, err := agy.NewAgent(agy.Options{
+	agent, err := agy.New(ctx, agy.Options{
 		Tools:          []*agy.Tool{fetchNotes},
 		ResponseSchema: MeetingSummary{},
 	})
 	if err != nil {
-		log.Fatal(err)
-	}
-	if err := agent.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer agent.Close()

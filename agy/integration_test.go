@@ -41,7 +41,7 @@ func realHarnessAgent(t *testing.T, ctx context.Context, hooks ...agy.Hook) (*ag
 		t.Skip("set GELATI_AGY_HARNESS=/path/to/localharness to run")
 	}
 	stderr := &syncBuffer{}
-	agent, err := agy.NewAgent(agy.Options{
+	agent, err := agy.New(ctx, agy.Options{
 		CLIPath:      bin,
 		APIKey:       "invalid-key",
 		Workspaces:   []string{t.TempDir()},
@@ -53,10 +53,7 @@ func realHarnessAgent(t *testing.T, ctx context.Context, hooks ...agy.Hook) (*ag
 		Logger:       slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),
 	})
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := agent.Start(ctx); err != nil {
-		t.Fatalf("Start: %v\nstderr:\n%s", err, stderr.String())
+		t.Fatalf("New: %v\nstderr:\n%s", err, stderr.String())
 	}
 	return agent, stderr
 }

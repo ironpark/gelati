@@ -672,26 +672,41 @@ exec sleep 30
 	}
 }
 
-func TestSubprocessTransportContextCancelKills(t *testing.T) {
-	stub := writeStub(t, `exec sleep 30`)
+// ctx bounds Connect only: the process outlives it and ends on Close.
+func TestSubprocessTransportOutlivesConnectContext(t *testing.T) {
+	stub := writeStub(t, `while IFS= read -r line; do echo "$line"; done`)
 	ctx, cancel := context.WithCancel(t.Context())
 	tr := newTestTransport(t, &Options{CLIPath: stub})
-	tr.gracefulTimeout = 50 * time.Millisecond
 	if err := tr.Connect(ctx); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
 	defer tr.Close()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for range tr.ReadMessages() {
-		}
-	}()
 	cancel()
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("cancelling the context did not stop the process")
+
+	// The echo round trip proves the process still runs.
+	if err := tr.Write(t.Context(), []byte(`{"a":1}`)); err != nil {
+		t.Fatalf("write after cancelling ctx: %v", err)
+	}
+	for raw, err := range tr.ReadMessages() {
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		if string(raw) != `{"a":1}` {
+			t.Fatalf("line = %s", raw)
+		}
+		break
+	}
+	if err := tr.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// A ctx already done when Connect is called starts nothing.
+	tr = newTestTransport(t, &Options{CLIPath: stub})
+	if err := tr.Connect(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("connect with a cancelled ctx = %v, want context.Canceled", err)
+	}
+	if tr.Ready() {
+		t.Fatal("a cancelled Connect should start no process")
 	}
 }
 

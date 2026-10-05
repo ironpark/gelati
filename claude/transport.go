@@ -15,8 +15,8 @@ import (
 // ReadMessages is being ranged over, then EndInput and Close. Close is
 // idempotent.
 type Transport interface {
-	// Connect starts the session. ctx bounds the startup; cancelling it
-	// after Connect returns also terminates the session.
+	// Connect starts the session. ctx bounds the connect step only: the
+	// session lasts until Close, whatever becomes of ctx afterwards.
 	Connect(ctx context.Context) error
 
 	// Write sends one raw frame. Implementations append the trailing

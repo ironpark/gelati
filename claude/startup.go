@@ -29,8 +29,8 @@ type WarmQuery struct {
 // the handshake is bounded by DefaultInitializeTimeout; a handshake that does
 // not complete tears the session down.
 //
-// As with Client.Connect, ctx governs the whole session: cancelling it after
-// Startup returns terminates the CLI. Use a context that outlives the query.
+// As for New, ctx bounds the startup only: the session waits for its query
+// until the query ends or Close is called.
 func Startup(ctx context.Context, opts Options) (*WarmQuery, error) {
 	return startup(ctx, &opts, nil)
 }

@@ -32,11 +32,11 @@
 // [Client] runs an interactive session where later turns depend on earlier
 // responses, and supports interrupts and mid-conversation setters:
 //
-//	client := claude.NewClient(claude.Options{PermissionMode: claude.PermissionModeAcceptEdits})
-//	if err := client.Connect(ctx); err != nil {
+//	client, err := claude.New(ctx, claude.Options{PermissionMode: claude.PermissionModeAcceptEdits})
+//	if err != nil {
 //		return err
 //	}
-//	defer client.Disconnect()
+//	defer client.Close()
 //	turn, err := client.Send(ctx, claude.Text("Summarize this repo"))
 //	if err != nil {
 //		return err
@@ -54,18 +54,20 @@
 //
 // # Lifecycle
 //
-// Every blocking call takes a [context.Context]; cancelling it terminates the
-// CLI subprocess and unblocks readers. A message sequence ends when the CLI's
+// Every blocking call takes a [context.Context]. The ctx of a [Query] or
+// [Run] governs the whole call: cancelling it terminates the CLI subprocess
+// and unblocks readers. [New] starts the session and returns a live
+// [Client]; its ctx bounds the startup only, and the session lasts until
+// [Client.Close], which is idempotent and safe to defer. The ctx of each
+// later Client call bounds that call. A message sequence ends when the CLI's
 // output ends, and a fatal error arrives as the final item of the sequence
 // rather than as a panic. Breaking out of a [Query] range loop tears the
-// session down; a [Client] is torn down by [Client.Disconnect], which is
-// idempotent and safe to defer. [Client.Done] and [Client.Err] report a
-// session that ended on its own.
+// session down. [Client.Done] and [Client.Err] report a session that ended
+// on its own.
 //
-// Client calls made before Connect fail with an error matching
-// [ErrNotConnected], and after Disconnect with one matching [ErrClosed]. A CLI
-// that exited with a failure status is reported as a *[ProcessError], which
-// errors.As finds also through a *[ResultError].
+// Client calls made after Close fail with an error matching [ErrClosed]. A
+// CLI that exited with a failure status is reported as a *[ProcessError],
+// which errors.As finds also through a *[ResultError].
 //
 // Message and content-block unions, and the option unions, are sealed
 // interfaces ([Message], [ContentBlock], [PermissionResult], [MCPServerConfig],
@@ -109,7 +111,7 @@
 //
 // # Control
 //
-// Besides sending turns, a connected [Client] can steer the session:
+// Besides sending turns, a [Client] can steer the session:
 // interrupts ([Client.InterruptWithReceipt]), permission mode and model
 // setters, settings overlays ([Client.ApplyFlagSettings],
 // [Client.UpdateSettings]), reloads of plugins, skills and output styles,
@@ -149,6 +151,8 @@
 //
 //	query()                        -> Query, QueryStream, Run (final result only)
 //	ClaudeSDKClient                -> Client
+//	client.connect(), async with   -> New (returns a live Client)
+//	client.disconnect()            -> Client.Close
 //	client.query() + receive_response() -> Client.Send, TurnStream
 //	ClaudeAgentOptions             -> Options
 //	create_sdk_mcp_server()        -> NewSDKMCPServer

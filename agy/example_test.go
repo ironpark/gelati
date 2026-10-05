@@ -16,13 +16,10 @@ import (
 
 func ExampleAgent() {
 	ctx := context.Background()
-	agent, err := agy.NewAgent(agy.Options{
+	agent, err := agy.New(ctx, agy.Options{
 		SystemInstructions: agy.TextSystemInstructions("Answer in one sentence."),
 	})
 	if err != nil {
-		log.Fatal(err)
-	}
-	if err := agent.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer agent.Close()
@@ -59,15 +56,12 @@ func ExampleNewTool() {
 		})
 
 	ctx := context.Background()
-	agent, err := agy.NewAgent(agy.Options{
+	agent, err := agy.New(ctx, agy.Options{
 		Tools: []*agy.Tool{weather},
 		// Read-only builtin tools need no policy; custom tools always run.
 		Capabilities: &agy.CapabilitiesConfig{EnabledTools: agy.ReadOnlyTools()},
 	})
 	if err != nil {
-		log.Fatal(err)
-	}
-	if err := agent.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer agent.Close()
@@ -105,9 +99,11 @@ func ExampleOptions_policies() {
 			policy.AskUser("run_command", policy.Handler(confirm)),
 		},
 	}
-	if _, err := agy.NewAgent(cfg); err != nil {
+	agent, err := agy.New(context.Background(), cfg)
+	if err != nil {
 		log.Fatal(err)
 	}
+	defer agent.Close()
 }
 
 func ExampleOptions_hooks() {
@@ -127,9 +123,11 @@ func ExampleOptions_hooks() {
 		Hooks:    []agy.Hook{audit, keepGoing},
 		Policies: []agy.Policy{policy.AllowAll()},
 	}
-	if _, err := agy.NewAgent(cfg); err != nil {
+	agent, err := agy.New(context.Background(), cfg)
+	if err != nil {
 		log.Fatal(err)
 	}
+	defer agent.Close()
 }
 
 func ExampleTurnResult_DecodeStructuredOutput() {
@@ -138,11 +136,8 @@ func ExampleTurnResult_DecodeStructuredOutput() {
 		Population int    `json:"population"`
 	}
 	ctx := context.Background()
-	agent, err := agy.NewAgent(agy.Options{ResponseSchema: answer{}})
+	agent, err := agy.New(ctx, agy.Options{ResponseSchema: answer{}})
 	if err != nil {
-		log.Fatal(err)
-	}
-	if err := agent.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer agent.Close()
@@ -166,7 +161,9 @@ func ExampleEvery() {
 		return tc.Send(ctx, "Hourly check: summarize anything new in the workspace.")
 	})
 	cfg := agy.Options{Triggers: []agy.Trigger{heartbeat}}
-	if _, err := agy.NewAgent(cfg); err != nil {
+	agent, err := agy.New(context.Background(), cfg)
+	if err != nil {
 		log.Fatal(err)
 	}
+	defer agent.Close()
 }

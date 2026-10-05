@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -153,38 +152,6 @@ func TestEngineCloseCancelsInflightHandlers(t *testing.T) {
 	}
 }
 
-// Two concurrent Connect calls on one Client start one session; the second
-// is refused instead of leaking a CLI process.
-func TestClientConcurrentConnect(t *testing.T) {
-	t.Parallel()
-	ft := newFakeTransport()
-	client := NewClient(Options{Transport: ft})
-	t.Cleanup(func() { _ = client.Disconnect() })
-
-	first := make(chan error, 1)
-	go func() { first <- client.Connect(t.Context()) }()
-	// The first Connect is mid-handshake: its initialize request is out
-	// and unanswered.
-	init := ft.nextWrite(t)
-
-	var err error
-	finishesWithin(t, 3*time.Second, "second Connect", func() { err = client.Connect(t.Context()) })
-	if err == nil || !strings.Contains(err.Error(), "already connected") {
-		t.Fatalf("second Connect error = %v, want already connected", err)
-	}
-
-	ft.push(map[string]any{"type": "control_response", "response": map[string]any{
-		"subtype": "success", "request_id": init["request_id"], "response": map[string]any{}}})
-	select {
-	case err := <-first:
-		if err != nil {
-			t.Fatalf("first Connect: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("the first Connect never finished")
-	}
-}
-
 // Cancelling ctx ends a Query even when the transport keeps its output open.
 func TestQueryEndsOnContextCancel(t *testing.T) {
 	t.Parallel()
@@ -231,8 +198,8 @@ func (blockingConnector) HandleMCPMessage(context.Context, jsontext.Value) (json
 func (c blockingConnector) ConnectMCP(MCPSendFunc) func() { return c.onDisconnect }
 
 // A connector's disconnect func runs outside the session's Close, so a slow
-// one does not hold up Disconnect.
-func TestClientDisconnectWithBlockingConnector(t *testing.T) {
+// one does not hold up Client.Close.
+func TestClientCloseWithBlockingConnector(t *testing.T) {
 	t.Parallel()
 	ft := newFakeTransport()
 	initResponder(ft, map[string]any{})
@@ -242,14 +209,14 @@ func TestClientDisconnectWithBlockingConnector(t *testing.T) {
 		<-release
 		close(disconnected)
 	}}
-	client := NewClient(Options{
+	client, err := New(t.Context(), Options{
 		Transport:  ft,
 		MCPServers: map[string]MCPServerConfig{"slow": &MCPSDKServerConfig{Name: "slow", Instance: conn}},
 	})
-	if err := client.Connect(t.Context()); err != nil {
-		t.Fatalf("connect: %v", err)
+	if err != nil {
+		t.Fatalf("new: %v", err)
 	}
-	finishesWithin(t, 3*time.Second, "Disconnect", func() { _ = client.Disconnect() })
+	finishesWithin(t, 3*time.Second, "Close", func() { _ = client.Close() })
 	close(release)
 	select {
 	case <-disconnected:

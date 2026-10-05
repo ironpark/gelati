@@ -10,13 +10,10 @@
 //
 // # Quick start
 //
-//	agent, err := agy.NewAgent(agy.Options{
+//	agent, err := agy.New(ctx, agy.Options{
 //		SystemInstructions: agy.TextSystemInstructions("Answer briefly."),
 //	})
 //	if err != nil {
-//		return err
-//	}
-//	if err := agent.Start(ctx); err != nil {
 //		return err
 //	}
 //	defer agent.Close()
@@ -48,11 +45,11 @@
 //
 // # Layers
 //
-// Agent is the high-level API: Start and Close bracket a session (Python's
-// "async with"), and Chat sends a prompt. Agent.Conversation exposes the
-// Conversation underneath, which keeps the step history, turn count,
-// compaction indices and per-turn usage; Conversation.Connection exposes the
-// Connection to the harness for direct step access. Each layer has Done,
+// Agent is the high-level API: New starts a session and Close ends it
+// (Python's "async with"), and Chat sends a prompt. Agent.Conversation
+// exposes the Conversation underneath, which keeps the step history, turn
+// count, compaction indices and per-turn usage; Conversation.Connection
+// exposes the Connection to the harness for direct step access. Each layer has Done,
 // closed when the session ends (Close, the harness exiting or the
 // connection dropping), and Err, the error that ended it.
 //
@@ -90,17 +87,16 @@
 // *ValidationError. A session that ends on its own (the harness exited or
 // the connection dropped) closes Done, and Err then returns a
 // *ConnectionError carrying the harness's stderr tail; Err is nil after a
-// Close. When the harness process exited, during Start or mid-session, the
+// Close. When the harness process exited, during New or mid-session, the
 // *ConnectionError wraps a *ProcessError with its exit status, so
 // errors.As(err, &processErr) tells a crash from other connection
-// failures. ErrNotStarted reports an Agent used before Start, ErrClosed a
-// closed Connection or TurnStream.
+// failures. ErrClosed reports a closed Agent, Connection or TurnStream.
 //
 // # Name mapping
 //
 // The Go names differ from the Python ones where Go conventions differ:
 //
-//	Agent(config), async with          -> NewAgent, Agent.Start, Agent.Close
+//	Agent(config), async with          -> New, Agent.Close
 //	agent.chat(prompt)                 -> Agent.Chat(ctx, content...)
 //	LocalAgentConfig, AgentConfig      -> Options
 //	LocalOpenAIAgentConfig(model, base_url) -> Options{Model: model, OpenAI: &OpenAIEndpoint{BaseURL: base_url}}
@@ -145,8 +141,8 @@
 //	RuntimeError("Concurrent receive_steps()") -> ErrConcurrentReceive
 //
 // Upstream raises ValueError from many validators; here they return
-// *ValidationError, from NewAgent and Options.Validate for configuration and
-// the safety policy guard, and from Agent.Start for endpoint credentials.
+// *ValidationError: from Options.Validate, and so New, for configuration and
+// the safety policy guard, and from New for endpoint credentials.
 //
 // # Differences from upstream
 //

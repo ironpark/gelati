@@ -151,7 +151,8 @@ type SpareProcess struct {
 //
 // Without Options.Cwd the process is parked in a fresh private directory under
 // the Claude config directory (spares/spare-*), removed once the spare is
-// claimed or gone. ctx governs the process's whole life, as for Startup.
+// claimed or gone. As for New, ctx bounds the startup only: the process
+// lives until it exits or Close is called.
 //
 // Alpha: this API may change, and it requires a CLI that supports
 // --await-claim.

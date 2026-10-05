@@ -30,7 +30,7 @@ func openAIAgent(t *testing.T, ctx context.Context, srv *httptest.Server, tools 
 	}
 	clearGeminiEnv(t)
 	stderr := &syncBuffer{}
-	agent, err := agy.NewAgent(agy.Options{
+	agent, err := agy.New(ctx, agy.Options{
 		CLIPath:    bin,
 		Model:      "test-model",
 		OpenAI:     &agy.OpenAIEndpoint{BaseURL: srv.URL + "/v1"},
@@ -42,9 +42,6 @@ func openAIAgent(t *testing.T, ctx context.Context, srv *httptest.Server, tools 
 		Stderr:     stderr,
 	})
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := agent.Start(ctx); err != nil {
 		t.Fatalf("Start: %v\nstderr:\n%s", err, stderr.String())
 	}
 	t.Cleanup(func() { agent.Close() })

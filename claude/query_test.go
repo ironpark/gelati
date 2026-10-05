@@ -154,10 +154,7 @@ func TestQueryEarlyBreakClosesTransport(t *testing.T) {
 	if count != 2 {
 		t.Fatalf("count = %d", count)
 	}
-	ft.mu.Lock()
-	closed := ft.closed
-	ft.mu.Unlock()
-	if !closed {
+	if !isDone(ft.closedCh) {
 		t.Fatal("breaking out of the loop should close the transport")
 	}
 	// Give the reader and writer goroutines a moment to unwind.
@@ -173,15 +170,7 @@ func TestQueryEarlyBreakClosesTransport(t *testing.T) {
 func TestQueryContextCancellation(t *testing.T) {
 	t.Parallel()
 	ft := newFakeTransport()
-	ft.mu.Lock()
-	ft.onWrite = func(frame map[string]any) {
-		if frame["type"] != "control_request" {
-			return
-		}
-		ft.push(map[string]any{"type": "control_response", "response": map[string]any{
-			"subtype": "success", "request_id": frame["request_id"], "response": map[string]any{}}})
-	}
-	ft.mu.Unlock()
+	initResponder(ft, nil)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
@@ -190,15 +179,18 @@ func TestQueryContextCancellation(t *testing.T) {
 		for range Query(ctx, "hi", Options{Transport: ft}) {
 		}
 	}()
-	time.Sleep(100 * time.Millisecond)
+	for ft.nextWrite(t)["type"] != "user" {
+	}
 	cancel()
-	// Cancelling must unblock the consumer: the fake transport is closed by
-	// the deferred cleanup, which ends the message stream.
-	ft.finish(context.Canceled)
+	// Cancelling must end the query and close the transport, though the
+	// CLI never answers.
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("cancelling the context did not end the query")
+	}
+	if !isDone(ft.closedCh) {
+		t.Fatal("cancelling the context should close the transport")
 	}
 }
 

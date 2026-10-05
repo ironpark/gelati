@@ -6,13 +6,12 @@ import (
 	"time"
 )
 
-// call sends one control request on the connected session.
+// call sends one control request on the session.
 func (c *Client) call(ctx context.Context, subtype string, fields map[string]any) (map[string]any, error) {
-	eng, err := c.engineOrErr()
-	if err != nil {
+	if err := c.checkOpen(); err != nil {
 		return nil, err
 	}
-	return eng.request(ctx, subtype, fields)
+	return c.sess.eng.request(ctx, subtype, fields)
 }
 
 // SendControlRequest sends a control request the Client has no method for and
@@ -128,64 +127,46 @@ func (c *Client) StopTask(ctx context.Context, taskID string) error {
 }
 
 // InitializationResult reports the typed initialize response: commands,
-// agents, models, account and output styles. It is nil before Connect. After
-// Reinitialize it reports the latest response.
+// agents, models, account and output styles. After Reinitialize it reports
+// the latest response.
 func (c *Client) InitializationResult() *InitializeResult {
-	if eng, err := c.engineOrErr(); err == nil {
-		return eng.initializeResult()
-	}
-	return nil
+	return c.sess.eng.initializeResult()
 }
 
 // SupportedCommands lists the session's slash commands and skills. The list
 // from the initialize response is replaced whenever the CLI reports a change
-// (a commands_changed system message). It is nil before Connect.
+// (a commands_changed system message).
 func (c *Client) SupportedCommands() []SlashCommand {
-	if eng, err := c.engineOrErr(); err == nil {
-		return eng.supportedCommands()
-	}
-	return nil
+	return c.sess.eng.supportedCommands()
 }
 
-// SupportedModels lists the models the session can use. It is nil before
-// Connect.
+// SupportedModels lists the models the session can use.
 func (c *Client) SupportedModels() []ModelInfo {
-	if r := c.InitializationResult(); r != nil {
-		return r.Models
-	}
-	return nil
+	return c.InitializationResult().Models
 }
 
-// SupportedAgents lists the subagents the session can invoke. It is nil
-// before Connect.
+// SupportedAgents lists the subagents the session can invoke.
 func (c *Client) SupportedAgents() []AgentInfo {
-	if r := c.InitializationResult(); r != nil {
-		return r.Agents
-	}
-	return nil
+	return c.InitializationResult().Agents
 }
 
-// AccountInfo describes the logged-in account. It is nil before Connect.
+// AccountInfo describes the logged-in account.
 func (c *Client) AccountInfo() *AccountInfo {
-	if r := c.InitializationResult(); r != nil {
-		info := r.Account
-		return &info
-	}
-	return nil
+	info := c.InitializationResult().Account
+	return &info
 }
 
 // Reinitialize re-sends the initialize handshake on the live session, for a
 // host that lost track of it (a transport gap, a reattached client). The same
 // hook registrations are sent again, and permission prompts and dialogs the
 // CLI still has open are delivered again to CanUseTool and OnUserDialog; a
-// request already being answered is not answered twice. As for Connect,
+// request already being answered is not answered twice. As for New,
 // DefaultInitializeTimeout bounds the handshake when ctx has no deadline.
 func (c *Client) Reinitialize(ctx context.Context) (*InitializeResult, error) {
-	eng, err := c.engineOrErr()
-	if err != nil {
+	if err := c.checkOpen(); err != nil {
 		return nil, err
 	}
-	return eng.initialize(ctx)
+	return c.sess.eng.initialize(ctx)
 }
 
 // ApplyFlagSettings merges settings into the session's flag settings layer

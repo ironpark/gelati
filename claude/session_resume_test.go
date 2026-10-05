@@ -1165,7 +1165,7 @@ func TestValidateSessionStoreOptions(t *testing.T) {
 	}
 }
 
-func TestSessionStoreValidationFailsBeforeConnect(t *testing.T) {
+func TestSessionStoreValidationFailsBeforeStart(t *testing.T) {
 	t.Parallel()
 	for _, opts := range []Options{
 		{SessionStore: &resumeStoreFake{}, ContinueConversation: true},
@@ -1173,8 +1173,8 @@ func TestSessionStoreValidationFailsBeforeConnect(t *testing.T) {
 	} {
 		ft := newFakeTransport()
 		opts.Transport = ft
-		if err := NewClient(opts).Connect(t.Context()); err == nil || !strings.Contains(err.Error(), "SessionStore") {
-			t.Fatalf("connect error = %v", err)
+		if _, err := New(t.Context(), opts); err == nil || !strings.Contains(err.Error(), "SessionStore") {
+			t.Fatalf("New error = %v", err)
 		}
 		var qerr error
 		for _, err := range Query(t.Context(), "hi", opts) {
@@ -1236,7 +1236,7 @@ func capturingDeps(f *resumeFixture, tr Transport) (*sessionDeps, func() *Option
 	}
 }
 
-func TestClientConnectMaterializesResumeAndMirrors(t *testing.T) {
+func TestNewMaterializesResumeAndMirrors(t *testing.T) {
 	t.Parallel()
 	f := newResumeFixture(t)
 	store := newResumeListingStore()
@@ -1246,12 +1246,11 @@ func TestClientConnectMaterializesResumeAndMirrors(t *testing.T) {
 	initResponder(ft, map[string]any{})
 	deps, captured := capturingDeps(f, ft)
 	opts := &Options{Cwd: f.cwd, SessionStore: store, ContinueConversation: true, CLIPath: "/usr/bin/claude"}
-	client := NewClient(*opts)
-	client.deps = deps
-	if err := client.Connect(t.Context()); err != nil {
-		t.Fatalf("connect: %v", err)
+	client, err := newClient(t.Context(), opts, deps)
+	if err != nil {
+		t.Fatalf("new: %v", err)
 	}
-	defer client.Disconnect()
+	defer client.Close()
 
 	got := captured()
 	if got == nil {
@@ -1295,24 +1294,23 @@ func TestClientConnectMaterializesResumeAndMirrors(t *testing.T) {
 		t.Fatalf("store entries = %v", entries)
 	}
 
-	if err := client.Disconnect(); err != nil {
+	if err := client.Close(); err != nil {
 		t.Fatal(err)
 	}
 	assertNotExist(t, configDir)
 }
 
-func TestClientConnectWithoutStorePassesOptionsThrough(t *testing.T) {
+func TestNewWithoutStorePassesOptionsThrough(t *testing.T) {
 	t.Parallel()
 	f := newResumeFixture(t)
 	ft := newFakeTransport()
 	initResponder(ft, map[string]any{})
 	deps, captured := capturingDeps(f, ft)
-	client := NewClient(Options{Cwd: f.cwd, Resume: resumeSID})
-	client.deps = deps
-	if err := client.Connect(t.Context()); err != nil {
+	client, err := newClient(t.Context(), &Options{Cwd: f.cwd, Resume: resumeSID}, deps)
+	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Disconnect()
+	defer client.Close()
 	if got := captured(); got.Resume != resumeSID || got.Env["CLAUDE_CONFIG_DIR"] != "" {
 		t.Fatalf("options = %+v", got)
 	}
@@ -1321,7 +1319,7 @@ func TestClientConnectWithoutStorePassesOptionsThrough(t *testing.T) {
 	}
 }
 
-func TestClientConnectFailureRemovesResumeDir(t *testing.T) {
+func TestNewFailureRemovesResumeDir(t *testing.T) {
 	t.Parallel()
 
 	t.Run("transport connect", func(t *testing.T) {
@@ -1331,9 +1329,8 @@ func TestClientConnectFailureRemovesResumeDir(t *testing.T) {
 		store.put(t, f.key(resumeSID), sessions.Entry{"type": "user"})
 		spawnErr := errors.New("spawn failed")
 		deps, _ := capturingDeps(f, &hookedTransport{fakeTransport: newFakeTransport(), connectErr: spawnErr})
-		client := NewClient(Options{Cwd: f.cwd, SessionStore: store, Resume: resumeSID})
-		client.deps = deps
-		if err := client.Connect(t.Context()); !errors.Is(err, spawnErr) {
+		_, err := newClient(t.Context(), &Options{Cwd: f.cwd, SessionStore: store, Resume: resumeSID}, deps)
+		if !errors.Is(err, spawnErr) {
 			t.Fatalf("error = %v", err)
 		}
 		if left := f.leftovers(t); len(left) != 0 {
@@ -1342,7 +1339,6 @@ func TestClientConnectFailureRemovesResumeDir(t *testing.T) {
 		if store.loadCount() == 0 {
 			t.Fatal("the session was never materialized")
 		}
-		_ = client.Disconnect()
 	})
 
 	t.Run("initialize closes the CLI before cleanup", func(t *testing.T) {
@@ -1361,9 +1357,8 @@ func TestClientConnectFailureRemovesResumeDir(t *testing.T) {
 		ht := &hookedTransport{fakeTransport: ft}
 		ht.onClose = func() { dirAtClose = f.leftovers(t) }
 		deps, _ := capturingDeps(f, ht)
-		client := NewClient(Options{Cwd: f.cwd, SessionStore: store, Resume: resumeSID})
-		client.deps = deps
-		if err := client.Connect(t.Context()); err == nil || !strings.Contains(err.Error(), "control timeout") {
+		_, err := newClient(t.Context(), &Options{Cwd: f.cwd, SessionStore: store, Resume: resumeSID}, deps)
+		if err == nil || !strings.Contains(err.Error(), "control timeout") {
 			t.Fatalf("error = %v", err)
 		}
 		if len(dirAtClose) != 1 {
@@ -1387,16 +1382,12 @@ func TestClientConnectFailureRemovesResumeDir(t *testing.T) {
 			newTransport: func(*Options) Transport { t.Error("transport built after cancellation"); return newFakeTransport() },
 			resume:       f.env,
 		}
-		client := NewClient(Options{Cwd: f.cwd, SessionStore: store, Resume: resumeSID})
-		client.deps = deps
-		if err := client.Connect(ctx); !errors.Is(err, context.Canceled) {
+		_, err := newClient(ctx, &Options{Cwd: f.cwd, SessionStore: store, Resume: resumeSID}, deps)
+		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("error = %v", err)
 		}
 		if left := f.leftovers(t); len(left) != 0 {
 			t.Fatalf("temp dir leaked: %v", left)
-		}
-		if err := client.Disconnect(); err != nil {
-			t.Fatal(err)
 		}
 	})
 }
@@ -1412,12 +1403,11 @@ func TestCustomTransportSkipsMaterializationButMirrors(t *testing.T) {
 	// Client.
 	ft := newFakeTransport()
 	initResponder(ft, map[string]any{})
-	client := NewClient(Options{
+	client, err := newClient(t.Context(), &Options{
 		Cwd: f.cwd, SessionStore: store, Resume: resumeSID, Transport: ft,
 		Env: map[string]string{"CLAUDE_CONFIG_DIR": configDir},
-	})
-	client.deps = &sessionDeps{resume: f.env}
-	if err := client.Connect(t.Context()); err != nil {
+	}, &sessionDeps{resume: f.env})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if n := store.loadCount(); n != 0 {
@@ -1433,7 +1423,7 @@ func TestCustomTransportSkipsMaterializationButMirrors(t *testing.T) {
 			break
 		}
 	}
-	_ = client.Disconnect()
+	_ = client.Close()
 
 	// Query.
 	qt := scriptedCLI(t, mirrorFrame(path, map[string]any{"type": "user", "uuid": "q1"}), resultFrame())

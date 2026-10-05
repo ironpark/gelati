@@ -59,17 +59,6 @@ func (d *Done) Err() error {
 	return d.err
 }
 
-// closed is the channel Closed returns.
-var closed = func() chan struct{} {
-	ch := make(chan struct{})
-	close(ch)
-	return ch
-}()
-
-// Closed returns an already-closed channel, for Done methods called when no
-// session was ever started.
-func Closed() <-chan struct{} { return closed }
-
 // WaitClosed reports whether ch closes within d.
 func WaitClosed(ch <-chan struct{}, d time.Duration) bool {
 	timer := time.NewTimer(d)

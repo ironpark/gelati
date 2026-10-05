@@ -12,11 +12,11 @@ import (
 
 func main() {
 	ctx := context.Background()
-	client := claude.NewClient(claude.Options{MaxTurns: new(1)})
-	if err := client.Connect(ctx); err != nil {
+	client, err := claude.New(ctx, claude.Options{MaxTurns: new(1)})
+	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Disconnect()
+	defer client.Close()
 
 	for _, prompt := range []string{
 		"Pick a random fruit and remember it. Reply only with the fruit's name.",

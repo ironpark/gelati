@@ -85,7 +85,8 @@ func newSubprocessTransport(opts *Options, launch *launchConfig) *subprocessTran
 	}
 }
 
-// Connect locates the CLI, builds its command line and starts it.
+// Connect locates the CLI, builds its command line and starts it. The
+// process runs until Close, whatever becomes of ctx.
 func (t *subprocessTransport) Connect(ctx context.Context) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -123,10 +124,13 @@ func (t *subprocessTransport) Connect(ctx context.Context) error {
 	if spawn == nil {
 		spawn = SpawnLocalProcess
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
-	// The process is bound to a cancellable child of ctx. Both an explicit
-	// Close and a cancelled ctx run the graceful shutdown, which cancels
-	// runCtx last, so a spawner may tie forced teardown to it.
+	// The process outlives ctx, keeping only its values: Close runs the
+	// graceful shutdown, which cancels runCtx last, so a spawner may tie
+	// forced teardown to it.
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	t.cancel = cancel
 
@@ -161,13 +165,6 @@ func (t *subprocessTransport) Connect(ctx context.Context) error {
 	} else {
 		close(t.stderrDone)
 	}
-	go func() {
-		select {
-		case <-ctx.Done():
-			t.terminate()
-		case <-runCtx.Done():
-		}
-	}()
 	return nil
 }
 

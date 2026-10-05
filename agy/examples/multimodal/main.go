@@ -94,11 +94,8 @@ func loadImage(path string) (*agy.Image, error) {
 // run starts a session with opts, sends the prompt parts and prints the
 // answer.
 func run(ctx context.Context, opts agy.Options, prompt ...agy.Content) {
-	agent, err := agy.NewAgent(opts)
+	agent, err := agy.New(ctx, opts)
 	if err != nil {
-		log.Fatal(err)
-	}
-	if err := agent.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer agent.Close()

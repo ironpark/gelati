@@ -32,14 +32,13 @@ go get github.com/ironpark/gelati
 
 ## Common shape
 
-The three packages follow their upstream SDKs, so their lifecycles differ,
-but the pieces around them line up:
+The three packages follow their upstream SDKs, but share one lifecycle and
+line up around it:
 
 | | `claude` | `codex` | `agy` |
 |---|---|---|---|
-| Create | `NewClient(Options)` | `New(ctx, Options)` (starts the process) | `NewAgent(Options)` |
-| Start | `Connect(ctx)` | — | `Start(ctx)` |
-| Stop | `Disconnect()` | `Close()` | `Close()` |
+| Start | `New(ctx, Options)` → `*Client` | `New(ctx, Options)` → `*Client` | `New(ctx, Options)` → `*Agent` |
+| Stop | `Client.Close()` | `Client.Close()` | `Agent.Close()` |
 | Start a turn | `Client.Send(ctx, input...)` | `Client.StartTurn(ctx, threadID, input, opts)` | `Agent.Chat(ctx, content...)` |
 | One-shot | `Run` / `Client.Run` → `*ResultMessage` | `Client.Run` → `*TurnResult` | `TurnStream.Result` → `*TurnResult` |
 | Final text | `ResultMessage.Text()` | `TurnResult.Text()` | `TurnResult.Text()` |
@@ -48,8 +47,14 @@ but the pieces around them line up:
 | Executable | `Options.CLIPath` | `Options.CLIPath` | `Options.CLIPath` |
 | Extra environment | `Options.Env` | `Options.Env` | `Options.Env` |
 | Diagnostics | `Options.Logger` | `Options.Logger` | `Options.Logger` |
-| Errors | `Error`, `ErrCLINotFound`, `ErrNotConnected`, `ErrClosed`, `*ProcessError` | `Error`, `ErrCLINotFound`, `ErrClosed`, `*ProcessError` | `Error`, `ErrCLINotFound`, `ErrNotStarted`, `ErrClosed`, `*ProcessError` |
+| Errors | `Error`, `ErrCLINotFound`, `ErrClosed`, `*ProcessError` | `Error`, `ErrCLINotFound`, `ErrClosed`, `*ProcessError` | `Error`, `ErrCLINotFound`, `ErrClosed`, `*ProcessError` |
 | Unmodeled data | `*UnknownMessage`, `*UnknownBlock` | `*UnknownItem`, `EventNotification` | — |
+
+`New` validates the options, starts the process, completes the handshake and
+returns a live handle; on failure nothing is left running. Its ctx bounds the
+startup only: the session outlives it and ends on `Close` (idempotent and safe
+to defer) or when the process exits. A handle is one session; after `Close`,
+calls fail with an error matching `ErrClosed`.
 
 Options are passed by value and their zero value means defaults. A turn is a
 `*TurnStream` in every package, with the same four methods:
@@ -156,14 +161,14 @@ fmt.Println(res.Text())
 ### Interactive client
 
 ```go
-client := claude.NewClient(claude.Options{
+client, err := claude.New(ctx, claude.Options{
 	PermissionMode: claude.PermissionModeAcceptEdits,
 	Cwd:            "/path/to/repo",
 })
-if err := client.Connect(ctx); err != nil {
+if err != nil {
 	log.Fatal(err)
 }
-defer client.Disconnect()
+defer client.Close()
 
 turn, err := client.Send(ctx, claude.Text("Summarize this repository"))
 if err != nil {
@@ -181,14 +186,14 @@ stream, so turns are read in the order they were sent and one `TurnStream` is
 read at a time; reading a later turn first skips the earlier turn's unread
 messages, while its `Result` stays available.
 
-A connected `Client` can also interrupt a turn, change the model or permission
+A `Client` can also interrupt a turn, change the model or permission
 mode, rewind files, manage MCP servers, reload plugins and skills, apply
 settings mid-session, and query commands, models, account info and context
 usage. `SendControlRequest` reaches any control request without a wrapper.
 `client.Run(ctx, claude.Text(prompt))` sends a turn and waits for its
 `*ResultMessage`.
-`Done()` is closed when the session ends for any reason (`Disconnect`, ctx
-cancellation, CLI exit, transport failure) and `Err()` then reports why.
+`Done()` is closed when the session ends for any reason (`Close`, CLI exit,
+transport failure) and `Err()` then reports why.
 
 ### Permissions, hooks and in-process tools
 
@@ -259,7 +264,8 @@ from it. The `*InStore` variants (`sessions.ListInStore`,
 
 `claude.Startup` spawns the CLI and completes the initialize handshake ahead of
 time; `claude.Prewarm` (alpha) parks a spare process for a later session to
-claim.
+claim. As for `New`, their ctx bounds the startup only: the session lasts until
+its query ends or `Close` is called.
 
 ### Typed tools
 
@@ -383,13 +389,10 @@ with a project and location or an API key to use Vertex AI instead.
 
 ```go
 ctx := context.Background()
-agent, err := agy.NewAgent(agy.Options{
+agent, err := agy.New(ctx, agy.Options{
 	SystemInstructions: agy.TextSystemInstructions("Answer briefly."),
 })
 if err != nil {
-	log.Fatal(err)
-}
-if err := agent.Start(ctx); err != nil {
 	log.Fatal(err)
 }
 defer agent.Close()
@@ -455,7 +458,7 @@ weather := agy.NewTool("get_weather", "Returns the weather for a city.",
 		return "sunny in " + in.City, nil
 	})
 
-agent, err := agy.NewAgent(agy.Options{
+agent, err := agy.New(ctx, agy.Options{
 	Tools: []*agy.Tool{weather},
 	MCPServers: []agy.MCPServer{
 		&agy.MCPStdioServer{Name: "fs", Command: "npx", Args: []string{"-y", "@modelcontextprotocol/server-filesystem", "."}},

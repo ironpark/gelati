@@ -72,9 +72,6 @@ type engine struct {
 	closed     chan struct{}
 	readerDone chan struct{}
 
-	// startCtx is the ctx start was given; its cancellation is reported as
-	// the reason the session ended.
-	startCtx context.Context
 	// fatal is the error failAll reported, guarded by mu.
 	fatal error
 	// end records how the session ended, for Client.Done and Client.Err.
@@ -121,13 +118,14 @@ func newEngine(transport Transport, opts *Options, launch *launchConfig) *engine
 	return e
 }
 
-// start begins reading from the transport. It is safe to call more than once.
+// start begins reading from the transport. ctx's values, but not its
+// cancellation, are passed on to the handlers of the CLI's control requests.
+// It is safe to call more than once.
 func (e *engine) start(ctx context.Context) {
 	e.startOnce.Do(func() {
 		base := context.WithoutCancel(ctx)
 		e.mu.Lock()
 		e.baseCtx = base
-		e.startCtx = ctx
 		e.mu.Unlock()
 		go e.readLoop(base)
 	})
@@ -718,18 +716,15 @@ func (e *engine) close() error {
 }
 
 // endReason reports why the read loop stopped: nil when close stopped it,
-// else the cancellation of the session's ctx, the fatal error that ended
-// the output, or a ConnectionError when the output simply ended.
+// else the fatal error that ended the output, or a ConnectionError when the
+// output simply ended.
 func (e *engine) endReason() error {
 	if e.isClosed() {
 		return nil
 	}
 	e.mu.Lock()
-	ctx, fatal := e.startCtx, e.fatal
+	fatal := e.fatal
 	e.mu.Unlock()
-	if ctx != nil && ctx.Err() != nil {
-		return context.Cause(ctx)
-	}
 	if fatal != nil {
 		return fatal
 	}

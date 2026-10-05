@@ -29,8 +29,7 @@ func (e *baseError) claudeSDKError() {}
 // Ported from CLIConnectionError.
 type ConnectionError struct {
 	baseError
-	// sentinel is ErrNotConnected or ErrClosed when the error stands for
-	// one.
+	// sentinel is ErrClosed when the error stands for it.
 	sentinel error
 }
 
@@ -39,26 +38,15 @@ func newConnectionError(msg string) *ConnectionError {
 	return &ConnectionError{baseError: baseError{Msg: msg}}
 }
 
-// Unwrap returns the sentinel the error stands for, if any: ErrNotConnected
-// or ErrClosed.
+// Unwrap returns the sentinel the error stands for, if any: ErrClosed.
 func (e *ConnectionError) Unwrap() error { return e.sentinel }
 
-// ErrNotConnected matches, with errors.Is, the error of a Client call made
-// before Connect; the error itself is a *ConnectionError.
-var ErrNotConnected = errors.New("claude: not connected; call Connect first")
-
 // ErrClosed matches, with errors.Is, the error of a Client call made after
-// Disconnect (until the next Connect), and of a TurnStream read after Close
-// or after its session ended by Disconnect; the error itself is a
-// *ConnectionError.
+// Close, and of a TurnStream read after its own Close or after its client's;
+// the error itself is a *ConnectionError.
 var ErrClosed = errors.New("claude: client is closed")
 
-// notConnectedError reports a Client call made before Connect.
-func notConnectedError() *ConnectionError {
-	return &ConnectionError{baseError{Msg: "Not connected. Call Connect first."}, ErrNotConnected}
-}
-
-// closedError reports a call made after Disconnect or Close.
+// closedError reports a call made after Close.
 func closedError(what string) *ConnectionError {
 	return &ConnectionError{baseError{Msg: what + " is closed"}, ErrClosed}
 }

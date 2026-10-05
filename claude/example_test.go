@@ -43,11 +43,11 @@ func ExampleRun() {
 
 func ExampleClient_Run() {
 	ctx := context.Background()
-	client := claude.NewClient(claude.Options{})
-	if err := client.Connect(ctx); err != nil {
+	client, err := claude.New(ctx, claude.Options{})
+	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Disconnect()
+	defer client.Close()
 
 	for _, prompt := range []string{"Pick a number", "Double it"} {
 		res, err := client.Run(ctx, claude.Text(prompt))
@@ -60,11 +60,11 @@ func ExampleClient_Run() {
 
 func ExampleClient_Done() {
 	ctx := context.Background()
-	client := claude.NewClient(claude.Options{})
-	if err := client.Connect(ctx); err != nil {
+	client, err := claude.New(ctx, claude.Options{})
+	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Disconnect()
+	defer client.Close()
 
 	go func() {
 		<-client.Done()
@@ -94,11 +94,11 @@ func ExampleQuery_options() {
 
 func ExampleClient() {
 	ctx := context.Background()
-	client := claude.NewClient(claude.Options{PermissionMode: claude.PermissionModeAcceptEdits})
-	if err := client.Connect(ctx); err != nil {
+	client, err := claude.New(ctx, claude.Options{PermissionMode: claude.PermissionModeAcceptEdits})
+	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Disconnect()
+	defer client.Close()
 
 	for _, prompt := range []string{"Describe this repo", "Now write a README"} {
 		turn, err := client.Send(ctx, claude.Text(prompt))
@@ -120,11 +120,11 @@ func ExampleClient() {
 
 func ExampleTurnStream_Cancel() {
 	ctx := context.Background()
-	client := claude.NewClient(claude.Options{})
-	if err := client.Connect(ctx); err != nil {
+	client, err := claude.New(ctx, claude.Options{})
+	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Disconnect()
+	defer client.Close()
 
 	turn, err := client.Send(ctx, claude.Text("Count to a million"))
 	if err != nil {

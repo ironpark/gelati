@@ -405,8 +405,7 @@ func (o Options) Validate() error {
 }
 
 // compiledOptions is Options compiled for one session: the hook and tool
-// runners and the harness policy config. Agent.start and connectLocal
-// consume it.
+// runners and the harness policy config. New and connectLocal consume it.
 type compiledOptions struct {
 	opts   *Options
 	logger *slog.Logger

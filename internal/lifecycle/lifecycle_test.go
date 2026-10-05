@@ -24,5 +24,4 @@ func TestDone(t *testing.T) {
 	if d.Err() != first || !d.Ended() {
 		t.Fatalf("Err = %v", d.Err())
 	}
-	<-Closed()
 }

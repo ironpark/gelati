@@ -42,13 +42,10 @@ func fakeAgentConfig(t *testing.T) (cfg Options, recordPath, logPath string) {
 
 func startAgent(t *testing.T, cfg Options) *Agent {
 	t.Helper()
-	agent, err := NewAgent(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	if err := agent.Start(ctx); err != nil {
+	agent, err := New(ctx, cfg)
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Close() })
@@ -92,9 +89,6 @@ func TestAgentChat(t *testing.T) {
 	cfg, record, _ := fakeAgentConfig(t)
 	cfg.SystemInstructions = TextSystemInstructions("Be brief.")
 	agent := startAgent(t, cfg)
-	if !agent.IsStarted() {
-		t.Fatal("not started")
-	}
 	if s := agent.SandboxStatus(); s == nil || !s.Available {
 		t.Fatalf("sandbox status %+v", s)
 	}
@@ -159,13 +153,11 @@ func TestAgentChat(t *testing.T) {
 	if err := agent.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if agent.IsStarted() || agent.Conversation() != nil || agent.ConversationID() != "" || agent.SandboxStatus() != nil {
-		t.Fatal("agent still started after Close")
-	}
+	waitDone(t, agent.Done())
 	if err := agent.Close(); err != nil {
 		t.Fatal("second Close:", err)
 	}
-	if _, err := agent.Chat(ctx, Text("hello")); !errors.Is(err, ErrNotStarted) {
+	if _, err := agent.Chat(ctx, Text("hello")); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Chat after Close = %v", err)
 	}
 }
@@ -434,20 +426,18 @@ func TestAgentTriggersAndSessionHooks(t *testing.T) {
 	}
 }
 
-func TestAgentRestart(t *testing.T) {
+// The session outlives the ctx given to New: it bounds the launch only.
+func TestAgentOutlivesLaunchContext(t *testing.T) {
 	cfg, _, _ := fakeAgentConfig(t)
-	agent := startAgent(t, cfg)
-	if err := agent.Start(t.Context()); err == nil {
-		t.Fatal("second Start succeeded")
-	}
-	if err := agent.Close(); err != nil {
+	ctx, cancel := context.WithCancel(t.Context())
+	agent, err := New(ctx, cfg)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := agent.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	t.Cleanup(func() { _ = agent.Close() })
+	cancel()
 	if text, err := chat(t, agent, "hello"); err != nil || text != "Hello there!" {
-		t.Fatalf("after restart %q %v", text, err)
+		t.Fatalf("chat after cancelling New's ctx: %q %v", text, err)
 	}
 }
 
@@ -477,18 +467,16 @@ func TestAgentPolicyGuard(t *testing.T) {
 		cfg := tc.cfg
 		cfg.CLIPath, cfg.Env, cfg.APIKey, cfg.Workspaces, cfg.SaveDir, cfg.AppDataDir, cfg.Logger =
 			base.CLIPath, base.Env, base.APIKey, base.Workspaces, base.SaveDir, base.AppDataDir, base.Logger
-		agent, err := NewAgent(cfg)
+		agent, err := New(t.Context(), cfg)
 		if tc.blocked {
 			if _, ok := errors.AsType[*ValidationError](err); !ok || !strings.Contains(err.Error(), guardErr) {
-				t.Errorf("%s: NewAgent = %v, want the policy guard error", name, err)
+				t.Errorf("%s: New = %v, want the policy guard error", name, err)
 			}
 			continue
 		}
 		if err != nil {
-			t.Fatalf("%s: NewAgent: %v", name, err)
-		}
-		if err := agent.Start(t.Context()); err != nil {
-			t.Errorf("%s: Start = %v", name, err)
+			t.Errorf("%s: New = %v", name, err)
+			continue
 		}
 		_ = agent.Close()
 	}
@@ -499,76 +487,49 @@ func writeTools() []BuiltinTool {
 	return slices.DeleteFunc(DefaultTools(), func(t BuiltinTool) bool { return slices.Contains(PolicyFreeTools(), t) })
 }
 
-func TestAgentBeforeStartAndValidation(t *testing.T) {
+func TestAgentValidation(t *testing.T) {
 	cfg, _, _ := fakeAgentConfig(t)
-	agent, err := NewAgent(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if agent.IsStarted() || agent.Conversation() != nil || agent.ConversationID() != "" || agent.SandboxStatus() != nil {
-		t.Fatal("unstarted agent reports a session")
-	}
-	if _, err := agent.Chat(t.Context(), Text("hello")); !errors.Is(err, ErrNotStarted) {
-		t.Fatalf("Chat before Start = %v", err)
-	}
-	if err := agent.Close(); err != nil {
-		t.Fatal(err)
-	}
+	agent := startAgent(t, cfg)
 	for _, content := range [][]Content{nil, {Text("")}, {Text("   ")}, {Text(""), Text("  ")}} {
 		if _, err := agent.Chat(t.Context(), content...); err == nil || !strings.Contains(err.Error(), "non-empty message") {
 			t.Errorf("Chat(%q) = %v", content, err)
 		}
 	}
-	if _, err := NewAgent(Options{ConversationID: "short"}); err == nil {
+	if _, err := New(t.Context(), Options{ConversationID: "short"}); err == nil {
 		t.Fatal("invalid config accepted")
 	}
 	clearModelEnv(t)
 	cfg.APIKey = ""
-	agent, _ = NewAgent(cfg)
-	if err := agent.Start(t.Context()); err == nil || !strings.Contains(err.Error(), "API key is required") {
-		t.Fatalf("Start without key = %v", err)
+	if _, err := New(t.Context(), cfg); err == nil || !strings.Contains(err.Error(), "API key is required") {
+		t.Fatalf("New without key = %v", err)
 	}
 	cfg.APIKey = "k"
 	cfg.CLIPath = ""
 	cfg.Env = map[string]string{}
 	t.Setenv("ANTIGRAVITY_HARNESS_PATH", "")
 	t.Setenv("PATH", t.TempDir())
-	agent, _ = NewAgent(cfg)
-	if err := agent.Start(t.Context()); !errors.Is(err, ErrCLINotFound) {
-		t.Fatalf("Start without binary = %v", err)
+	if _, err := New(t.Context(), cfg); !errors.Is(err, ErrCLINotFound) {
+		t.Fatalf("New without binary = %v", err)
 	}
 }
 
-func TestAgentStartFailureIsConnectionError(t *testing.T) {
+func TestNewFailureIsConnectionError(t *testing.T) {
 	cfg, _, _ := fakeAgentConfig(t)
 	cfg.CLIPath = filepath.Join(t.TempDir(), "missing-binary")
-	agent, _ := NewAgent(cfg)
-	err := agent.Start(t.Context())
+	agent, err := New(t.Context(), cfg)
 	if _, ok := errors.AsType[*ConnectionError](err); !ok || !errors.Is(err, ErrCLINotFound) {
-		t.Fatalf("Start = %v (%T)", err, err)
+		t.Fatalf("New = %v (%T)", err, err)
 	}
-	if agent.IsStarted() {
-		t.Fatal("started after failure")
+	if agent != nil {
+		t.Fatal("a failed New returned an agent")
 	}
 }
 
 func TestAgentDoneAndErr(t *testing.T) {
 	cfg, _, _ := fakeAgentConfig(t)
-	agent, err := NewAgent(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Before Start: closed channel, ErrNotStarted.
-	waitDone(t, agent.Done())
-	if err := agent.Err(); !errors.Is(err, ErrNotStarted) {
-		t.Fatalf("Err before Start = %v", err)
-	}
 
 	// Close: Done closes, Err is nil.
-	if err := agent.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = agent.Close() })
+	agent := startAgent(t, cfg)
 	done := agent.Done()
 	select {
 	case <-done:
@@ -586,17 +547,9 @@ func TestAgentDoneAndErr(t *testing.T) {
 		t.Fatalf("Err after Close = %v", err)
 	}
 
-	// Restart, then the harness process exits: Done closes and Err carries
-	// its stderr.
-	if err := agent.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	// The harness process exits: Done closes and Err carries its stderr.
+	agent = startAgent(t, cfg)
 	done = agent.Done()
-	select {
-	case <-done:
-		t.Fatal("Done of the restarted session already closed")
-	default:
-	}
 	text, err := chat(t, agent, "crash")
 	if _, ok := errors.AsType[*ConnectionError](err); !ok {
 		t.Fatalf("chat with a crashing harness: %q, %v", text, err)

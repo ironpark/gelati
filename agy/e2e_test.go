@@ -25,7 +25,7 @@ func TestE2EHelloWorld(t *testing.T) {
 	defer cancel()
 
 	var stderr syncBuffer
-	agent, err := agy.NewAgent(agy.Options{
+	agent, err := agy.New(ctx, agy.Options{
 		SystemInstructions: agy.TextSystemInstructions("Answer with a single word."),
 		Capabilities:       &agy.CapabilitiesConfig{EnabledTools: agy.ReadOnlyTools()},
 		Workspaces:         []string{t.TempDir()},
@@ -33,10 +33,7 @@ func TestE2EHelloWorld(t *testing.T) {
 		Stderr:             &stderr,
 	})
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := agent.Start(ctx); err != nil {
-		t.Fatalf("Start: %v\nstderr:\n%s", err, stderr.String())
+		t.Fatalf("New: %v\nstderr:\n%s", err, stderr.String())
 	}
 	defer agent.Close()
 

@@ -20,9 +20,6 @@ type Error interface {
 
 // Sentinel errors.
 var (
-	// ErrNotStarted is returned by Agent methods that need a running session
-	// before Start (Python raises RuntimeError there).
-	ErrNotStarted = errors.New("agy: agent session not started; call Start first")
 	// ErrClosed is returned by operations on a closed Connection (and so a
 	// closed Agent or Conversation), and ends the cursors of a closed
 	// TurnStream.
@@ -32,7 +29,7 @@ var (
 	// from a single queue, so two readers would steal steps from each other.
 	ErrConcurrentReceive = errors.New("agy: concurrent ReceiveSteps calls are not supported on this connection")
 	// ErrCLINotFound reports that no localharness binary could be located
-	// or started; see Options.CLIPath. Start returns it inside a
+	// or started; see Options.CLIPath. New returns it inside a
 	// *ConnectionError.
 	ErrCLINotFound = harness.ErrCLINotFound
 )

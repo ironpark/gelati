@@ -3,7 +3,6 @@ package claude
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,25 +26,33 @@ func initResponder(ft *fakeTransport, info map[string]any) {
 	ft.mu.Unlock()
 }
 
-func connectedClient(t *testing.T, opts *Options) (*Client, *fakeTransport) {
+// testClient starts a client on a fake transport that respond sets up to
+// answer the CLI side; nil answers control requests with a default
+// initialize response.
+func testClient(t *testing.T, opts *Options, respond func(*fakeTransport)) (*Client, *fakeTransport) {
 	t.Helper()
 	ft := newFakeTransport()
-	initResponder(ft, map[string]any{"commands": []any{"/help"}, "output_style": "default"})
+	if respond == nil {
+		initResponder(ft, map[string]any{"commands": []any{"/help"}, "output_style": "default"})
+	} else {
+		respond(ft)
+	}
 	if opts == nil {
 		opts = &Options{}
 	}
 	opts.Transport = ft
-	client := NewClient(*opts)
-	if err := client.Connect(t.Context()); err != nil {
-		t.Fatalf("connect: %v", err)
+	client, err := New(t.Context(), *opts)
+	if err != nil {
+		t.Fatalf("new: %v", err)
 	}
-	t.Cleanup(func() { _ = client.Disconnect() })
+	t.Cleanup(func() { _ = client.Close() })
 	return client, ft
 }
 
-func TestClientConnectAndServerInfo(t *testing.T) {
+func TestNewAndServerInfo(t *testing.T) {
 	t.Parallel()
-	client, ft := connectedClient(t, nil)
+	opts := &Options{Env: map[string]string{"A": "b"}}
+	client, ft := testClient(t, opts, nil)
 	if info := client.ServerInfo(); info == nil || info["output_style"] != "default" {
 		t.Fatalf("server info = %#v", client.ServerInfo())
 	}
@@ -54,19 +61,14 @@ func TestClientConnectAndServerInfo(t *testing.T) {
 		t.Fatalf("frames = %#v", frames)
 	}
 	// The client entrypoint is reported to the CLI.
-	if client.opts.Env["CLAUDE_CODE_ENTRYPOINT"] != "" {
+	if _, ok := opts.Env["CLAUDE_CODE_ENTRYPOINT"]; ok {
 		t.Fatal("the caller's options must not be mutated")
-	}
-
-	// Connecting twice is refused.
-	if err := client.Connect(t.Context()); err == nil || !strings.Contains(err.Error(), "already connected") {
-		t.Fatalf("error = %v", err)
 	}
 }
 
 func TestClientSendAttributesSessions(t *testing.T) {
 	t.Parallel()
-	client, ft := connectedClient(t, nil)
+	client, ft := testClient(t, nil, nil)
 	if _, err := client.Send(t.Context(), Text("a"), UserInput{Content: "b", SessionID: "own"}); err != nil {
 		t.Fatalf("send: %v", err)
 	}
@@ -99,7 +101,7 @@ func turnTexts(t *testing.T, turn *TurnStream) []string {
 
 func TestClientTurnStreams(t *testing.T) {
 	t.Parallel()
-	client, ft := connectedClient(t, nil)
+	client, ft := testClient(t, nil, nil)
 
 	first, err := client.Send(t.Context(), Text("first"))
 	if err != nil {
@@ -134,7 +136,7 @@ func TestClientTurnStreams(t *testing.T) {
 
 func TestClientTurnSkipsUnreadEarlierTurn(t *testing.T) {
 	t.Parallel()
-	client, ft := connectedClient(t, nil)
+	client, ft := testClient(t, nil, nil)
 	first, err := client.Send(t.Context(), Text("first"))
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +206,7 @@ func interrupts(t *testing.T, ft *fakeTransport) int {
 
 func TestClientTurnCloseAndCancelRules(t *testing.T) {
 	t.Parallel()
-	client, ft := connectedClient(t, nil)
+	client, ft := testClient(t, nil, nil)
 
 	// Close on a turn that has ended is a no-op: its result stays.
 	first, err := client.Send(t.Context(), Text("first"))
@@ -292,7 +294,7 @@ func TestClientTurnCloseAndCancelRules(t *testing.T) {
 
 func TestClientTurnErrors(t *testing.T) {
 	t.Parallel()
-	client, ft := connectedClient(t, nil)
+	client, ft := testClient(t, nil, nil)
 	turn, err := client.Send(t.Context(), Text("hi"))
 	if err != nil {
 		t.Fatal(err)
@@ -349,7 +351,7 @@ func TestClientTurnErrors(t *testing.T) {
 
 func TestClientControlMethods(t *testing.T) {
 	t.Parallel()
-	client, ft := connectedClient(t, nil)
+	client, ft := testClient(t, nil, nil)
 	ctx := t.Context()
 	if err := client.Interrupt(ctx); err != nil {
 		t.Fatalf("interrupt: %v", err)
@@ -397,9 +399,12 @@ func TestClientControlMethods(t *testing.T) {
 	}
 }
 
-func TestClientUseBeforeConnect(t *testing.T) {
+func TestClientUseAfterClose(t *testing.T) {
 	t.Parallel()
-	client := NewClient(Options{})
+	client, _ := testClient(t, nil, nil)
+	if err := client.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
 	ctx := t.Context()
 	checks := map[string]error{
 		"interrupt": client.Interrupt(ctx),
@@ -411,37 +416,29 @@ func TestClientUseBeforeConnect(t *testing.T) {
 	}
 	_, checks["send"] = client.Send(ctx, Text("hi"))
 	_, checks["run"] = client.Run(ctx, Text("hi"))
+	_, checks["mcpStatus"] = client.MCPServerStatus(ctx)
+	_, checks["contextUsage"] = client.ContextUsage(ctx, nil)
+	_, checks["rewind"] = client.RewindFiles(ctx, "u1", nil)
+	_, checks["reinitialize"] = client.Reinitialize(ctx)
+	_, checks["setMCPServers"] = client.SetMCPServers(ctx, nil)
+	for _, err := range client.ReceiveMessages(ctx) {
+		checks["receive"] = err
+	}
 	for name, err := range checks {
 		var connErr *ConnectionError
-		if !errors.As(err, &connErr) || !errors.Is(err, ErrNotConnected) {
-			t.Errorf("%s: error = %T (%v), want *ConnectionError matching ErrNotConnected", name, err, err)
+		if !errors.As(err, &connErr) || !errors.Is(err, ErrClosed) {
+			t.Errorf("%s: error = %T (%v), want *ConnectionError matching ErrClosed", name, err, err)
 		}
 	}
-	if _, err := client.MCPServerStatus(ctx); err == nil {
-		t.Error("mcp status should fail before connect")
-	}
-	if _, err := client.ContextUsage(ctx, nil); err == nil {
-		t.Error("context usage should fail before connect")
-	}
-	if _, err := client.RewindFiles(ctx, "u1", nil); err == nil {
-		t.Error("rewind should fail before connect")
-	}
-	if client.ServerInfo() != nil {
-		t.Error("server info should be nil before connect")
-	}
-	var got error
-	for _, err := range client.ReceiveMessages(ctx) {
-		got = err
-	}
-	var connErr *ConnectionError
-	if !errors.As(got, &connErr) {
-		t.Errorf("receive: error = %T (%v)", got, got)
+	// What the handshake reported stays readable.
+	if client.ServerInfo() == nil {
+		t.Error("server info should survive Close")
 	}
 }
 
 func TestClientConcurrentControlDuringReceive(t *testing.T) {
 	t.Parallel()
-	client, ft := connectedClient(t, nil)
+	client, ft := testClient(t, nil, nil)
 
 	received := make(chan struct{})
 	go func() {
@@ -476,32 +473,29 @@ func TestClientConcurrentControlDuringReceive(t *testing.T) {
 	}
 }
 
-func TestClientDisconnectIsIdempotent(t *testing.T) {
+func TestClientCloseIsIdempotent(t *testing.T) {
 	t.Parallel()
-	client, ft := connectedClient(t, nil)
-	if err := client.Disconnect(); err != nil {
-		t.Fatalf("disconnect: %v", err)
+	client, ft := testClient(t, nil, nil)
+	if err := client.Close(); err != nil {
+		t.Fatalf("close: %v", err)
 	}
-	ft.mu.Lock()
-	closed := ft.closed
-	ft.mu.Unlock()
-	if !closed {
-		t.Fatal("disconnect should close the transport")
+	if !isDone(ft.closedCh) {
+		t.Fatal("Close should close the transport")
 	}
-	if err := client.Disconnect(); err != nil {
-		t.Fatalf("second disconnect: %v", err)
+	if err := client.Close(); err != nil {
+		t.Fatalf("second close: %v", err)
 	}
 	if _, err := client.Send(t.Context(), Text("hi")); !errors.Is(err, ErrClosed) {
-		t.Fatalf("send after disconnect = %v, want ErrClosed", err)
+		t.Fatalf("send after close = %v, want ErrClosed", err)
 	}
 	if err := client.Interrupt(t.Context()); !errors.Is(err, ErrClosed) {
-		t.Fatalf("interrupt after disconnect = %v, want ErrClosed", err)
+		t.Fatalf("interrupt after close = %v, want ErrClosed", err)
 	}
 }
 
 func TestClientReceiveHonorsContext(t *testing.T) {
 	t.Parallel()
-	client, _ := connectedClient(t, nil)
+	client, _ := testClient(t, nil, nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
@@ -523,7 +517,7 @@ func TestClientReceiveHonorsContext(t *testing.T) {
 	}
 }
 
-func TestClientConnectFailurePropagates(t *testing.T) {
+func TestNewFailurePropagates(t *testing.T) {
 	t.Parallel()
 	ft := newFakeTransport()
 	ft.mu.Lock()
@@ -532,22 +526,17 @@ func TestClientConnectFailurePropagates(t *testing.T) {
 			"subtype": "error", "request_id": frame["request_id"], "error": "handshake refused"}})
 	}
 	ft.mu.Unlock()
-	client := NewClient(Options{Transport: ft})
-	err := client.Connect(t.Context())
+	client, err := New(t.Context(), Options{Transport: ft})
 	var ctrlErr *ControlError
 	if !errors.As(err, &ctrlErr) {
 		t.Fatalf("error = %T (%v)", err, err)
 	}
-	// A failed connect leaves the client usable for a retry, and closes the
-	// transport it opened.
-	ft.mu.Lock()
-	closed := ft.closed
-	ft.mu.Unlock()
-	if !closed {
-		t.Fatal("a failed connect should close the transport")
+	if client != nil {
+		t.Fatal("a failed New should return no client")
 	}
-	if client.ServerInfo() != nil {
-		t.Fatal("server info should be nil after a failed connect")
+	// A failed New closes the transport it opened.
+	if !isDone(ft.closedCh) {
+		t.Fatal("a failed New should close the transport")
 	}
 }
 
@@ -570,10 +559,9 @@ func TestClientHooksAndPermissionsRoundTrip(t *testing.T) {
 			}}},
 		},
 	}
-	client, ft := connectedClient(t, opts)
+	_, ft := testClient(t, opts, nil)
 	// The permission callback implies the stdio permission prompt tool.
-	c := client
-	if c.opts.PermissionPromptToolName != "" {
+	if opts.PermissionPromptToolName != "" {
 		t.Fatal("the caller's options must not be mutated")
 	}
 

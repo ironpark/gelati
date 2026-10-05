@@ -41,11 +41,11 @@ func TestClientSetMCPServers(t *testing.T) {
 			"subtype": "success", "request_id": frame["request_id"], "response": payload}})
 	}
 	ft.mu.Unlock()
-	client := NewClient(Options{Transport: ft, MCPServers: map[string]MCPServerConfig{"initial": initial}})
-	if err := client.Connect(t.Context()); err != nil {
-		t.Fatalf("connect: %v", err)
+	client, err := New(t.Context(), Options{Transport: ft, MCPServers: map[string]MCPServerConfig{"initial": initial}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
 	}
-	t.Cleanup(func() { _ = client.Disconnect() })
+	t.Cleanup(func() { _ = client.Close() })
 
 	result, err := client.SetMCPServers(t.Context(), map[string]MCPServerConfig{
 		"added": added,
@@ -111,13 +111,6 @@ func TestClientSetMCPServers(t *testing.T) {
 	}
 }
 
-func TestClientSetMCPServersNotConnected(t *testing.T) {
-	t.Parallel()
-	if _, err := NewClient(Options{}).SetMCPServers(t.Context(), nil); err == nil {
-		t.Fatal("want an error before Connect")
-	}
-}
-
 // TestClientReinitializeDeclaresLiveMCPServers checks that a re-initialize
 // after SetMCPServers announces the live in-process servers, not the ones
 // the session was configured with.
@@ -146,11 +139,11 @@ func TestClientReinitializeDeclaresLiveMCPServers(t *testing.T) {
 			"subtype": "success", "request_id": frame["request_id"], "response": map[string]any{}}})
 	}
 	ft.mu.Unlock()
-	client := NewClient(Options{Transport: ft, MCPServers: map[string]MCPServerConfig{"initial": initial}})
-	if err := client.Connect(t.Context()); err != nil {
-		t.Fatalf("connect: %v", err)
+	client, err := New(t.Context(), Options{Transport: ft, MCPServers: map[string]MCPServerConfig{"initial": initial}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
 	}
-	t.Cleanup(func() { _ = client.Disconnect() })
+	t.Cleanup(func() { _ = client.Close() })
 	if _, err := client.SetMCPServers(t.Context(), map[string]MCPServerConfig{"added": added}); err != nil {
 		t.Fatalf("SetMCPServers: %v", err)
 	}

@@ -30,7 +30,6 @@ import (
 //     the error when the turn failed.
 type TurnStream struct {
 	client *Client
-	eng    *engine
 
 	// end records that the turn has ended and the stream error it ended
 	// with, if any.
@@ -80,9 +79,6 @@ func (t *TurnStream) Cancel(ctx context.Context) error {
 	if t.end.Ended() {
 		return nil
 	}
-	if !t.client.owns(t.eng) {
-		return closedError("client")
-	}
 	return t.client.Interrupt(ctx)
 }
 
@@ -108,7 +104,7 @@ func (t *TurnStream) read(ctx context.Context, emit func(Message) bool) error {
 		if t.closed.Load() {
 			return closedError("turn stream")
 		}
-		head, err := t.client.headTurn(t.eng)
+		head, err := t.client.headTurn()
 		if err != nil {
 			t.end.Finish(err)
 			return err
@@ -128,10 +124,10 @@ func (t *TurnStream) read(ctx context.Context, emit func(Message) bool) error {
 // stream, cleanly or with an error, ends every pending turn; a cancelled ctx
 // ends none, so a later read can resume.
 func (t *TurnStream) readOwn(ctx context.Context, emit func(Message) bool) error {
-	for msg, err := range t.eng.receive(ctx) {
+	for msg, err := range t.client.sess.eng.receive(ctx) {
 		if err != nil {
 			if ctx.Err() == nil {
-				t.client.endTurns(t.eng, t, err)
+				t.client.endTurns(t, err)
 			}
 			return err
 		}
@@ -147,7 +143,7 @@ func (t *TurnStream) readOwn(ctx context.Context, emit func(Message) bool) error
 		}
 	}
 	// The stream ended without a result.
-	t.client.endTurns(t.eng, t, nil)
+	t.client.endTurns(t, nil)
 	return nil
 }
 
@@ -164,12 +160,11 @@ func checkResult(result *ResultMessage) (*ResultMessage, error) {
 	return result, nil
 }
 
-// headTurn returns the oldest pending turn of eng, which must be the
-// client's live session.
-func (c *Client) headTurn(eng *engine) (*TurnStream, error) {
+// headTurn returns the oldest pending turn.
+func (c *Client) headTurn() (*TurnStream, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.sess == nil || c.sess.eng != eng || len(c.turns) == 0 {
+	if c.closed || len(c.turns) == 0 {
 		return nil, closedError("client")
 	}
 	return c.turns[0], nil
@@ -187,24 +182,15 @@ func (c *Client) endTurn(t *TurnStream, result *ResultMessage) {
 	t.end.Finish(nil)
 }
 
-// endTurns ends t and every pending turn of eng with err, after eng's stream
-// ended.
-func (c *Client) endTurns(eng *engine, t *TurnStream, err error) {
+// endTurns ends t and every pending turn with err, after the session's
+// stream ended.
+func (c *Client) endTurns(t *TurnStream, err error) {
 	c.mu.Lock()
-	var pending []*TurnStream
-	if c.sess != nil && c.sess.eng == eng {
-		pending, c.turns = c.turns, nil
-	}
+	pending := c.turns
+	c.turns = nil
 	c.mu.Unlock()
 	for _, p := range pending {
 		p.end.Finish(err)
 	}
 	t.end.Finish(err)
-}
-
-// owns reports whether eng is the client's live session.
-func (c *Client) owns(eng *engine) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.sess != nil && c.sess.eng == eng
 }

@@ -56,7 +56,7 @@ var recordFruit = agy.NewTool("record_fruit", "Records the count of fruits by SK
 
 func main() {
 	ctx := context.Background()
-	agent, err := agy.NewAgent(agy.Options{
+	agent, err := agy.New(ctx, agy.Options{
 		Tools: []*agy.Tool{lookupFruitSKU, recordFruit},
 		SystemInstructions: agy.TextSystemInstructions("You keep track of fruit inventory. " +
 			"To record fruits, you MUST first look up the fruit's SKU using lookup_fruit_sku, " +
@@ -68,9 +68,6 @@ func main() {
 		},
 	})
 	if err != nil {
-		log.Fatal(err)
-	}
-	if err := agent.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer agent.Close()

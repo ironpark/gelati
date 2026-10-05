@@ -72,7 +72,7 @@ func TestRunWithoutResult(t *testing.T) {
 
 func TestClientRun(t *testing.T) {
 	t.Parallel()
-	client, ft := connectedClient(t, nil)
+	client, ft := testClient(t, nil, nil)
 	go func() {
 		for {
 			frame := ft.nextWrite(t)
@@ -105,59 +105,35 @@ func waitDone(t *testing.T, ch <-chan struct{}) {
 	}
 }
 
-func TestClientDoneOnDisconnect(t *testing.T) {
+func TestClientDoneOnClose(t *testing.T) {
 	t.Parallel()
-	ft := newFakeTransport()
-	initResponder(ft, nil)
-	client := NewClient(Options{Transport: ft})
-	waitDone(t, client.Done()) // no session yet
-	if _, ok := errors.AsType[*ConnectionError](client.Err()); !ok {
-		t.Fatalf("Err before Connect = %v", client.Err())
-	}
-	if err := client.Connect(t.Context()); err != nil {
-		t.Fatalf("connect: %v", err)
-	}
+	client, _ := testClient(t, nil, nil)
 	done := client.Done()
 	select {
 	case <-done:
-		t.Fatal("Done closed while connected")
+		t.Fatal("Done closed while running")
 	default:
 	}
 	if err := client.Err(); err != nil {
 		t.Fatalf("Err while running = %v", err)
 	}
-	if err := client.Disconnect(); err != nil {
-		t.Fatalf("disconnect: %v", err)
+	if err := client.Close(); err != nil {
+		t.Fatalf("close: %v", err)
 	}
-	// Disconnect settles Done and Err before it returns.
+	// Close settles Done and Err before it returns.
 	select {
 	case <-done:
 	default:
-		t.Fatal("Done still open after Disconnect")
+		t.Fatal("Done still open after Close")
 	}
 	if err := client.Err(); err != nil {
-		t.Fatalf("Err after Disconnect = %v", err)
-	}
-	// The ended session stays reported until the next Connect.
-	waitDone(t, client.Done())
-
-	ft2 := newFakeTransport()
-	initResponder(ft2, nil)
-	client.opts.Transport = ft2
-	if err := client.Connect(t.Context()); err != nil {
-		t.Fatalf("reconnect: %v", err)
-	}
-	defer client.Disconnect()
-	select {
-	case <-client.Done():
-		t.Fatal("a new session should report a fresh Done")
-	default:
+		t.Fatalf("Err after Close = %v", err)
 	}
 }
 
 func TestClientDoneOnProcessExit(t *testing.T) {
 	t.Parallel()
-	client, ft := connectedClient(t, nil)
+	client, ft := testClient(t, nil, nil)
 	code := 1
 	ft.finish(newProcessError("Command failed", &code, "boom", nil))
 	waitDone(t, client.Done())
@@ -168,34 +144,63 @@ func TestClientDoneOnProcessExit(t *testing.T) {
 
 func TestClientDoneOnOutputEnd(t *testing.T) {
 	t.Parallel()
-	client, ft := connectedClient(t, nil)
+	client, ft := testClient(t, nil, nil)
 	ft.finish(nil)
 	waitDone(t, client.Done())
 	if _, ok := errors.AsType[*ConnectionError](client.Err()); !ok {
 		t.Fatalf("Err = %T (%v), want *ConnectionError", client.Err(), client.Err())
 	}
-	// Disconnect keeps the reason the session ended.
-	_ = client.Disconnect()
+	// Close keeps the reason the session ended.
+	_ = client.Close()
 	if client.Err() == nil {
-		t.Fatal("Err should survive Disconnect")
+		t.Fatal("Err should survive Close")
 	}
 }
 
-func TestClientDoneOnContextCancel(t *testing.T) {
+// The session outlives the ctx given to New: only Close ends it.
+func TestClientOutlivesStartupContext(t *testing.T) {
 	t.Parallel()
 	ft := newFakeTransport()
 	initResponder(ft, nil)
-	client := NewClient(Options{Transport: ft})
 	ctx, cancel := context.WithCancel(t.Context())
-	if err := client.Connect(ctx); err != nil {
-		t.Fatalf("connect: %v", err)
+	client, err := New(ctx, Options{Transport: ft})
+	if err != nil {
+		t.Fatalf("new: %v", err)
 	}
-	defer client.Disconnect()
+	defer client.Close()
 	cancel()
-	// A real transport ends its output when ctx is cancelled.
-	ft.finish(nil)
-	waitDone(t, client.Done())
-	if !errors.Is(client.Err(), context.Canceled) {
-		t.Fatalf("Err = %v, want context.Canceled", client.Err())
+
+	if err := client.Interrupt(t.Context()); err != nil {
+		t.Fatalf("interrupt after cancelling New's ctx: %v", err)
+	}
+	if isDone(client.Done()) || isDone(ft.closedCh) {
+		t.Fatalf("session ended after New's ctx was cancelled: %v", client.Err())
+	}
+
+	if err := client.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if !isDone(ft.closedCh) {
+		t.Fatal("Close should close the transport")
+	}
+	if err := client.Err(); err != nil {
+		t.Fatalf("Err after Close = %v", err)
+	}
+}
+
+// Abandoning New during the handshake tears the session down.
+func TestNewCancelledDuringHandshake(t *testing.T) {
+	t.Parallel()
+	ft := newFakeTransport()
+	ctx, cancel := context.WithCancel(t.Context())
+	ft.mu.Lock()
+	ft.onWrite = func(map[string]any) { cancel() }
+	ft.mu.Unlock()
+	client, err := New(ctx, Options{Transport: ft})
+	if !errors.Is(err, context.Canceled) || client != nil {
+		t.Fatalf("New = %v, %v; want context.Canceled", client, err)
+	}
+	if !isDone(ft.closedCh) {
+		t.Fatal("an abandoned New should close the transport")
 	}
 }

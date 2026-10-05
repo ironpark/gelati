@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // warmCLI answers control requests per subtype (an "error" key in the
@@ -106,6 +107,56 @@ func TestStartupCloseWithoutQuery(t *testing.T) {
 	_ = warm.Close()
 	if _, err := collectMessages(t, warm.Query(t.Context(), "late")); err == nil {
 		t.Fatal("query after Close should fail")
+	}
+}
+
+// Like New, Startup's ctx bounds the startup only.
+func TestStartupSessionOutlivesContext(t *testing.T) {
+	t.Parallel()
+	ft := warmCLI(nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	warm, err := Startup(ctx, Options{Transport: ft})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer warm.Close()
+	cancel()
+	n, err := collectMessages(t, warm.Query(t.Context(), "hello"))
+	if err != nil || n != 2 {
+		t.Fatalf("messages = %d, err = %v", n, err)
+	}
+}
+
+// The query's own ctx ends it, and the session with it.
+func TestWarmQueryContextCancellation(t *testing.T) {
+	t.Parallel()
+	ft := newFakeTransport()
+	initResponder(ft, nil)
+	warm, err := Startup(t.Context(), Options{Transport: ft})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer warm.Close()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, err := collectMessages(t, warm.Query(ctx, "hello"))
+		done <- err
+	}()
+	for ft.nextWrite(t)["type"] != "user" {
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("query error = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelling the query's ctx did not end it")
+	}
+	if !isDone(ft.closedCh) {
+		t.Fatal("cancelling the query's ctx should close the transport")
 	}
 }
 

@@ -29,11 +29,10 @@ type MCPSetServersResult struct {
 // registered keeps its original instance and Timeout until it is removed and
 // added again. Every other configuration is passed to the CLI as is.
 func (c *Client) SetMCPServers(ctx context.Context, servers map[string]MCPServerConfig) (*MCPSetServersResult, error) {
-	eng, err := c.engineOrErr()
-	if err != nil {
+	if err := c.checkOpen(); err != nil {
 		return nil, err
 	}
-	registry := eng.mcpServers
+	registry := c.sess.eng.mcpServers
 	sdk := map[string]*MCPSDKServerConfig{}
 	wire := map[string]any{}
 	for name, cfg := range servers {
@@ -61,7 +60,7 @@ func (c *Client) SetMCPServers(ctx context.Context, servers map[string]MCPServer
 		}
 	}
 
-	response, err := eng.request(ctx, "mcp_set_servers", map[string]any{"servers": wire})
+	response, err := c.sess.eng.request(ctx, "mcp_set_servers", map[string]any{"servers": wire})
 	if err != nil {
 		return nil, err
 	}

@@ -39,11 +39,8 @@ func main() {
 	}
 
 	ctx := context.Background()
-	agent, err := agy.NewAgent(opts)
+	agent, err := agy.New(ctx, opts)
 	if err != nil {
-		log.Fatal(err)
-	}
-	if err := agent.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer agent.Close()

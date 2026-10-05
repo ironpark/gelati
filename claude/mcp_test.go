@@ -311,11 +311,11 @@ func TestEngineRoutesMCPMessageToServer(t *testing.T) {
 	ft := newFakeTransport()
 	initResponder(ft, nil)
 	opts.Transport = ft
-	client := NewClient(*opts)
-	if err := client.Connect(t.Context()); err != nil {
-		t.Fatalf("connect: %v", err)
+	client, err := New(t.Context(), *opts)
+	if err != nil {
+		t.Fatalf("new: %v", err)
 	}
-	defer client.Disconnect()
+	defer client.Close()
 
 	ft.mu.Lock()
 	ft.onWrite = nil

@@ -34,13 +34,14 @@ func (s *session) close() error {
 	return err
 }
 
-// startSession is the startup path shared by Query, Client.Connect, Startup
-// and Prewarm: it opens a session, starts its engine and completes the
+// startSession is the startup path shared by New, Query, Startup and
+// Prewarm: it opens a session, starts its engine and completes the
 // initialize handshake, which DefaultInitializeTimeout bounds when ctx has no
 // deadline. On failure the session is closed and nothing is left behind.
 //
-// As for the transport, ctx governs the whole session: cancelling it after
-// startSession returns terminates the CLI.
+// ctx bounds the startup only: the session outlives it and lasts until it is
+// closed or the CLI exits. ctx's values are kept for the handlers the engine
+// runs.
 func startSession(ctx context.Context, opts *Options, entry string, deps *sessionDeps) (*session, error) {
 	sess, err := openSession(ctx, opts, entry, deps)
 	if err != nil {
