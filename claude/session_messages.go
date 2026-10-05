@@ -2,7 +2,7 @@ package claude
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"io/fs"
@@ -10,6 +10,8 @@ import (
 	"os"
 	"regexp"
 	"unicode/utf8"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // Reading session and subagent conversations from local transcripts, and the
@@ -76,7 +78,7 @@ func skipPrecompactLines(b []byte) []byte {
 		}
 		if idx := bytes.Index(line, marker); terminated && idx >= 0 && idx < precompactBoundaryWindow {
 			var entry map[string]any
-			if json.Unmarshal(line, &entry) == nil && entry["type"] == "system" && entry["subtype"] == "compact_boundary" {
+			if json.Unmarshal(line, &entry, jsonx.Foreign) == nil && entry["type"] == "system" && entry["subtype"] == "compact_boundary" {
 				meta, _ := entry["compactMetadata"].(map[string]any)
 				if !jsTruthy(meta["preservedSegment"]) && !jsTruthy(meta["preservedMessages"]) {
 					out, lastSnap = out[:0], nil
@@ -116,7 +118,7 @@ func parseJSONLObjects(content []byte) []map[string]any {
 			continue
 		}
 		var entry map[string]any
-		if json.Unmarshal(line, &entry) == nil && entry != nil {
+		if json.Unmarshal(line, &entry, jsonx.Foreign) == nil && entry != nil {
 			out = append(out, entry)
 		}
 	}
@@ -196,7 +198,7 @@ func readAgentMetadataSidecar(transcriptPath string) (map[string]any, error) {
 		return nil, nil // Python's UnicodeDecodeError is a ValueError
 	}
 	var meta map[string]any
-	if json.Unmarshal(b, &meta) != nil {
+	if json.Unmarshal(b, &meta, jsonx.Foreign) != nil {
 		return nil, nil
 	}
 	return meta, nil

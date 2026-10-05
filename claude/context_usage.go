@@ -9,7 +9,7 @@ type ContextUsageCategory struct {
 	Name       string `json:"name"`
 	Tokens     int    `json:"tokens"`
 	Color      string `json:"color"`
-	IsDeferred bool   `json:"isDeferred,omitempty"`
+	IsDeferred bool   `json:"isDeferred,omitzero"`
 	// Kind classifies the row: "used", "free", "buffer" or "deferred".
 	// Classify on it, never on the English name.
 	Kind string `json:"kind,omitempty"`
@@ -38,7 +38,7 @@ type ContextUsageMCPTool struct {
 	Name       string `json:"name"`
 	ServerName string `json:"serverName"`
 	Tokens     int    `json:"tokens"`
-	IsLoaded   *bool  `json:"isLoaded,omitempty"`
+	IsLoaded   *bool  `json:"isLoaded,omitzero"`
 }
 
 // ContextUsageTool is a named tool or prompt section and its tokens.
@@ -46,7 +46,7 @@ type ContextUsageTool struct {
 	Name   string `json:"name"`
 	Tokens int    `json:"tokens"`
 	// IsLoaded is set for deferred built-in tools.
-	IsLoaded *bool `json:"isLoaded,omitempty"`
+	IsLoaded *bool `json:"isLoaded,omitzero"`
 }
 
 // ContextUsageAgent is one agent definition's share of the context.
@@ -135,15 +135,15 @@ type ContextUsageResponse struct {
 	SystemTools          []ContextUsageTool         `json:"systemTools,omitempty"`
 	SystemPromptSections []ContextUsageTool         `json:"systemPromptSections,omitempty"`
 	Agents               []ContextUsageAgent        `json:"agents,omitempty"`
-	SlashCommands        *ContextUsageSlashCommands `json:"slashCommands,omitempty"`
-	Skills               *ContextUsageSkills        `json:"skills,omitempty"`
+	SlashCommands        *ContextUsageSlashCommands `json:"slashCommands,omitzero"`
+	Skills               *ContextUsageSkills        `json:"skills,omitzero"`
 	// AutoCompactThreshold is the token count at which autocompaction
 	// runs, when enabled.
-	AutoCompactThreshold *int                          `json:"autoCompactThreshold,omitempty"`
+	AutoCompactThreshold *int                          `json:"autoCompactThreshold,omitzero"`
 	IsAutoCompactEnabled bool                          `json:"isAutoCompactEnabled"`
-	MessageBreakdown     *ContextUsageMessageBreakdown `json:"messageBreakdown,omitempty"`
+	MessageBreakdown     *ContextUsageMessageBreakdown `json:"messageBreakdown,omitzero"`
 	// APIUsage is the last API response's usage; nil before the first.
-	APIUsage *ContextUsageAPIUsage `json:"apiUsage,omitempty"`
+	APIUsage *ContextUsageAPIUsage `json:"apiUsage,omitzero"`
 	// Raw is the full response payload, including fields not modeled above.
 	Raw map[string]any `json:"-"`
 }
@@ -160,7 +160,7 @@ type ContextUsageReport struct {
 	RawMaxTokens int     `json:"raw_max_tokens"`
 	Percentage   float64 `json:"percentage"`
 	// OverLimit is set when TotalTokens exceeds RawMaxTokens.
-	OverLimit   *ContextReportOverLimit   `json:"over_limit,omitempty"`
+	OverLimit   *ContextReportOverLimit   `json:"over_limit,omitzero"`
 	Categories  []ContextReportCategory   `json:"categories"`
 	MCPTools    []ContextReportMCPTool    `json:"mcp_tools"`
 	MemoryFiles []ContextReportMemoryFile `json:"memory_files"`

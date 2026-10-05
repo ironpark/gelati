@@ -1,7 +1,9 @@
 package claude
 
 import (
-	"encoding/json"
+	jsonv1 "encoding/json" // Number: callers may hand in values decoded with UseNumber
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"math"
 	"reflect"
@@ -28,7 +30,7 @@ func TestContentBlockJSONRoundTrip(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := json.Marshal(tc.block)
+			got, err := json.Marshal(tc.block, json.Deterministic(true))
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -69,7 +71,7 @@ func TestMessageOriginRoundTrip(t *testing.T) {
 	if len(o.Extra) != 0 {
 		t.Fatalf("extra = %v, want none", o.Extra)
 	}
-	out, err := json.Marshal(o)
+	out, err := json.Marshal(o, json.Deterministic(true))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -88,7 +90,7 @@ func TestMessageOriginExtraRoundTrip(t *testing.T) {
 	if o.Extra["hop"] != float64(2) {
 		t.Fatalf("extra = %v, want hop 2", o.Extra)
 	}
-	out, err := json.Marshal(o)
+	out, err := json.Marshal(o, json.Deterministic(true))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -141,7 +143,7 @@ func TestPermissionUpdateWireFormat(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := json.Marshal(tc.u)
+			got, err := json.Marshal(tc.u, json.Deterministic(true))
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -180,7 +182,7 @@ func TestHookOutputWireFormat(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := json.Marshal(tc.out)
+			got, err := json.Marshal(tc.out, json.Deterministic(true))
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -212,7 +214,7 @@ func TestMCPServerConfigJSON(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := json.Marshal(tc.cfg)
+			got, err := json.Marshal(tc.cfg, json.Deterministic(true))
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -244,7 +246,7 @@ func TestAgentDefinitionJSON(t *testing.T) {
 		Prompt:      "review code",
 		Tools:       []string{"Read"},
 		Model:       "sonnet",
-	})
+	}, json.Deterministic(true))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -335,7 +337,7 @@ func TestJSONDecodeAndParseErrors(t *testing.T) {
 		t.Fatalf("line = %q", de.Line)
 	}
 
-	pe := NewMessageParseError("missing type", json.RawMessage(`{"a":1}`))
+	pe := NewMessageParseError("missing type", jsontext.Value(`{"a":1}`))
 	if pe.Error() != "missing type" || string(pe.Data) != `{"a":1}` {
 		t.Fatalf("unexpected: %+v", pe)
 	}
@@ -411,7 +413,7 @@ func TestMessageOriginUnmarshalUnclassified(t *testing.T) {
 
 func TestPermissionUpdateKeepsEmptyLists(t *testing.T) {
 	t.Parallel()
-	got, err := json.Marshal(PermissionUpdate{Type: PermissionUpdateReplaceRules, Rules: []PermissionRuleValue{}})
+	got, err := json.Marshal(PermissionUpdate{Type: PermissionUpdateReplaceRules, Rules: []PermissionRuleValue{}}, json.Deterministic(true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +424,7 @@ func TestPermissionUpdateKeepsEmptyLists(t *testing.T) {
 
 func TestHookOutputEmptySpecificMap(t *testing.T) {
 	t.Parallel()
-	got, err := json.Marshal(HookOutput{HookSpecificOutput: map[string]any{}})
+	got, err := json.Marshal(HookOutput{HookSpecificOutput: map[string]any{}}, json.Deterministic(true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +461,7 @@ func TestPermissionDecisionWire(t *testing.T) {
 			if !ok {
 				t.Fatal("not ok")
 			}
-			got, err := json.Marshal(out)
+			got, err := json.Marshal(out, json.Deterministic(true))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -504,8 +506,8 @@ func TestToInt64(t *testing.T) {
 		ok   bool
 	}{
 		{float64(12.7), 12, true},
-		{json.Number("1700000000123"), 1700000000123, true},
-		{json.Number("12.9"), 12, true},
+		{jsonv1.Number("1700000000123"), 1700000000123, true},
+		{jsonv1.Number("12.9"), 12, true},
 		{int64(1) << 40, 1 << 40, true},
 		{"12", 0, false},
 		{math.NaN(), 0, false},

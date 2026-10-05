@@ -2,12 +2,15 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"maps"
 	"os"
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // mcpManifestProtocolVersion is the MCP protocol version the manifest
@@ -61,8 +64,8 @@ func sdkMCPInitializeFields(servers map[string]*MCPSDKServerConfig) map[string]a
 // sdkMCPManifest is one server's captured handshake output. The results are
 // kept verbatim, as the CLI requires.
 type sdkMCPManifest struct {
-	InitializeResult json.RawMessage `json:"initializeResult"`
-	ToolsListResult  json.RawMessage `json:"toolsListResult,omitempty"`
+	InitializeResult jsontext.Value `json:"initializeResult"`
+	ToolsListResult  jsontext.Value `json:"toolsListResult,omitempty"`
 }
 
 // captureSDKMCPManifests performs the MCP handshake with every server
@@ -137,15 +140,15 @@ func captureSDKMCPManifest(ctx context.Context, handler MCPHandler) (manifest sd
 		return manifest, false
 	}
 	manifest.InitializeResult = initResult
-	notification, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
+	notification, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}, marshalOpts)
 	if _, err := handler.HandleMCPMessage(ctx, notification); err != nil {
 		return manifest, false
 	}
 
 	var init struct {
-		Capabilities map[string]json.RawMessage `json:"capabilities"`
+		Capabilities map[string]jsontext.Value `json:"capabilities"`
 	}
-	_ = json.Unmarshal(initResult, &init)
+	_ = json.Unmarshal(initResult, &init, lenient)
 	if tools, has := init.Capabilities["tools"]; has && string(tools) != "null" {
 		listResult, listed := mcpCaptureCall(ctx, handler, map[string]any{
 			"jsonrpc": "2.0",
@@ -156,9 +159,9 @@ func captureSDKMCPManifest(ctx context.Context, handler MCPHandler) (manifest sd
 			return manifest, false
 		}
 		var page struct {
-			NextCursor *json.RawMessage `json:"nextCursor"`
+			NextCursor *jsontext.Value `json:"nextCursor"`
 		}
-		if json.Unmarshal(listResult, &page) == nil && page.NextCursor == nil {
+		if json.Unmarshal(listResult, &page, jsonx.Foreign) == nil && page.NextCursor == nil {
 			manifest.ToolsListResult = listResult
 		}
 	}
@@ -167,8 +170,8 @@ func captureSDKMCPManifest(ctx context.Context, handler MCPHandler) (manifest sd
 
 // mcpCaptureCall sends one request and returns its result object, or false
 // when the server answered with an error or nothing usable.
-func mcpCaptureCall(ctx context.Context, handler MCPHandler, request map[string]any) (json.RawMessage, bool) {
-	raw, err := json.Marshal(request)
+func mcpCaptureCall(ctx context.Context, handler MCPHandler, request map[string]any) (jsontext.Value, bool) {
+	raw, err := json.Marshal(request, marshalOpts)
 	if err != nil {
 		return nil, false
 	}
@@ -177,9 +180,9 @@ func mcpCaptureCall(ctx context.Context, handler MCPHandler, request map[string]
 		return nil, false
 	}
 	var envelope struct {
-		Result json.RawMessage `json:"result"`
+		Result jsontext.Value `json:"result"`
 	}
-	if json.Unmarshal(reply, &envelope) != nil || len(envelope.Result) == 0 || envelope.Result[0] != '{' {
+	if json.Unmarshal(reply, &envelope, jsonx.Foreign) != nil || len(envelope.Result) == 0 || envelope.Result[0] != '{' {
 		return nil, false
 	}
 	return envelope.Result, true

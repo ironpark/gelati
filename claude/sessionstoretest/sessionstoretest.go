@@ -22,13 +22,15 @@
 package sessionstoretest
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/ironpark/gelati/claude"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // Names accepted in Run's skipOptional: the Go method names of the optional
@@ -120,12 +122,12 @@ func sub(k claude.SessionKey, subpath string) claude.SessionKey {
 // normalize round-trips v through JSON.
 func normalize(t *testing.T, v any) any {
 	t.Helper()
-	b, err := json.Marshal(v)
+	b, err := json.Marshal(v, json.Deterministic(true))
 	if err != nil {
 		t.Fatalf("marshal %v: %v", v, err)
 	}
 	var out any
-	if err := json.Unmarshal(b, &out); err != nil {
+	if err := json.Unmarshal(b, &out, jsonx.Foreign); err != nil {
 		t.Fatal(err)
 	}
 	return out

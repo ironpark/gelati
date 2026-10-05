@@ -2,7 +2,7 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 )
 
@@ -139,9 +139,9 @@ type UserDialogResult struct {
 // {"behavior":"cancelled"}.
 func (r UserDialogResult) MarshalJSON() ([]byte, error) {
 	if r.Behavior == UserDialogCancelled {
-		return json.Marshal(map[string]any{"behavior": UserDialogCancelled})
+		return json.Marshal(map[string]any{"behavior": UserDialogCancelled}, marshalOpts)
 	}
-	return json.Marshal(map[string]any{"behavior": UserDialogCompleted, "result": r.Result})
+	return json.Marshal(map[string]any{"behavior": UserDialogCompleted, "result": r.Result}, marshalOpts)
 }
 
 // OnUserDialog renders a dialog the CLI requested and returns the user's

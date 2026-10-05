@@ -2,7 +2,8 @@ package codex
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"os/exec"
@@ -196,7 +197,7 @@ func TestClientProcessExitSurfaces(t *testing.T) {
 func TestClientOnNotificationHook(t *testing.T) {
 	seen := make(chan string, 8)
 	_, server := connect(t, Options{
-		OnNotification: func(method string, params json.RawMessage) {
+		OnNotification: func(method string, params jsontext.Value) {
 			seen <- method + " " + string(params)
 		},
 	})
@@ -216,7 +217,7 @@ func TestClientOnNotificationHook(t *testing.T) {
 func TestClientOnNotificationPanicIsContained(t *testing.T) {
 	seen := make(chan string, 8)
 	_, server := connect(t, Options{
-		OnNotification: func(method string, params json.RawMessage) {
+		OnNotification: func(method string, params jsontext.Value) {
 			seen <- method
 			panic("callback bug")
 		},
@@ -247,7 +248,7 @@ func TestRouteIDs(t *testing.T) {
 		{``, "", ""},
 	}
 	for _, tc := range tests {
-		gotThread, gotTurn := routeIDs(json.RawMessage(tc.params))
+		gotThread, gotTurn := routeIDs(jsontext.Value(tc.params))
 		if gotThread != tc.wantThread || gotTurn != tc.wantTurn {
 			t.Errorf("routeIDs(%s) = %q,%q want %q,%q", tc.params, gotThread, gotTurn, tc.wantThread, tc.wantTurn)
 		}

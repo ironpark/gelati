@@ -1,7 +1,7 @@
 package claude
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,8 +26,8 @@ func jsonObj(kv ...any) string {
 		if i > 0 {
 			sb.WriteByte(',')
 		}
-		k, _ := json.Marshal(kv[i])
-		v, err := json.Marshal(kv[i+1])
+		k, _ := json.Marshal(kv[i], json.Deterministic(true))
+		v, err := json.Marshal(kv[i+1], json.Deterministic(true))
 		if err != nil {
 			panic(err)
 		}
@@ -1308,7 +1308,7 @@ func TestSessionGetSubagentMessages(t *testing.T) {
 		case string:
 			writeFile(t, filepath.Join(dir, "agent-"+agentID+".meta.json"), m)
 		default:
-			b, _ := json.Marshal(m)
+			b, _ := json.Marshal(m, json.Deterministic(true))
 			writeFile(t, filepath.Join(dir, "agent-"+agentID+".meta.json"), string(b))
 		}
 		return u1, a1

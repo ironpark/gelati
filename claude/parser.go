@@ -1,8 +1,11 @@
 package claude
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // ParseMessage turns one raw CLI output frame into a typed Message.
@@ -15,17 +18,17 @@ import (
 // when data is not a JSON object.
 func ParseMessage(data []byte) (Message, error) {
 	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := json.Unmarshal(data, &raw, jsonx.Foreign); err != nil {
 		return nil, NewMessageParseError(
-			fmt.Sprintf("Invalid message data: %v", err), json.RawMessage(data))
+			fmt.Sprintf("Invalid message data: %v", err), jsontext.Value(data))
 	}
-	return parseMessageMap(raw, json.RawMessage(data))
+	return parseMessageMap(raw, jsontext.Value(data))
 }
 
 // parseMessageMap parses an already-decoded frame. src is the original,
 // non-nil payload, from which typed fields are decoded; generic subtrees are
 // taken from data instead of being decoded a second time.
-func parseMessageMap(data map[string]any, src json.RawMessage) (Message, error) {
+func parseMessageMap(data map[string]any, src jsontext.Value) (Message, error) {
 	if data == nil {
 		return nil, NewMessageParseError("Invalid message data (expected object)", src)
 	}
@@ -76,7 +79,7 @@ func decodeTyped[T any, P interface {
 
 type userWire struct {
 	Message struct {
-		Content json.RawMessage `json:"content"`
+		Content jsontext.Value `json:"content"`
 	} `json:"message"`
 	UUID            string   `json:"uuid"`
 	ParentToolUseID string   `json:"parent_tool_use_id"`
@@ -123,12 +126,12 @@ func parseUserMessage(data map[string]any, src []byte) Message {
 
 type assistantWire struct {
 	Message struct {
-		ID           string          `json:"id"`
-		Model        string          `json:"model"`
-		Content      json.RawMessage `json:"content"`
-		StopReason   string          `json:"stop_reason"`
-		StopSequence string          `json:"stop_sequence"`
-		StopDetails  *StopDetails    `json:"stop_details"`
+		ID           string         `json:"id"`
+		Model        string         `json:"model"`
+		Content      jsontext.Value `json:"content"`
+		StopReason   string         `json:"stop_reason"`
+		StopSequence string         `json:"stop_sequence"`
+		StopDetails  *StopDetails   `json:"stop_details"`
 	} `json:"message"`
 	ParentToolUseID               string              `json:"parent_tool_use_id"`
 	Error                         string              `json:"error"`

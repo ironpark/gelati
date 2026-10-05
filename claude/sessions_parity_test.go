@@ -2,7 +2,8 @@ package claude
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // Cross-checks of the local session readers against the TypeScript SDK's
@@ -43,11 +46,11 @@ type tsCall struct {
 	Opts    map[string]any `json:"opts,omitempty"`
 	// Store passes the in-memory store built from tsInput.Appends as
 	// opts.sessionStore.
-	Store bool `json:"store,omitempty"`
+	Store bool `json:"store,omitzero"`
 	// Key, Entries and MTime are the foldSessionSummary arguments.
-	Key     *SessionKey         `json:"key,omitempty"`
+	Key     *SessionKey         `json:"key,omitzero"`
 	Entries []SessionStoreEntry `json:"entries,omitempty"`
-	MTime   int64               `json:"mtime,omitempty"`
+	MTime   int64               `json:"mtime,omitzero"`
 }
 
 type tsAppend struct {
@@ -85,7 +88,7 @@ process.stdout.write(JSON.stringify(out));
 // store used by calls with Store set.
 func runTS(t *testing.T, sdk, configDir string, calls []tsCall, appends []tsAppend, env ...string) []any {
 	t.Helper()
-	in, err := json.Marshal(map[string]any{"calls": calls, "appends": appends})
+	in, err := json.Marshal(map[string]any{"calls": calls, "appends": appends}, json.Deterministic(true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +111,8 @@ func runTS(t *testing.T, sdk, configDir string, calls []tsCall, appends []tsAppe
 // tsShape round-trips v through JSON into generic values.
 func tsShape(t *testing.T, v any) any {
 	t.Helper()
-	b, err := json.Marshal(v)
+	// A nil slice or map (e.g. a nil result) is null, as in the TS output.
+	b, err := json.Marshal(v, json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,13 +204,11 @@ func cliLine(kv ...any) string {
 			sb.WriteByte(',')
 		}
 		for j, v := range []any{kv[i], kv[i+1]} {
-			var buf bytes.Buffer
-			enc := json.NewEncoder(&buf)
-			enc.SetEscapeHTML(false)
-			if err := enc.Encode(v); err != nil {
+			b, err := json.Marshal(v, json.Deterministic(true))
+			if err != nil {
 				panic(err)
 			}
-			sb.Write(bytes.TrimSuffix(buf.Bytes(), []byte("\n")))
+			sb.Write(b)
 			if j == 0 {
 				sb.WriteByte(':')
 			}
@@ -540,7 +542,7 @@ func TestSessionParityWithTypeScript(t *testing.T) {
 		var entries []SessionStoreEntry
 		for _, l := range lines {
 			var e SessionStoreEntry
-			if err := json.Unmarshal([]byte(l), &e); err != nil {
+			if err := json.Unmarshal([]byte(l), &e, jsonx.Foreign); err != nil {
 				t.Fatal(err)
 			}
 			entries = append(entries, e)
@@ -623,8 +625,8 @@ func TestSessionParityWithTypeScript(t *testing.T) {
 			w = []any{}
 		}
 		if !reflect.DeepEqual(got, w) {
-			gj, _ := json.MarshalIndent(got, "", " ")
-			wj, _ := json.MarshalIndent(w, "", " ")
+			gj, _ := json.Marshal(got, json.Deterministic(true), jsontext.WithIndent(" "))
+			wj, _ := json.Marshal(w, json.Deterministic(true), jsontext.WithIndent(" "))
 			t.Errorf("%s %s %v:\nGo: %s\nTS: %s", c.Fn, c.ID, c.Opts, gj, wj)
 		}
 	}
@@ -679,8 +681,8 @@ func TestSessionParityLargeTranscript(t *testing.T) {
 		got := tsShape(t, tsSessionMessages(localSessionsSkipping(root, tt.skip).getSessionMessages(b.sid, opts)))
 		want := runTS(t, sdk, configDir, calls, nil, tt.env...)[0]
 		if !reflect.DeepEqual(got, want) {
-			gj, _ := json.Marshal(got)
-			wj, _ := json.Marshal(want)
+			gj, _ := json.Marshal(got, json.Deterministic(true))
+			wj, _ := json.Marshal(want, json.Deterministic(true))
 			t.Errorf("%s:\nGo: %.2000s\nTS: %.2000s", tt.name, gj, wj)
 		}
 		if n := len(got.([]any)); (tt.skip && n != 2) || (!tt.skip && n != 6) {

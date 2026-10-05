@@ -2,7 +2,7 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"iter"
 )
 
@@ -27,7 +27,7 @@ type Transport interface {
 	// ends after the CLI closes its output; a non-nil error is the final
 	// item, and the raw message is nil in that case. ReadMessages must be
 	// ranged over at most once.
-	ReadMessages() iter.Seq2[json.RawMessage, error]
+	ReadMessages() iter.Seq2[jsontext.Value, error]
 
 	// EndInput closes the input side, telling the CLI no more prompts are
 	// coming. It is idempotent.

@@ -1,7 +1,8 @@
 package claude
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"reflect"
 )
 
@@ -48,7 +49,7 @@ type MessageOrigin struct {
 	Body string `json:"body,omitempty"`
 	// VerifiedPeerPID is the OS process ID of the peer, as verified by the CLI
 	// ("peer"). It is 0 when the CLI reported no verified PID.
-	VerifiedPeerPID int `json:"verifiedPeerPid,omitempty"`
+	VerifiedPeerPID int `json:"verifiedPeerPid,omitzero"`
 	// Subkind narrows Kind, for kinds that classify further.
 	Subkind string `json:"subkind,omitempty"`
 	// Extra holds origin keys this SDK version does not model, so a newer CLI
@@ -71,7 +72,7 @@ func (o MessageOrigin) MarshalJSON() ([]byte, error) {
 // unchanged.
 func (o *MessageOrigin) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
-	if err := json.Unmarshal(b, &raw); err != nil {
+	if err := json.Unmarshal(b, &raw, lenient); err != nil {
 		if fatalDecodeErr(err) {
 			return err
 		}
@@ -260,22 +261,22 @@ type ResultMessage struct {
 	NumTurns          int                   `json:"num_turns"`
 	SessionID         string                `json:"session_id"`
 	StopReason        string                `json:"stop_reason,omitempty"`
-	TotalCostUSD      *float64              `json:"total_cost_usd,omitempty"`
+	TotalCostUSD      *float64              `json:"total_cost_usd,omitzero"`
 	Usage             map[string]any        `json:"usage,omitempty"`
 	Result            string                `json:"result,omitempty"`
-	StructuredOutput  json.RawMessage       `json:"structured_output,omitempty"`
+	StructuredOutput  jsontext.Value        `json:"structured_output,omitempty"`
 	ModelUsage        map[string]ModelUsage `json:"modelUsage,omitempty"`
 	PermissionDenials []PermissionDenial    `json:"permission_denials,omitempty"`
-	DeferredToolUse   *DeferredToolUse      `json:"deferred_tool_use,omitempty"`
+	DeferredToolUse   *DeferredToolUse      `json:"deferred_tool_use,omitzero"`
 	Errors            []string              `json:"errors,omitempty"`
-	APIErrorStatus    *int                  `json:"api_error_status,omitempty"`
+	APIErrorStatus    *int                  `json:"api_error_status,omitzero"`
 	UUID              string                `json:"uuid"`
 	// TerminalReason is one of the TerminalReason* constants, when reported.
 	TerminalReason TerminalReason `json:"terminal_reason,omitempty"`
-	Origin         *MessageOrigin `json:"origin,omitempty"`
+	Origin         *MessageOrigin `json:"origin,omitzero"`
 	// QueuedTurnCount is the number of user sends still queued, when
 	// reported.
-	QueuedTurnCount *int `json:"queued_turn_count,omitempty"`
+	QueuedTurnCount *int `json:"queued_turn_count,omitzero"`
 	// UserMessageUUID is the client UUID of the user message that triggered
 	// the turn; UserMessageUUIDs lists every user message it consumed.
 	UserMessageUUID  string   `json:"user_message_uuid,omitempty"`
@@ -284,7 +285,7 @@ type ResultMessage struct {
 	ResumeReason string `json:"resume_reason,omitempty"`
 	// ResultIndex is the delivery sequence number of this result within the
 	// run, when reported; a gap means a result was lost.
-	ResultIndex            *int                   `json:"result_index,omitempty"`
+	ResultIndex            *int                   `json:"result_index,omitzero"`
 	FastModeState          FastModeState          `json:"fast_mode_state,omitempty"`
 	FastModeDisabledReason FastModeDisabledReason `json:"fast_mode_disabled_reason,omitempty"`
 	// StartupFailureReason is set on the error result written for a known
@@ -308,7 +309,7 @@ type ModelUsage struct {
 	OutputTokens int `json:"outputTokens"`
 	// ThinkingTokens is the share of OutputTokens spent thinking, when the
 	// CLI recorded it.
-	ThinkingTokens           int     `json:"thinkingTokens,omitempty"`
+	ThinkingTokens           int     `json:"thinkingTokens,omitzero"`
 	CacheReadInputTokens     int     `json:"cacheReadInputTokens"`
 	CacheCreationInputTokens int     `json:"cacheCreationInputTokens"`
 	WebSearchRequests        int     `json:"webSearchRequests"`
@@ -340,21 +341,21 @@ type DeferredToolUse struct {
 // ResultTiming carries the latency measurements on a success result. All
 // durations are in milliseconds; a zero value means "not reported".
 type ResultTiming struct {
-	TTFTMS                      float64 `json:"ttft_ms,omitempty"`
-	TTFTStreamMS                float64 `json:"ttft_stream_ms,omitempty"`
-	TimeToRequestMS             float64 `json:"time_to_request_ms,omitempty"`
-	RequestSentWallMS           float64 `json:"request_sent_wall_ms,omitempty"`
-	FirstContentFrameMS         float64 `json:"first_content_frame_ms,omitempty"`
-	FirstStreamPostMS           float64 `json:"first_stream_post_ms,omitempty"`
-	FirstStreamPostAckMS        float64 `json:"first_stream_post_ack_ms,omitempty"`
-	FirstStreamPostQueueWaitMS  float64 `json:"first_stream_post_queue_wait_ms,omitempty"`
+	TTFTMS                      float64 `json:"ttft_ms,omitzero"`
+	TTFTStreamMS                float64 `json:"ttft_stream_ms,omitzero"`
+	TimeToRequestMS             float64 `json:"time_to_request_ms,omitzero"`
+	RequestSentWallMS           float64 `json:"request_sent_wall_ms,omitzero"`
+	FirstContentFrameMS         float64 `json:"first_content_frame_ms,omitzero"`
+	FirstStreamPostMS           float64 `json:"first_stream_post_ms,omitzero"`
+	FirstStreamPostAckMS        float64 `json:"first_stream_post_ack_ms,omitzero"`
+	FirstStreamPostQueueWaitMS  float64 `json:"first_stream_post_queue_wait_ms,omitzero"`
 	FirstStreamPostQueuedBehind string  `json:"first_stream_post_queued_behind,omitempty"`
-	FirstStreamPostWallMS       float64 `json:"first_stream_post_wall_ms,omitempty"`
-	FirstTextPostMS             float64 `json:"first_text_post_ms,omitempty"`
-	FirstTextPostWallMS         float64 `json:"first_text_post_wall_ms,omitempty"`
-	TimeToRequestFromSpawnMS    float64 `json:"time_to_request_from_spawn_ms,omitempty"`
-	WarmSpareClaimed            bool    `json:"warm_spare_claimed,omitempty"`
-	TimeOriginMS                float64 `json:"time_origin_ms,omitempty"`
+	FirstStreamPostWallMS       float64 `json:"first_stream_post_wall_ms,omitzero"`
+	FirstTextPostMS             float64 `json:"first_text_post_ms,omitzero"`
+	FirstTextPostWallMS         float64 `json:"first_text_post_wall_ms,omitzero"`
+	TimeToRequestFromSpawnMS    float64 `json:"time_to_request_from_spawn_ms,omitzero"`
+	WarmSpareClaimed            bool    `json:"warm_spare_claimed,omitzero"`
+	TimeOriginMS                float64 `json:"time_origin_ms,omitzero"`
 }
 
 // ---------------------------------------------------------------------------
@@ -369,7 +370,7 @@ type StreamEvent struct {
 	Event           map[string]any `json:"event"`
 	ParentToolUseID string         `json:"parent_tool_use_id,omitempty"`
 	// TTFTMS is the time to first token in milliseconds, when reported.
-	TTFTMS *float64 `json:"ttft_ms,omitempty"`
+	TTFTMS *float64 `json:"ttft_ms,omitzero"`
 	// UserMessageUUID and UserMessageUUIDs bind the stream to the sends it
 	// answers; they are stamped on the turn's first non-ping event only.
 	UserMessageUUID  string   `json:"user_message_uuid,omitempty"`
@@ -397,24 +398,24 @@ func (e *StreamEvent) TextDelta() (string, bool) {
 // RateLimitInfo describes the rate limit state at the moment it changed.
 type RateLimitInfo struct {
 	Status   RateLimitStatus `json:"status"`
-	ResetsAt *int64          `json:"resetsAt,omitempty"`
+	ResetsAt *int64          `json:"resetsAt,omitzero"`
 	// RateLimitType is one of the RateLimitType* constants.
 	RateLimitType   string          `json:"rateLimitType,omitempty"`
-	Utilization     *float64        `json:"utilization,omitempty"`
+	Utilization     *float64        `json:"utilization,omitzero"`
 	OverageStatus   RateLimitStatus `json:"overageStatus,omitempty"`
-	OverageResetsAt *int64          `json:"overageResetsAt,omitempty"`
+	OverageResetsAt *int64          `json:"overageResetsAt,omitzero"`
 	// OverageDisabledReason is one of the OverageDisabled* constants.
 	OverageDisabledReason string   `json:"overageDisabledReason,omitempty"`
-	IsUsingOverage        bool     `json:"isUsingOverage,omitempty"`
-	OverageInUse          bool     `json:"overageInUse,omitempty"`
-	SurpassedThreshold    *float64 `json:"surpassedThreshold,omitempty"`
+	IsUsingOverage        bool     `json:"isUsingOverage,omitzero"`
+	OverageInUse          bool     `json:"overageInUse,omitzero"`
+	SurpassedThreshold    *float64 `json:"surpassedThreshold,omitzero"`
 	// LimitScope says which spend limit blocked the request when it is not
 	// the member's own: service, channel or group_pool.
 	LimitScope string `json:"limitScope,omitempty"`
 	// ErrorCode is "credits_required" when credits must be bought.
 	ErrorCode                       string `json:"errorCode,omitempty"`
-	CanUserPurchaseCredits          bool   `json:"canUserPurchaseCredits,omitempty"`
-	HasChargeableSavedPaymentMethod bool   `json:"hasChargeableSavedPaymentMethod,omitempty"`
+	CanUserPurchaseCredits          bool   `json:"canUserPurchaseCredits,omitzero"`
+	HasChargeableSavedPaymentMethod bool   `json:"hasChargeableSavedPaymentMethod,omitzero"`
 	// Raw is the full dict from the CLI, including unmodeled fields.
 	Raw map[string]any `json:"-"`
 }

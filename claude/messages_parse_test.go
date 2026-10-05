@@ -1,7 +1,7 @@
 package claude
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"reflect"
 	"testing"
 )
@@ -709,7 +709,7 @@ func TestContentBlockWireRoundTrip(t *testing.T) {
 		t.Run(b.BlockType(), func(t *testing.T) {
 			t.Parallel()
 			// Struct JSON round trip.
-			data, err := json.Marshal(b)
+			data, err := json.Marshal(b, json.Deterministic(true))
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -721,11 +721,13 @@ func TestContentBlockWireRoundTrip(t *testing.T) {
 				t.Fatalf("round trip = %#v, want %#v (json %s)", back, b, data)
 			}
 			// Wire form parses back to the same block.
-			wire, err := json.Marshal(wireBlock{b})
+			wire, err := json.Marshal(wireBlock{b}, json.Deterministic(true))
 			if err != nil {
 				t.Fatalf("wire: %v", err)
 			}
-			var head struct{ Type string }
+			var head struct {
+				Type string `json:"type"`
+			}
 			_ = json.Unmarshal(wire, &head)
 			if head.Type != b.BlockType() {
 				t.Fatalf("wire type = %q, want %q (%s)", head.Type, b.BlockType(), wire)

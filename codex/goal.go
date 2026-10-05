@@ -19,7 +19,7 @@ type ThreadGoal struct {
 	Objective string `json:"objective"`
 	// Status is one of the Goal* constants.
 	Status          string `json:"status"`
-	TokenBudget     *int64 `json:"tokenBudget,omitempty"`
+	TokenBudget     *int64 `json:"tokenBudget,omitzero"`
 	TokensUsed      int64  `json:"tokensUsed"`
 	TimeUsedSeconds int64  `json:"timeUsedSeconds"`
 	CreatedAt       int64  `json:"createdAt"`
@@ -32,7 +32,7 @@ type SetThreadGoalParams struct {
 	ThreadID    string `json:"threadId"`
 	Objective   string `json:"objective,omitempty"`
 	Status      string `json:"status,omitempty"`
-	TokenBudget *int64 `json:"tokenBudget,omitempty"`
+	TokenBudget *int64 `json:"tokenBudget,omitzero"`
 }
 
 // SetThreadGoal creates or updates a thread's goal and returns it. Setting

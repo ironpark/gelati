@@ -2,7 +2,7 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -594,11 +594,11 @@ func TestValidateCallbackOptions(t *testing.T) {
 // assertJSONEqual compares two values by their JSON encoding.
 func assertJSONEqual(t *testing.T, got, want any) {
 	t.Helper()
-	g, err := json.Marshal(got)
+	g, err := json.Marshal(got, json.Deterministic(true))
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, err := json.Marshal(want)
+	w, err := json.Marshal(want, json.Deterministic(true))
 	if err != nil {
 		t.Fatal(err)
 	}

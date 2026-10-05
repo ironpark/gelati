@@ -2,7 +2,7 @@ package codex
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"testing"
 	"time"
 )

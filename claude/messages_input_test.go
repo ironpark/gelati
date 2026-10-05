@@ -1,7 +1,7 @@
 package claude
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"reflect"
 	"testing"
 	"time"

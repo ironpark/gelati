@@ -2,8 +2,11 @@ package codex
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // Account type discriminators returned by account/read.
@@ -30,12 +33,12 @@ type Account struct {
 	// Type is one of the Account* constants.
 	Type string `json:"type"`
 	// Email is the ChatGPT account email; it is nil when unavailable.
-	Email *string `json:"email,omitempty"`
+	Email *string `json:"email,omitzero"`
 	// PlanType is the ChatGPT plan, such as "pro" or "plus".
 	PlanType string `json:"planType,omitempty"`
 	// UsesCodexManagedCredentials is set for Amazon Bedrock accounts whose
 	// credentials Codex manages.
-	UsesCodexManagedCredentials bool `json:"usesCodexManagedCredentials,omitempty"`
+	UsesCodexManagedCredentials bool `json:"usesCodexManagedCredentials,omitzero"`
 }
 
 // AccountInfo is the account/read response.
@@ -116,7 +119,7 @@ func (c *Client) LoginAPIKey(ctx context.Context, apiKey string) error {
 func (c *Client) LoginChatGPT(ctx context.Context, opts *ChatGPTLoginOptions) (*ChatGPTLogin, error) {
 	params := struct {
 		Type                      string `json:"type"`
-		UseHostedLoginSuccessPage bool   `json:"useHostedLoginSuccessPage,omitempty"`
+		UseHostedLoginSuccessPage bool   `json:"useHostedLoginSuccessPage,omitzero"`
 		AppBrand                  string `json:"appBrand,omitempty"`
 	}{Type: AccountChatGPT}
 	if opts != nil {
@@ -217,11 +220,11 @@ func (p *LoginCompletedParams) err() error {
 const maxEarlyLogins = 16
 
 // routeAccountNotification dispatches account notifications to waiters.
-func (c *Client) routeAccountNotification(method string, params json.RawMessage) {
+func (c *Client) routeAccountNotification(method string, params jsontext.Value) {
 	switch method {
 	case MethodLoginCompleted:
 		var payload LoginCompletedParams
-		if err := json.Unmarshal(params, &payload); err != nil {
+		if err := json.Unmarshal(params, &payload, jsonx.Foreign); err != nil {
 			c.logger.Debug("codex: bad login/completed payload", "error", err)
 			return
 		}
@@ -249,7 +252,7 @@ func (c *Client) routeAccountNotification(method string, params json.RawMessage)
 		}
 	case MethodAccountUpdated:
 		var payload AccountUpdate
-		if err := json.Unmarshal(params, &payload); err != nil {
+		if err := json.Unmarshal(params, &payload, jsonx.Foreign); err != nil {
 			c.logger.Debug("codex: bad account/updated payload", "error", err)
 			return
 		}

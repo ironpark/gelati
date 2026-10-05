@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ironpark/gelati/internal/jsonx"
 	"github.com/ironpark/gelati/internal/proc"
 	"github.com/ironpark/gelati/internal/tailbuf"
 )
@@ -318,8 +319,8 @@ func (t *subprocessTransport) Close() error {
 }
 
 // ReadMessages yields the CLI's newline-delimited JSON output.
-func (t *subprocessTransport) ReadMessages() iter.Seq2[json.RawMessage, error] {
-	return func(yield func(json.RawMessage, error) bool) {
+func (t *subprocessTransport) ReadMessages() iter.Seq2[jsontext.Value, error] {
+	return func(yield func(jsontext.Value, error) bool) {
 		t.mu.Lock()
 		stdout, child := t.stdout, t.proc
 		t.mu.Unlock()
@@ -340,12 +341,12 @@ func (t *subprocessTransport) ReadMessages() iter.Seq2[json.RawMessage, error] {
 				// "[SandboxDebug] ..." to stdout; they carry no message.
 				continue
 			}
-			if !json.Valid(line) {
+			if !jsontext.Value(line).IsValid(jsonx.Foreign) {
 				// Like the TypeScript SDK, a line that is not valid JSON is
 				// skipped rather than ending the session.
 				continue
 			}
-			if !yield(json.RawMessage(bytes.Clone(line)), nil) {
+			if !yield(jsontext.Value(bytes.Clone(line)), nil) {
 				return
 			}
 		}

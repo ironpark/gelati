@@ -2,7 +2,7 @@ package codex
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"testing"
 	"time"
@@ -64,7 +64,7 @@ func TestReadAccountVariants(t *testing.T) {
 				if string(req.Params) != `{"refreshToken":false}` {
 					t.Errorf("params = %s", req.Params)
 				}
-				server.send(map[string]any{"id": json.RawMessage(req.ID), "result": json.RawMessage(tc.result)})
+				server.send(map[string]any{"id": jsontext.Value(req.ID), "result": jsontext.Value(tc.result)})
 			})
 			info, err := client.ReadAccount(context.Background(), false)
 			<-done

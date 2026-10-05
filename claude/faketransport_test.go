@@ -2,7 +2,8 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"iter"
 	"sync"
 	"testing"
@@ -20,7 +21,7 @@ type fakeTransport struct {
 	closed   bool
 	readErr  error
 	onWrite  func(frame map[string]any)
-	in       chan json.RawMessage
+	in       chan jsontext.Value
 	closedCh chan struct{}
 	writeCh  chan []byte
 	inOnce   sync.Once
@@ -28,7 +29,7 @@ type fakeTransport struct {
 
 func newFakeTransport() *fakeTransport {
 	return &fakeTransport{
-		in:       make(chan json.RawMessage, 64),
+		in:       make(chan jsontext.Value, 64),
 		closedCh: make(chan struct{}),
 		writeCh:  make(chan []byte, 64),
 	}
@@ -65,8 +66,8 @@ func (f *fakeTransport) Write(_ context.Context, data []byte) error {
 	return nil
 }
 
-func (f *fakeTransport) ReadMessages() iter.Seq2[json.RawMessage, error] {
-	return func(yield func(json.RawMessage, error) bool) {
+func (f *fakeTransport) ReadMessages() iter.Seq2[jsontext.Value, error] {
+	return func(yield func(jsontext.Value, error) bool) {
 		for {
 			select {
 			case raw, ok := <-f.in:
@@ -118,7 +119,7 @@ func (f *fakeTransport) Ready() bool {
 
 // push queues one frame for the SDK to read.
 func (f *fakeTransport) push(v any) {
-	raw, err := json.Marshal(v)
+	raw, err := json.Marshal(v, json.Deterministic(true))
 	if err != nil {
 		panic(err)
 	}

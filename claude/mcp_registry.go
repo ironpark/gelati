@@ -2,7 +2,8 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -10,6 +11,8 @@ import (
 	"sync"
 
 	"github.com/ironpark/gelati/internal/safecall"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // MCPHandler is an in-process MCP server as the SDK sees it: something that
@@ -24,13 +27,13 @@ type MCPHandler interface {
 	// (notifications/cancelled or a control cancel), when the server is
 	// removed, and when the session ends. An error becomes a JSON-RPC
 	// internal error.
-	HandleMCPMessage(ctx context.Context, message json.RawMessage) (json.RawMessage, error)
+	HandleMCPMessage(ctx context.Context, message jsontext.Value) (jsontext.Value, error)
 }
 
 // MCPSendFunc delivers one server-initiated JSON-RPC message (a notification
 // or a request) to the CLI. It fails once the server has been removed or the
 // session has ended.
-type MCPSendFunc func(ctx context.Context, message json.RawMessage) error
+type MCPSendFunc func(ctx context.Context, message jsontext.Value) error
 
 // MCPConnector is implemented by an MCPHandler that sends messages of its own,
 // such as notifications/tools/list_changed, progress or logging
@@ -106,7 +109,7 @@ func (r *sdkMCPRegistry) connect(name string, cfg *MCPSDKServerConfig) {
 	r.mu.Unlock()
 
 	if connector, ok := cfg.Instance.(MCPConnector); ok {
-		disconnect := connector.ConnectMCP(func(ctx context.Context, message json.RawMessage) error {
+		disconnect := connector.ConnectMCP(func(ctx context.Context, message jsontext.Value) error {
 			return r.sendToCLI(ctx, entry, message)
 		})
 		entry.mu.Lock()
@@ -218,20 +221,20 @@ func (e *sdkMCPEntry) detach() func() {
 }
 
 // route answers one mcp_message for serverName.
-func (r *sdkMCPRegistry) route(ctx context.Context, serverName string, message json.RawMessage) (_ json.RawMessage, err error) {
+func (r *sdkMCPRegistry) route(ctx context.Context, serverName string, message jsontext.Value) (_ jsontext.Value, err error) {
 	entry := r.get(serverName)
 	if entry == nil {
 		return nil, &mcpServerNotFoundError{name: serverName}
 	}
 
 	var msg struct {
-		ID     json.RawMessage `json:"id"`
-		Method string          `json:"method"`
+		ID     jsontext.Value `json:"id"`
+		Method string         `json:"method"`
 		Params struct {
-			RequestID json.RawMessage `json:"requestId"`
+			RequestID jsontext.Value `json:"requestId"`
 		} `json:"params"`
 	}
-	_ = json.Unmarshal(message, &msg)
+	_ = json.Unmarshal(message, &msg, lenient)
 
 	if msg.Method == "notifications/cancelled" && len(msg.Params.RequestID) > 0 {
 		entry.cancelRequest(jsonIDKey(msg.Params.RequestID))
@@ -281,12 +284,12 @@ func (e *sdkMCPEntry) cancelRequest(key string) {
 
 // jsonIDKey normalizes a JSON-RPC id so 7, 7.0 and "7" compare as their JSON
 // values do.
-func jsonIDKey(raw json.RawMessage) string {
+func jsonIDKey(raw jsontext.Value) string {
 	var v any
-	if json.Unmarshal(raw, &v) != nil {
+	if json.Unmarshal(raw, &v, jsonx.Foreign) != nil {
 		return string(raw)
 	}
-	b, err := json.Marshal(v)
+	b, err := json.Marshal(v, marshalOpts)
 	if err != nil {
 		return string(raw)
 	}
@@ -297,7 +300,7 @@ func jsonIDKey(raw json.RawMessage) string {
 // mcp_message control request. Like the TypeScript SDK it does not wait for
 // the CLI's acknowledgement; a JSON-RPC response to a server request comes
 // back as an inbound mcp_message.
-func (r *sdkMCPRegistry) sendToCLI(ctx context.Context, entry *sdkMCPEntry, message json.RawMessage) error {
+func (r *sdkMCPRegistry) sendToCLI(ctx context.Context, entry *sdkMCPEntry, message jsontext.Value) error {
 	entry.mu.Lock()
 	removed := entry.removed
 	entry.mu.Unlock()
@@ -305,7 +308,7 @@ func (r *sdkMCPRegistry) sendToCLI(ctx context.Context, entry *sdkMCPEntry, mess
 	if removed {
 		return NewConnectionError(fmt.Sprintf("MCP server '%s' is no longer registered", name))
 	}
-	if !json.Valid(message) {
+	if !message.IsValid(jsonx.Foreign) {
 		return fmt.Errorf("claude: MCP server '%s' sent invalid JSON", name)
 	}
 	return r.send(ctx, controlRequestFrame(randomUUID(), map[string]any{
@@ -324,7 +327,7 @@ func (r *sdkMCPRegistry) handleControl(ctx context.Context, request map[string]a
 	if serverName == "" || !ok || message == nil {
 		return nil, errors.New("Missing server_name or message for MCP request")
 	}
-	raw, err := json.Marshal(message)
+	raw, err := json.Marshal(message, marshalOpts)
 	if err != nil {
 		return nil, fmt.Errorf("claude: encoding mcp message: %w", err)
 	}
@@ -347,7 +350,7 @@ func (r *sdkMCPRegistry) handleControl(ctx context.Context, request map[string]a
 		return map[string]any{"mcp_response": map[string]any{"jsonrpc": "2.0", "result": map[string]any{}, "id": 0}}, nil
 	}
 	var decoded any
-	if err := json.Unmarshal(response, &decoded); err != nil {
+	if err := json.Unmarshal(response, &decoded, jsonx.Foreign); err != nil {
 		return nil, fmt.Errorf("claude: decoding mcp response: %w", err)
 	}
 	return map[string]any{"mcp_response": decoded}, nil

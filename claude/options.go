@@ -158,7 +158,7 @@ type ThinkingConfig struct {
 	// BudgetTokens sets a fixed thinking budget when Type is
 	// ThinkingEnabled. Without a budget, ThinkingEnabled behaves like
 	// ThinkingAdaptive.
-	BudgetTokens *int `json:"budget_tokens,omitempty"`
+	BudgetTokens *int `json:"budget_tokens,omitzero"`
 	// Display is ThinkingDisplaySummarized or ThinkingDisplayOmitted; empty
 	// leaves the CLI default. Ignored when Type is ThinkingDisabled.
 	Display string `json:"display,omitempty"`
@@ -190,7 +190,7 @@ type PluginConfig struct {
 	// SkipMCPDiscovery loads the plugin's skills, hooks, agents and commands
 	// but not its MCP servers (.mcp.json or manifest mcpServers). Use it when
 	// the host owns the plugin's MCP connections.
-	SkipMCPDiscovery bool `json:"skipMcpDiscovery,omitempty"`
+	SkipMCPDiscovery bool `json:"skipMcpDiscovery,omitzero"`
 }
 
 // PluginDelivery selects how Options.Plugins reach the CLI.
@@ -257,13 +257,13 @@ type AgentDefinition struct {
 	// MCPServers holds server names or inline {name: config} objects.
 	MCPServers     []any          `json:"mcpServers,omitempty"`
 	InitialPrompt  string         `json:"initialPrompt,omitempty"`
-	MaxTurns       *int           `json:"maxTurns,omitempty"`
-	Background     *bool          `json:"background,omitempty"`
-	Effort         any            `json:"effort,omitempty"`
+	MaxTurns       *int           `json:"maxTurns,omitzero"`
+	Background     *bool          `json:"background,omitzero"`
+	Effort         any            `json:"effort,omitzero"`
 	PermissionMode PermissionMode `json:"permissionMode,omitempty"`
 	// OmitClaudeMD runs the agent, as a subagent, without the user,
 	// project and local CLAUDE.md files; managed policy files are kept.
-	OmitClaudeMD bool `json:"omitClaudeMd,omitempty"`
+	OmitClaudeMD bool `json:"omitClaudeMd,omitzero"`
 	// Observer names an agent type auto-spawned as a read-only background
 	// observer whenever this agent runs.
 	Observer string `json:"observer,omitempty"`
@@ -479,7 +479,7 @@ type Options struct {
 	// Settings adds flag-tier settings, passed to --settings. It is a
 	// string holding a settings file path or an inline JSON object, or a
 	// value encoded as a JSON object: Settings, map[string]any,
-	// json.RawMessage or any JSON-marshalable struct. A file path cannot be
+	// jsontext.Value (json.RawMessage) or any JSON-marshalable struct. A file path cannot be
 	// combined with Sandbox.
 	Settings any
 
@@ -495,7 +495,7 @@ type Options struct {
 
 	// Sandbox holds sandbox settings, merged into the --settings object as
 	// its "sandbox" key: a *SandboxSettings, a map[string]any, a
-	// json.RawMessage or any value encoded as a JSON object. When it
+	// jsontext.Value (json.RawMessage) or any value encoded as a JSON object. When it
 	// enables the sandbox without setting failIfUnavailable, the SDK sets
 	// failIfUnavailable to true so a missing sandbox fails the run instead
 	// of silently running unsandboxed.

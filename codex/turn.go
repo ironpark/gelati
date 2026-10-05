@@ -2,10 +2,13 @@ package codex
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"iter"
 	"sync"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // ErrTurnAbandoned is reported by Wait when the caller closed the stream
@@ -71,7 +74,7 @@ type Event struct {
 	Error     *TurnError
 	WillRetry bool
 	// Params is the raw notification payload.
-	Params json.RawMessage
+	Params jsontext.Value
 }
 
 // TurnStream delivers a turn's events in arrival order. Iterate them with
@@ -232,7 +235,7 @@ func (s *TurnStream) deliver(event Event, quit <-chan struct{}) bool {
 // queuedNotification is one turn notification waiting for its subscriber.
 type queuedNotification struct {
 	method   string
-	params   json.RawMessage
+	params   jsontext.Value
 	threadID string
 	turnID   string
 }
@@ -416,7 +419,7 @@ func buildEvent(note queuedNotification) (Event, bool) {
 	switch note.method {
 	case MethodTurnStarted, MethodTurnCompleted:
 		var payload TurnParams
-		if err := json.Unmarshal(note.params, &payload); err != nil {
+		if err := json.Unmarshal(note.params, &payload, jsonx.Foreign); err != nil {
 			return event, false
 		}
 		event.Turn = &payload.Turn
@@ -430,7 +433,7 @@ func buildEvent(note queuedNotification) (Event, bool) {
 		}
 	case MethodItemStarted, MethodItemCompleted:
 		var payload ItemParams
-		if err := json.Unmarshal(note.params, &payload); err != nil {
+		if err := json.Unmarshal(note.params, &payload, jsonx.Foreign); err != nil {
 			return event, false
 		}
 		item := payload.Item
@@ -444,7 +447,7 @@ func buildEvent(note queuedNotification) (Event, bool) {
 	case MethodAgentMessageDelta, MethodPlanDelta, MethodReasoningTextDelta,
 		MethodReasoningSummaryTextDelta, MethodReasoningSummaryPartAdded:
 		var payload DeltaParams
-		if err := json.Unmarshal(note.params, &payload); err != nil {
+		if err := json.Unmarshal(note.params, &payload, jsonx.Foreign); err != nil {
 			return event, false
 		}
 		event.ItemID = payload.ItemID
@@ -461,7 +464,7 @@ func buildEvent(note queuedNotification) (Event, bool) {
 		}
 	case MethodCommandExecutionOutputDelta:
 		var payload CommandOutputDeltaParams
-		if err := json.Unmarshal(note.params, &payload); err != nil {
+		if err := json.Unmarshal(note.params, &payload, jsonx.Foreign); err != nil {
 			return event, false
 		}
 		event.Kind = EventCommandOutputDelta
@@ -469,7 +472,7 @@ func buildEvent(note queuedNotification) (Event, bool) {
 		event.Delta = payload.Delta
 	case MethodTurnPlan:
 		var payload TurnPlanParams
-		if err := json.Unmarshal(note.params, &payload); err != nil {
+		if err := json.Unmarshal(note.params, &payload, jsonx.Foreign); err != nil {
 			return event, false
 		}
 		event.Kind = EventPlanUpdated
@@ -477,14 +480,14 @@ func buildEvent(note queuedNotification) (Event, bool) {
 		event.Explanation = payload.Explanation
 	case MethodTurnDiff:
 		var payload TurnDiffParams
-		if err := json.Unmarshal(note.params, &payload); err != nil {
+		if err := json.Unmarshal(note.params, &payload, jsonx.Foreign); err != nil {
 			return event, false
 		}
 		event.Kind = EventDiffUpdated
 		event.Diff = payload.Diff
 	case MethodTokenUsageUpdated:
 		var payload TokenUsageParams
-		if err := json.Unmarshal(note.params, &payload); err != nil {
+		if err := json.Unmarshal(note.params, &payload, jsonx.Foreign); err != nil {
 			return event, false
 		}
 		event.Kind = EventTokenUsageUpdated
@@ -492,7 +495,7 @@ func buildEvent(note queuedNotification) (Event, bool) {
 		event.Usage = &usage
 	case MethodError:
 		var payload ErrorParams
-		if err := json.Unmarshal(note.params, &payload); err != nil {
+		if err := json.Unmarshal(note.params, &payload, jsonx.Foreign); err != nil {
 			return event, false
 		}
 		event.Kind = EventError
@@ -506,7 +509,7 @@ func buildEvent(note queuedNotification) (Event, bool) {
 
 // routeTurnNotification queues a turn or item notification for its thread
 // pump. It reports whether the notification was a turn-scoped one.
-func (c *Client) routeTurnNotification(method string, params json.RawMessage, threadID, turnID string) bool {
+func (c *Client) routeTurnNotification(method string, params jsontext.Value, threadID, turnID string) bool {
 	if !isTurnNotification(method, turnID) {
 		return false
 	}

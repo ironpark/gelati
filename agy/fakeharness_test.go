@@ -2,7 +2,7 @@ package agy
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net"
@@ -276,7 +276,7 @@ func (s *fakeSession) runTurn(ev *wire.InputEvent) {
 				s.say(2, "denied: "+res.GetReason())
 				break
 			} else if res.GetModifiedArgs() != nil {
-				b, _ := json.Marshal(res.GetModifiedArgs().AsMap())
+				b, _ := json.Marshal(res.GetModifiedArgs().AsMap(), json.Deterministic(true))
 				args = string(b)
 			}
 		}

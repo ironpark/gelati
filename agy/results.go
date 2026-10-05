@@ -2,10 +2,13 @@ package agy
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // Structured results of builtin tools. PostToolCallHook receives one of
@@ -123,8 +126,8 @@ type resultField struct {
 // and must have the field's type, and unknown members are ignored. The first
 // of a field's names that is present wins.
 func decodeResultObject(s string, fields ...resultField) bool {
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(s), &obj); err != nil || obj == nil {
+	var obj map[string]jsontext.Value
+	if err := json.Unmarshal([]byte(s), &obj, jsonx.Foreign); err != nil || obj == nil {
 		return false
 	}
 	for _, f := range fields {
@@ -136,7 +139,7 @@ func decodeResultObject(s string, fields ...resultField) bool {
 			if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 				return false
 			}
-			if err := json.Unmarshal(raw, f.dst); err != nil {
+			if err := json.Unmarshal(raw, f.dst, jsonx.Foreign); err != nil {
 				return false
 			}
 			break

@@ -2,7 +2,8 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"testing"
 	"time"
@@ -34,14 +35,14 @@ func calculatorServer(t *testing.T) *MCPServer {
 		ToolDef{
 			Name:        "boom",
 			Description: "Always fails",
-			Handler: func(context.Context, json.RawMessage) (ToolResult, error) {
+			Handler: func(context.Context, jsontext.Value) (ToolResult, error) {
 				return ToolResult{}, errors.New("handler exploded")
 			},
 		},
 		ToolDef{
 			Name:        "panics",
 			Description: "Panics",
-			Handler: func(context.Context, json.RawMessage) (ToolResult, error) {
+			Handler: func(context.Context, jsontext.Value) (ToolResult, error) {
 				panic("kaboom")
 			},
 		},
@@ -49,7 +50,7 @@ func calculatorServer(t *testing.T) *MCPServer {
 			Name:        "annotated",
 			Description: "Has annotations",
 			Annotations: &ToolAnnotations{ReadOnlyHint: &yes, MaxResultSizeChars: &maxSize},
-			Handler: func(context.Context, json.RawMessage) (ToolResult, error) {
+			Handler: func(context.Context, jsontext.Value) (ToolResult, error) {
 				return TextResult("ok"), nil
 			},
 		},
@@ -63,7 +64,7 @@ func calculatorServer(t *testing.T) *MCPServer {
 // rpc sends one JSON-RPC message to the server and decodes the reply.
 func rpc(t *testing.T, s *MCPServer, message map[string]any) map[string]any {
 	t.Helper()
-	raw, err := json.Marshal(message)
+	raw, err := json.Marshal(message, json.Deterministic(true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +240,7 @@ func TestMCPToolContentConversion(t *testing.T) {
 	t.Parallel()
 	cfg := NewSDKMCPServer("content", "", ToolDef{
 		Name: "mixed",
-		Handler: func(context.Context, json.RawMessage) (ToolResult, error) {
+		Handler: func(context.Context, jsontext.Value) (ToolResult, error) {
 			return ToolResult{Content: []ToolContent{
 				ToolText{Text: "hello"},
 				ToolImage{Data: "AAAA", MimeType: "image/png"},
@@ -251,7 +252,7 @@ func TestMCPToolContentConversion(t *testing.T) {
 		},
 	})
 	result := callTool(t, cfg.Instance.(*MCPServer), "mixed", nil)
-	got, err := json.Marshal(result["content"])
+	got, err := json.Marshal(result["content"], json.Deterministic(true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +271,7 @@ func TestMCPToolContentConversion(t *testing.T) {
 func TestMCPMalformedMessage(t *testing.T) {
 	t.Parallel()
 	s := calculatorServer(t)
-	out, err := s.HandleMCPMessage(t.Context(), json.RawMessage(`not json`))
+	out, err := s.HandleMCPMessage(t.Context(), jsontext.Value(`not json`))
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}

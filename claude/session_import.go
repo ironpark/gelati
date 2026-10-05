@@ -3,13 +3,15 @@ package claude
 import (
 	"bufio"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"maps"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // Replaying a local transcript into a SessionStore, the inverse of resume
@@ -144,7 +146,7 @@ func appendJSONLFileInBatches(ctx context.Context, path string, key SessionKey, 
 		}
 		line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 		var entry SessionStoreEntry
-		if line != "" && json.Unmarshal([]byte(line), &entry) == nil && entry != nil {
+		if line != "" && json.Unmarshal([]byte(line), &entry, jsonx.Foreign) == nil && entry != nil {
 			batch = append(batch, entry)
 			nbytes += len(line)
 			if len(batch) >= batchSize || nbytes >= storeAppendBatchBytes {

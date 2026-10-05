@@ -2,7 +2,7 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 )
 
 // PermissionMode selects how the session handles permission prompts.
@@ -48,7 +48,7 @@ type PermissionRuleValue struct {
 	ToolName string `json:"toolName"`
 	// RuleContent is nil for a rule without content, which omits the key
 	// rather than sending null, like the TypeScript SDK.
-	RuleContent *string `json:"ruleContent,omitempty"`
+	RuleContent *string `json:"ruleContent,omitzero"`
 }
 
 // Permission update kinds.
@@ -85,7 +85,7 @@ func (u PermissionUpdate) MarshalJSON() ([]byte, error) {
 	case PermissionUpdateAddDirectories, PermissionUpdateRemoveDirectories:
 		out.Directories = u.Directories
 	}
-	return json.Marshal(out)
+	return json.Marshal(out, marshalOpts)
 }
 
 // UnmarshalJSON reads the control-protocol shape produced by MarshalJSON. A
@@ -124,21 +124,21 @@ type ToolPermissionContext struct {
 	// from configuration whose name is untrusted text. Key trust decisions
 	// on Source, never on the name or the tool-name prefix. nil for
 	// non-MCP tools and on CLIs that predate the field.
-	MCPServer *MCPServerProvenance `json:"mcp_server,omitempty"`
+	MCPServer *MCPServerProvenance `json:"mcp_server,omitzero"`
 	// DefaultToNo asks the host to open the prompt on its decline option and
 	// offer no one-key approve shortcut.
-	DefaultToNo bool `json:"default_to_no,omitempty"`
+	DefaultToNo bool `json:"default_to_no,omitzero"`
 	// SuppressAlwaysAllowRule asks the host not to offer a persistent
 	// "don't ask again" choice: the rule it would write grants more than
 	// this request's own action.
-	SuppressAlwaysAllowRule bool `json:"suppress_always_allow_rule,omitempty"`
+	SuppressAlwaysAllowRule bool `json:"suppress_always_allow_rule,omitzero"`
 	// MatchedAskRule is set when a user-configured ask rule forced this
 	// prompt. Host-side auto-approval should treat such requests as
 	// rule-forced: the user asked for a human prompt.
-	MatchedAskRule *MatchedAskRule `json:"matched_ask_rule,omitempty"`
+	MatchedAskRule *MatchedAskRule `json:"matched_ask_rule,omitzero"`
 	// RequiresUserInteraction reports whether the CLI considers a human
 	// answer necessary; nil when the CLI did not say.
-	RequiresUserInteraction *bool `json:"requires_user_interaction,omitempty"`
+	RequiresUserInteraction *bool `json:"requires_user_interaction,omitzero"`
 	// RequestID is the control request's request_id. A reply sent out of
 	// band (see ErrRespondedOutOfBand) must echo it.
 	RequestID string `json:"-"`
@@ -165,7 +165,7 @@ type MatchedAskRule struct {
 	Source   string `json:"source"`
 	ToolName string `json:"tool_name"`
 	// RuleContent narrows the rule, when it has content.
-	RuleContent *string `json:"rule_content,omitempty"`
+	RuleContent *string `json:"rule_content,omitzero"`
 }
 
 // PermissionDecisionClassification classifies a permission decision for
@@ -319,7 +319,10 @@ func permissionReply(result PermissionResult, request map[string]any) (out map[s
 	switch r := result.(type) {
 	case *PermissionResultAllow:
 		if r.UpdatedInput == nil {
-			out["updatedInput"], _ = request["input"].(map[string]any)
+			out["updatedInput"] = nil // null when the request has no input object
+			if input, ok := request["input"].(map[string]any); ok && input != nil {
+				out["updatedInput"] = input
+			}
 		}
 		stampPermissionReply(out, request, r.DecisionClassification)
 	case *PermissionResultDeny:

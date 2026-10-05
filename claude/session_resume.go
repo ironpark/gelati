@@ -3,7 +3,8 @@ package claude
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +21,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // SessionStore-backed resume. When Options.Resume or
@@ -446,28 +449,77 @@ func stripSettingsForResume(content []byte) []byte {
 }
 
 // decodeJSONObject parses b as exactly one JSON object, keeping numbers as
-// json.Number so they re-serialize unchanged.
+// jsonNumber so they re-serialize unchanged.
 func decodeJSONObject(b []byte) (map[string]any, bool) {
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.UseNumber()
-	var obj map[string]any
-	if err := dec.Decode(&obj); err != nil || obj == nil {
+	dec := jsontext.NewDecoder(bytes.NewReader(b), jsonx.Foreign)
+	if dec.PeekKind() != '{' {
 		return nil, false
 	}
-	if _, err := dec.Token(); err != io.EOF {
+	v, err := readJSONValue(dec)
+	if err != nil {
+		return nil, false
+	}
+	if _, err := dec.ReadToken(); err != io.EOF {
 		return nil, false // trailing data
 	}
-	return obj, true
+	return v.(map[string]any), true
+}
+
+// readJSONValue reads the next value from dec as a generic JSON value whose
+// numbers are jsonNumber. A repeated object member keeps its last value.
+func readJSONValue(dec *jsontext.Decoder) (any, error) {
+	tok, err := dec.ReadToken()
+	if err != nil {
+		return nil, err
+	}
+	switch tok.Kind() {
+	case 'n':
+		return nil, nil
+	case 't', 'f':
+		return tok.Bool(), nil
+	case '"':
+		return tok.String(), nil
+	case '0':
+		return jsonNumber(tok.String()), nil
+	case '{':
+		obj := map[string]any{}
+		for dec.PeekKind() != '}' {
+			name, err := dec.ReadToken()
+			if err != nil {
+				return nil, err
+			}
+			k := name.String()
+			v, err := readJSONValue(dec)
+			if err != nil {
+				return nil, err
+			}
+			obj[k] = v
+		}
+		_, err := dec.ReadToken()
+		return obj, err
+	case '[':
+		arr := []any{}
+		for dec.PeekKind() != ']' {
+			v, err := readJSONValue(dec)
+			if err != nil {
+				return nil, err
+			}
+			arr = append(arr, v)
+		}
+		_, err := dec.ReadToken()
+		return arr, err
+	}
+	return nil, fmt.Errorf("claude: unexpected JSON token %v", tok)
 }
 
 // hasOverflowingNumber reports whether v holds a number outside the range of
 // a double.
 func hasOverflowingNumber(v any) bool {
 	switch x := v.(type) {
-	case json.Number:
+	case numberText:
 		// Integers are arbitrary-precision in Python; only floats overflow.
-		if strings.ContainsAny(string(x), ".eE") {
-			if _, err := strconv.ParseFloat(string(x), 64); err != nil {
+		if s := x.String(); strings.ContainsAny(s, ".eE") {
+			if _, err := strconv.ParseFloat(s, 64); err != nil {
 				return true
 			}
 		}
@@ -503,7 +555,7 @@ func writeRedactedCredentials(creds []byte, dst string) error {
 		if oauth, ok := data["claudeAiOauth"].(map[string]any); ok {
 			if _, ok := oauth["refreshToken"]; ok {
 				delete(oauth, "refreshToken")
-				if b, err := json.Marshal(data); err == nil {
+				if b, err := json.Marshal(data, marshalOpts); err == nil {
 					out = b
 				}
 			}
@@ -621,7 +673,7 @@ func materializeSubkeys(ctx context.Context, store SessionStore, lister SessionS
 		}
 		if metadata != nil {
 			delete(metadata, "type") // the synthetic discriminator
-			b, err := json.Marshal(metadata)
+			b, err := json.Marshal(metadata, marshalOpts)
 			if err != nil {
 				return fmt.Errorf("claude: encoding agent metadata for %s: %w", subpath, err)
 			}

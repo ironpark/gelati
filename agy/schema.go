@@ -2,7 +2,7 @@ package agy
 
 import (
 	"encoding"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"reflect"
 	"strings"
 	"time"
@@ -24,7 +24,7 @@ func SchemaFor[T any]() map[string]any {
 var (
 	schemaProviderType = reflect.TypeFor[SchemaProvider]()
 	timeType           = reflect.TypeFor[time.Time]()
-	rawMessageType     = reflect.TypeFor[json.RawMessage]()
+	rawMessageType     = reflect.TypeFor[jsontext.Value]()
 	textMarshalerType  = reflect.TypeFor[encoding.TextMarshaler]()
 )
 
@@ -32,15 +32,16 @@ var (
 // function declarations from Python signatures:
 //
 //   - A struct is an object whose properties are its exported fields, named
-//     and skipped by their json tags; embedded structs are flattened as
-//     encoding/json flattens them. A field is required unless it is a
+//     and skipped by their json tags; embedded structs and fields tagged
+//     inline are flattened as encoding/json flattens them, and a field
+//     tagged unknown is left out. A field is required unless it is a
 //     pointer or its json tag has omitempty or omitzero.
 //   - A field's `description` tag becomes its description, and an `enum`
 //     tag (comma-separated values) its allowed values.
 //   - Strings, booleans, integers and floats map to their JSON types;
 //     slices and arrays to arrays ([]byte to a base64 string); maps with
 //     string keys to objects with additionalProperties; time.Time to a
-//     date-time string. Interfaces and json.RawMessage accept anything.
+//     date-time string. Interfaces and jsontext.Value accept anything.
 //   - A type implementing SchemaProvider supplies its own schema.
 //
 // The result is normalized with NormalizeSchema.
@@ -146,13 +147,22 @@ func (b *schemaBuilder) addFields(t reflect.Type, props map[string]any, required
 			continue
 		}
 		name, opts, _ := strings.Cut(tag, ",")
-		if f.Anonymous && name == "" {
+		hasOpt := func(o string) bool { return strings.Contains(","+opts+",", ","+o+",") }
+		if hasOpt("unknown") {
+			// Holds the members no other field takes; not a property.
+			continue
+		}
+		if (f.Anonymous && name == "") || hasOpt("inline") {
 			ft := f.Type
 			if ft.Kind() == reflect.Pointer {
 				ft = ft.Elem()
 			}
 			if ft.Kind() == reflect.Struct {
 				b.addFields(ft, props, required)
+				continue
+			}
+			if hasOpt("inline") {
+				// An inlined map holds members of any name; not a property.
 				continue
 			}
 		}
@@ -174,9 +184,7 @@ func (b *schemaBuilder) addFields(t reflect.Type, props map[string]any, required
 			prop["enum"] = vals
 		}
 		props[name] = prop
-		optional := f.Type.Kind() == reflect.Pointer ||
-			strings.Contains(","+opts+",", ",omitempty,") ||
-			strings.Contains(","+opts+",", ",omitzero,")
+		optional := f.Type.Kind() == reflect.Pointer || hasOpt("omitempty") || hasOpt("omitzero")
 		if !optional {
 			*required = append(*required, name)
 		}

@@ -2,7 +2,8 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"os"
 	"path/filepath"
@@ -141,8 +142,8 @@ func TestBuildCommandArgsOptions(t *testing.T) {
 		{"managedSettings", Options{ManagedSettings: Settings{"model": "opus"}},
 			[]string{"--managed-settings", `{"model":"opus"}`}, nil},
 		{"settingsObject", Options{Settings: Settings{"model": "opus"}}, []string{"--settings", `{"model":"opus"}`}, nil},
-		{"settingsRaw", Options{Settings: json.RawMessage(`{"a":1}`)}, []string{"--settings", `{"a":1}`}, nil},
-		{"settingsTypedNil", Options{Settings: json.RawMessage(nil)}, nil, []string{"--settings"}},
+		{"settingsRaw", Options{Settings: jsontext.Value(`{"a":1}`)}, []string{"--settings", `{"a":1}`}, nil},
+		{"settingsTypedNil", Options{Settings: jsontext.Value(nil)}, nil, []string{"--settings"}},
 		{"pluginNoMCP", Options{Plugins: []PluginConfig{{Path: "/p", SkipMCPDiscovery: true}}},
 			[]string{"--plugin-dir-no-mcp", "/p"}, []string{"--plugin-dir"}},
 		{"pluginsViaInitialize", Options{Plugins: []PluginConfig{{Path: "/p"}}, PluginDelivery: PluginDeliveryInitialize},
@@ -223,7 +224,7 @@ func TestBuildCommandArgsOutputFormatAndSandbox(t *testing.T) {
 	t.Parallel()
 	args, err := buildCommandArgs(&Options{
 		OutputFormat: map[string]any{"type": "json_schema", "schema": map[string]any{"type": "object"}},
-		Sandbox:      json.RawMessage(`{"enabled":true}`),
+		Sandbox:      jsontext.Value(`{"enabled":true}`),
 		Settings:     `{"model":"opus"}`,
 	})
 	if err != nil {

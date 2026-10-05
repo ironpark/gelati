@@ -2,7 +2,8 @@ package codex
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"runtime"
 	"strings"
@@ -60,10 +61,10 @@ func TestTurnStreamEndToEnd(t *testing.T) {
 	done := serve(t, func() {
 		req := server.expect("turn/start")
 		var params struct {
-			ThreadID string            `json:"threadId"`
-			Input    []json.RawMessage `json:"input"`
-			Model    string            `json:"model"`
-			Effort   string            `json:"effort"`
+			ThreadID string           `json:"threadId"`
+			Input    []jsontext.Value `json:"input"`
+			Model    string           `json:"model"`
+			Effort   string           `json:"effort"`
 		}
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			t.Errorf("params: %v", err)
@@ -308,9 +309,9 @@ func TestSteerTurn(t *testing.T) {
 	done := serve(t, func() {
 		req := server.expect("turn/steer")
 		var params struct {
-			ThreadID       string            `json:"threadId"`
-			Input          []json.RawMessage `json:"input"`
-			ExpectedTurnID string            `json:"expectedTurnId"`
+			ThreadID       string           `json:"threadId"`
+			Input          []jsontext.Value `json:"input"`
+			ExpectedTurnID string           `json:"expectedTurnId"`
 		}
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			t.Errorf("params: %v", err)

@@ -4,9 +4,11 @@
 package tools
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"reflect"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // SchemaVersion is the @anthropic-ai/claude-agent-sdk version whose
@@ -125,7 +127,7 @@ type AgentOutputCompleted struct {
 	TotalDurationMs   float64          `json:"totalDurationMs"`
 	TotalTokens       int              `json:"totalTokens"`
 	Usage             AgentUsage       `json:"usage"`
-	ToolStats         *AgentToolStats  `json:"toolStats,omitempty"`
+	ToolStats         *AgentToolStats  `json:"toolStats,omitzero"`
 
 	// Always "completed".
 	Status         string `json:"status"`
@@ -142,7 +144,7 @@ type AgentOutputAsyncLaunched struct {
 	Status string `json:"status"`
 
 	// When present it is always true.
-	IsAsync bool `json:"isAsync,omitempty"`
+	IsAsync bool `json:"isAsync,omitzero"`
 
 	// The ID of the async agent
 	AgentID string `json:"agentId"`
@@ -163,7 +165,7 @@ type AgentOutputAsyncLaunched struct {
 	OutputFile string `json:"outputFile"`
 
 	// Whether the calling agent has Read/Bash tools to check progress
-	CanReadOutputFile *bool `json:"canReadOutputFile,omitempty"`
+	CanReadOutputFile *bool `json:"canReadOutputFile,omitzero"`
 }
 
 func (AgentOutputAsyncLaunched) isAgentOutput() {}
@@ -196,21 +198,21 @@ func UnmarshalAgentOutput(data []byte) (AgentOutput, error) {
 	var probe struct {
 		D string `json:"status"`
 	}
-	if err := json.Unmarshal(data, &probe); err != nil {
+	if err := json.Unmarshal(data, &probe, jsonx.Foreign); err != nil {
 		return nil, err
 	}
 	switch probe.D {
 	case "completed":
 		var v AgentOutputCompleted
-		err := json.Unmarshal(data, &v)
+		err := json.Unmarshal(data, &v, jsonx.Foreign)
 		return v, err
 	case "async_launched":
 		var v AgentOutputAsyncLaunched
-		err := json.Unmarshal(data, &v)
+		err := json.Unmarshal(data, &v, jsonx.Foreign)
 		return v, err
 	case "remote_launched":
 		var v AgentOutputRemoteLaunched
-		err := json.Unmarshal(data, &v)
+		err := json.Unmarshal(data, &v, jsonx.Foreign)
 		return v, err
 	}
 	return nil, fmt.Errorf("tools: unknown AgentOutput status %q", probe.D)
@@ -233,11 +235,11 @@ type AgentUsage struct {
 	ServerToolUse            *AgentServerToolUse       `json:"server_tool_use"`
 	ServiceTier              *string                   `json:"service_tier"`
 	CacheCreation            *AgentCacheCreation       `json:"cache_creation"`
-	InferenceGeo             *string                   `json:"inference_geo,omitempty"`
-	Speed                    *string                   `json:"speed,omitempty"`
-	Iterations               any                       `json:"iterations,omitempty"`
-	OutputTokensDetails      *AgentOutputTokensDetails `json:"output_tokens_details,omitempty"`
-	FallbackCredit           any                       `json:"fallback_credit,omitempty"`
+	InferenceGeo             *string                   `json:"inference_geo,omitzero"`
+	Speed                    *string                   `json:"speed,omitzero"`
+	Iterations               any                       `json:"iterations,omitzero"`
+	OutputTokensDetails      *AgentOutputTokensDetails `json:"output_tokens_details,omitzero"`
+	FallbackCredit           any                       `json:"fallback_credit,omitzero"`
 }
 
 // AgentToolStats is a nested object of the tool schemas (first seen at AgentOutput<completed>.toolStats).
@@ -249,7 +251,7 @@ type AgentToolStats struct {
 	LinesAdded     int  `json:"linesAdded"`
 	LinesRemoved   int  `json:"linesRemoved"`
 	OtherToolCount int  `json:"otherToolCount"`
-	FrameCount     *int `json:"frameCount,omitempty"`
+	FrameCount     *int `json:"frameCount,omitzero"`
 }
 
 // AgentServerToolUse is a nested object of the tool schemas (first seen at AgentOutput<completed>.usage.server_tool_use).
@@ -266,7 +268,7 @@ type AgentCacheCreation struct {
 
 // AgentOutputTokensDetails is a nested object of the tool schemas (first seen at AgentOutput<completed>.usage.output_tokens_details).
 type AgentOutputTokensDetails struct {
-	ThinkingTokens *int `json:"thinking_tokens,omitempty"`
+	ThinkingTokens *int `json:"thinking_tokens,omitzero"`
 }
 
 // FileReadOutput mirrors the FileReadOutput schema of sdk-tools.d.ts.
@@ -283,7 +285,7 @@ type FileReadOutputText struct {
 	File FileReadTextFile `json:"file"`
 
 	// Set when this Read completed a saved Artifact source file: the Artifact and the version of it that now counts as viewed.
-	ArtifactRead *FileReadArtifactRead `json:"artifactRead,omitempty"`
+	ArtifactRead *FileReadArtifactRead `json:"artifactRead,omitzero"`
 }
 
 func (FileReadOutputText) isFileReadOutput() {}
@@ -322,7 +324,7 @@ type FileReadOutputParts struct {
 	File FileReadPartsFile `json:"file"`
 
 	// Document page number of the first extracted page (1 when no range was requested); labels the page images in the model-facing tool_result
-	FirstPage *int `json:"firstPage,omitempty"`
+	FirstPage *int `json:"firstPage,omitzero"`
 
 	// Extracted page images, in page order. Present only transiently in-process: the page image bytes are delivered solely as image blocks in the model-facing tool_result content and are not retained on the tool_use_result, so this key is absent on the emitted/persisted result
 	Pages []FileReadPage `json:"pages,omitempty"`
@@ -349,33 +351,33 @@ func UnmarshalFileReadOutput(data []byte) (FileReadOutput, error) {
 	var probe struct {
 		D string `json:"type"`
 	}
-	if err := json.Unmarshal(data, &probe); err != nil {
+	if err := json.Unmarshal(data, &probe, jsonx.Foreign); err != nil {
 		return nil, err
 	}
 	switch probe.D {
 	case "text":
 		var v FileReadOutputText
-		err := json.Unmarshal(data, &v)
+		err := json.Unmarshal(data, &v, jsonx.Foreign)
 		return v, err
 	case "image":
 		var v FileReadOutputImage
-		err := json.Unmarshal(data, &v)
+		err := json.Unmarshal(data, &v, jsonx.Foreign)
 		return v, err
 	case "notebook":
 		var v FileReadOutputNotebook
-		err := json.Unmarshal(data, &v)
+		err := json.Unmarshal(data, &v, jsonx.Foreign)
 		return v, err
 	case "pdf":
 		var v FileReadOutputPDF
-		err := json.Unmarshal(data, &v)
+		err := json.Unmarshal(data, &v, jsonx.Foreign)
 		return v, err
 	case "parts":
 		var v FileReadOutputParts
-		err := json.Unmarshal(data, &v)
+		err := json.Unmarshal(data, &v, jsonx.Foreign)
 		return v, err
 	case "file_unchanged":
 		var v FileReadOutputFileUnchanged
-		err := json.Unmarshal(data, &v)
+		err := json.Unmarshal(data, &v, jsonx.Foreign)
 		return v, err
 	}
 	return nil, fmt.Errorf("tools: unknown FileReadOutput type %q", probe.D)
@@ -399,7 +401,7 @@ type FileReadTextFile struct {
 	TotalLines int `json:"totalLines"`
 
 	// True when a whole-file read was auto-paginated because it exceeded the token cap (the content is a partial first page). A programmatic signal for internal consumers; survives output reconstruction (unlike the render-time banner).
-	TruncatedByTokenCap *bool `json:"truncatedByTokenCap,omitempty"`
+	TruncatedByTokenCap *bool `json:"truncatedByTokenCap,omitzero"`
 }
 
 // FileReadArtifactRead is a nested object of the tool schemas (first seen at FileReadOutput<text>.artifactRead).
@@ -420,7 +422,7 @@ type FileReadImageFile struct {
 	OriginalSize int `json:"originalSize"`
 
 	// Image dimension info for coordinate mapping
-	Dimensions *ImageDimensions `json:"dimensions,omitempty"`
+	Dimensions *ImageDimensions `json:"dimensions,omitzero"`
 }
 
 // FileReadNotebookFile is a nested object of the tool schemas (first seen at FileReadOutput<notebook>.file).
@@ -491,16 +493,16 @@ const (
 // ImageDimensions is a nested object of the tool schemas (first seen at FileReadOutput<image>.file.dimensions).
 type ImageDimensions struct {
 	// Original image width in pixels
-	OriginalWidth *int `json:"originalWidth,omitempty"`
+	OriginalWidth *int `json:"originalWidth,omitzero"`
 
 	// Original image height in pixels
-	OriginalHeight *int `json:"originalHeight,omitempty"`
+	OriginalHeight *int `json:"originalHeight,omitzero"`
 
 	// Displayed image width in pixels (after resizing)
-	DisplayWidth *int `json:"displayWidth,omitempty"`
+	DisplayWidth *int `json:"displayWidth,omitzero"`
 
 	// Displayed image height in pixels (after resizing)
-	DisplayHeight *int `json:"displayHeight,omitempty"`
+	DisplayHeight *int `json:"displayHeight,omitzero"`
 }
 
 // ListMcpResourcesOutput mirrors the ListMcpResourcesOutput schema of sdk-tools.d.ts.
@@ -536,7 +538,7 @@ type McpToolsRefresh struct {
 	Status McpToolsRefreshStatus `json:"status"`
 
 	// Number of tools now available from this server
-	ToolCount *int `json:"toolCount,omitempty"`
+	ToolCount *int `json:"toolCount,omitzero"`
 
 	// Tool names this refresh added
 	Added []string `json:"added,omitempty"`
@@ -573,11 +575,11 @@ type McpOutput struct {
 func (u McpOutput) MarshalJSON() ([]byte, error) {
 	switch {
 	case u.String != nil:
-		return json.Marshal(u.String)
+		return json.Marshal(u.String, marshalOpts)
 	case u.Array != nil:
-		return json.Marshal(u.Array)
+		return json.Marshal(u.Array, marshalOpts)
 	case u.Object != nil:
-		return json.Marshal(u.Object)
+		return json.Marshal(u.Object, marshalOpts)
 	}
 	return []byte("null"), nil
 }
@@ -587,11 +589,11 @@ func (u *McpOutput) UnmarshalJSON(data []byte) error {
 	*u = McpOutput{}
 	switch k := jsonValueKind(data); k {
 	case kindString:
-		return json.Unmarshal(data, &u.String)
+		return json.Unmarshal(data, &u.String, jsonx.Foreign)
 	case kindArray:
-		return json.Unmarshal(data, &u.Array)
+		return json.Unmarshal(data, &u.Array, jsonx.Foreign)
 	case kindObject:
-		return json.Unmarshal(data, &u.Object)
+		return json.Unmarshal(data, &u.Object, jsonx.Foreign)
 	case kindNull:
 		return nil
 	default:
@@ -621,7 +623,7 @@ func (v McpContentBlock) MarshalJSON() ([]byte, error) {
 func (v *McpContentBlock) UnmarshalJSON(data []byte) error {
 	type plain McpContentBlock
 	var p plain
-	if err := json.Unmarshal(data, &p); err != nil {
+	if err := json.Unmarshal(data, &p, jsonx.Foreign); err != nil {
 		return err
 	}
 	extra, err := extraFields(data, mcpContentBlockKnown)
@@ -642,48 +644,48 @@ type ArtifactOutput struct {
 	ArtifactID         string                `json:"artifact_id,omitempty"`
 	Title              string                `json:"title,omitempty"`
 	Version            string                `json:"version,omitempty"`
-	Capabilities       any                   `json:"capabilities,omitempty"`
-	Stored             *ArtifactOutputStored `json:"stored,omitempty"`
+	Capabilities       any                   `json:"capabilities,omitzero"`
+	Stored             *ArtifactOutputStored `json:"stored,omitzero"`
 	Warnings           []string              `json:"warnings,omitempty"`
-	PublishesRemaining *int                  `json:"publishesRemaining,omitempty"`
-	PublishesResetAt   *float64              `json:"publishesResetAt,omitempty"`
+	PublishesRemaining *int                  `json:"publishesRemaining,omitzero"`
+	PublishesResetAt   *float64              `json:"publishesResetAt,omitzero"`
 	Contract           string                `json:"contract,omitempty"`
-	Updated            *bool                 `json:"updated,omitempty"`
+	Updated            *bool                 `json:"updated,omitzero"`
 	Icon               string                `json:"icon,omitempty"`
 
 	// When present it is always true.
-	FaviconSent bool `json:"faviconSent,omitempty"`
+	FaviconSent bool `json:"faviconSent,omitzero"`
 
 	// When present it is always true.
-	IconDropped bool   `json:"iconDropped,omitempty"`
+	IconDropped bool   `json:"iconDropped,omitzero"`
 	Audience    string `json:"audience,omitempty"`
-	Seq         *int   `json:"seq,omitempty"`
+	Seq         *int   `json:"seq,omitzero"`
 
 	// When present it is always true.
-	Unchanged        bool                `json:"unchanged,omitempty"`
+	Unchanged        bool                `json:"unchanged,omitzero"`
 	LiveSubscription string              `json:"liveSubscription,omitempty"`
-	Pinned           *bool               `json:"pinned,omitempty"`
+	Pinned           *bool               `json:"pinned,omitzero"`
 	Artifacts        []ArtifactListEntry `json:"artifacts,omitempty"`
-	Truncated        *bool               `json:"truncated,omitempty"`
-	PinsEnabled      *bool               `json:"pins_enabled,omitempty"`
+	Truncated        *bool               `json:"truncated,omitzero"`
+	PinsEnabled      *bool               `json:"pins_enabled,omitzero"`
 	Scope            ArtifactOutputScope `json:"scope,omitempty"`
 
 	// When present it is always true.
-	ExternalListed bool                        `json:"external_listed,omitempty"`
-	Read           *ArtifactOutputRead         `json:"read,omitempty"`
-	ArtifactRead   *ArtifactReadRef            `json:"artifactRead,omitempty"`
-	Watch          *ArtifactOutputWatch        `json:"watch,omitempty"`
-	Unwatch        *ArtifactOutputUnwatch      `json:"unwatch,omitempty"`
+	ExternalListed bool                        `json:"external_listed,omitzero"`
+	Read           *ArtifactOutputRead         `json:"read,omitzero"`
+	ArtifactRead   *ArtifactReadRef            `json:"artifactRead,omitzero"`
+	Watch          *ArtifactOutputWatch        `json:"watch,omitzero"`
+	Unwatch        *ArtifactOutputUnwatch      `json:"unwatch,omitzero"`
 	Watches        []ArtifactWatchEntry        `json:"watches,omitempty"`
 	FilterURL      string                      `json:"filter_url,omitempty"`
 	Arms           []ArtifactWatchArm          `json:"arms,omitempty"`
-	Written        *ArtifactOutputWritten      `json:"written,omitempty"`
-	AssetUpload    *ArtifactOutputAssetUpload  `json:"asset_upload,omitempty"`
-	AssetUploads   *ArtifactOutputAssetUploads `json:"asset_uploads,omitempty"`
-	AssetList      *ArtifactOutputAssetList    `json:"asset_list,omitempty"`
-	AssetRead      *ArtifactOutputAssetRead    `json:"asset_read,omitempty"`
-	AssetDelete    *ArtifactOutputAssetDelete  `json:"asset_delete,omitempty"`
-	Pin            *ArtifactOutputPin          `json:"pin,omitempty"`
+	Written        *ArtifactOutputWritten      `json:"written,omitzero"`
+	AssetUpload    *ArtifactOutputAssetUpload  `json:"asset_upload,omitzero"`
+	AssetUploads   *ArtifactOutputAssetUploads `json:"asset_uploads,omitzero"`
+	AssetList      *ArtifactOutputAssetList    `json:"asset_list,omitzero"`
+	AssetRead      *ArtifactOutputAssetRead    `json:"asset_read,omitzero"`
+	AssetDelete    *ArtifactOutputAssetDelete  `json:"asset_delete,omitzero"`
+	Pin            *ArtifactOutputPin          `json:"pin,omitzero"`
 }
 
 // ArtifactOutputStored is a nested object of the tool schemas (first seen at ArtifactOutput.stored).
@@ -691,7 +693,7 @@ type ArtifactOutputStored struct {
 	Contract          string         `json:"contract"`
 	PreferredContract string         `json:"preferredContract,omitempty"`
 	Capabilities      map[string]any `json:"capabilities,omitempty"`
-	Carried           *bool          `json:"carried,omitempty"`
+	Carried           *bool          `json:"carried,omitzero"`
 	Read              string         `json:"read,omitempty"`
 }
 
@@ -704,9 +706,9 @@ type ArtifactListEntry struct {
 	Rel       ArtifactListEntryRel `json:"rel,omitempty"`
 
 	// When present it is always true.
-	External bool                  `json:"external,omitempty"`
+	External bool                  `json:"external,omitzero"`
 	Role     ArtifactListEntryRole `json:"role,omitempty"`
-	Pinned   *bool                 `json:"pinned,omitempty"`
+	Pinned   *bool                 `json:"pinned,omitzero"`
 }
 
 // ArtifactOutputScope enumerates the values allowed by the schema (first seen at ArtifactOutput.scope).
@@ -735,7 +737,7 @@ type ArtifactReadRef struct {
 	Ver  string `json:"ver,omitempty"`
 
 	// When present it is always false.
-	Seeded *bool `json:"seeded,omitempty"`
+	Seeded *bool `json:"seeded,omitzero"`
 }
 
 // ArtifactOutputWatch is a nested object of the tool schemas (first seen at ArtifactOutput.watch).
@@ -746,12 +748,12 @@ type ArtifactOutputWatch struct {
 	Reason            string   `json:"reason,omitempty"`
 	DurableSkipReason string   `json:"durable_skip_reason,omitempty"`
 	TaskID            string   `json:"task_id,omitempty"`
-	Since             *float64 `json:"since,omitempty"`
-	TokenExpiresAt    *float64 `json:"token_expires_at,omitempty"`
+	Since             *float64 `json:"since,omitzero"`
+	TokenExpiresAt    *float64 `json:"token_expires_at,omitzero"`
 	Rail              string   `json:"rail,omitempty"`
 	TriggerID         string   `json:"trigger_id,omitempty"`
 	DurableSince      string   `json:"durable_since,omitempty"`
-	Status            *int     `json:"status,omitempty"`
+	Status            *int     `json:"status,omitzero"`
 	Detail            string   `json:"detail,omitempty"`
 	Note              string   `json:"note,omitempty"`
 	Events            []string `json:"events,omitempty"`
@@ -767,16 +769,16 @@ type ArtifactOutputUnwatch struct {
 type ArtifactWatchEntry struct {
 	URL            string                   `json:"url"`
 	TaskID         string                   `json:"task_id,omitempty"`
-	Since          *ArtifactWatchEntrySince `json:"since,omitempty"`
-	Explicit       *bool                    `json:"explicit,omitempty"`
-	Connected      *bool                    `json:"connected,omitempty"`
-	Connecting     *bool                    `json:"connecting,omitempty"`
-	TokenExpiresAt *float64                 `json:"token_expires_at,omitempty"`
+	Since          *ArtifactWatchEntrySince `json:"since,omitzero"`
+	Explicit       *bool                    `json:"explicit,omitzero"`
+	Connected      *bool                    `json:"connected,omitzero"`
+	Connecting     *bool                    `json:"connecting,omitzero"`
+	TokenExpiresAt *float64                 `json:"token_expires_at,omitzero"`
 	ArmedVia       string                   `json:"armed_via,omitempty"`
 	Rail           ArtifactWatchEntryRail   `json:"rail,omitempty"`
 	TriggerID      string                   `json:"trigger_id,omitempty"`
 	Events         []string                 `json:"events,omitempty"`
-	Restored       *bool                    `json:"restored,omitempty"`
+	Restored       *bool                    `json:"restored,omitzero"`
 	StopKind       string                   `json:"stop_kind,omitempty"`
 }
 
@@ -785,15 +787,15 @@ type ArtifactWatchArm struct {
 	URL           string   `json:"url"`
 	Rail          string   `json:"rail,omitempty"`
 	State         string   `json:"state"`
-	Reconnect     *bool    `json:"reconnect,omitempty"`
-	Failures      *int     `json:"failures,omitempty"`
-	MaxFailures   *int     `json:"max_failures,omitempty"`
-	NextInS       *float64 `json:"next_in_s,omitempty"`
+	Reconnect     *bool    `json:"reconnect,omitzero"`
+	Failures      *int     `json:"failures,omitzero"`
+	MaxFailures   *int     `json:"max_failures,omitzero"`
+	NextInS       *float64 `json:"next_in_s,omitzero"`
 	LastFailure   string   `json:"last_failure,omitempty"`
 	Reason        string   `json:"reason,omitempty"`
 	Detail        string   `json:"detail,omitempty"`
 	ServerMessage string   `json:"server_message,omitempty"`
-	At            *float64 `json:"at,omitempty"`
+	At            *float64 `json:"at,omitzero"`
 }
 
 // ArtifactOutputWritten is a nested object of the tool schemas (first seen at ArtifactOutput.written).
@@ -829,10 +831,10 @@ type ArtifactOutputAssetList struct {
 	Next   string             `json:"next,omitempty"`
 
 	// When present it is always true.
-	Cowritten bool `json:"cowritten,omitempty"`
+	Cowritten bool `json:"cowritten,omitzero"`
 
 	// When present it is always true.
-	OutsideWriter bool `json:"outside_writer,omitempty"`
+	OutsideWriter bool `json:"outside_writer,omitzero"`
 }
 
 // ArtifactOutputAssetRead is a nested object of the tool schemas (first seen at ArtifactOutput.asset_read).
@@ -844,16 +846,16 @@ type ArtifactOutputAssetRead struct {
 	SHA256      string `json:"sha256"`
 
 	// When present it is always true.
-	Cowritten bool `json:"cowritten,omitempty"`
+	Cowritten bool `json:"cowritten,omitzero"`
 
 	// When present it is always true.
-	OutsideWriter bool `json:"outside_writer,omitempty"`
+	OutsideWriter bool `json:"outside_writer,omitzero"`
 
 	// When present it is always true.
-	PublicRead bool `json:"public_read,omitempty"`
+	PublicRead bool `json:"public_read,omitzero"`
 
 	// When present it is always true.
-	Foreign bool `json:"foreign,omitempty"`
+	Foreign bool `json:"foreign,omitzero"`
 }
 
 // ArtifactOutputAssetDelete is a nested object of the tool schemas (first seen at ArtifactOutput.asset_delete).
@@ -902,9 +904,9 @@ type ArtifactWatchEntrySince struct {
 func (u ArtifactWatchEntrySince) MarshalJSON() ([]byte, error) {
 	switch {
 	case u.String != nil:
-		return json.Marshal(u.String)
+		return json.Marshal(u.String, marshalOpts)
 	case u.Number != nil:
-		return json.Marshal(u.Number)
+		return json.Marshal(u.Number, marshalOpts)
 	}
 	return []byte("null"), nil
 }
@@ -914,9 +916,9 @@ func (u *ArtifactWatchEntrySince) UnmarshalJSON(data []byte) error {
 	*u = ArtifactWatchEntrySince{}
 	switch k := jsonValueKind(data); k {
 	case kindString:
-		return json.Unmarshal(data, &u.String)
+		return json.Unmarshal(data, &u.String, jsonx.Foreign)
 	case kindNumber:
-		return json.Unmarshal(data, &u.Number)
+		return json.Unmarshal(data, &u.Number, jsonx.Foreign)
 	case kindNull:
 		return nil
 	default:
@@ -939,7 +941,7 @@ type ArtifactAssetUploadResult struct {
 	Status      ArtifactAssetUploadResultStatus `json:"status"`
 	ID          string                          `json:"id,omitempty"`
 	URL         string                          `json:"url,omitempty"`
-	SizeBytes   *int                            `json:"size_bytes,omitempty"`
+	SizeBytes   *int                            `json:"size_bytes,omitzero"`
 	ContentType string                          `json:"content_type,omitempty"`
 	SHA256      string                          `json:"sha256,omitempty"`
 	FileName    string                          `json:"file_name,omitempty"`
@@ -947,7 +949,7 @@ type ArtifactAssetUploadResult struct {
 	Message     string                          `json:"message,omitempty"`
 
 	// When present it is always true.
-	MayBeStored bool `json:"may_be_stored,omitempty"`
+	MayBeStored bool `json:"may_be_stored,omitzero"`
 }
 
 // ArtifactAsset is a nested object of the tool schemas (first seen at ArtifactOutput.asset_list.assets[]).
@@ -1044,7 +1046,7 @@ type ProjectsOutputProjectWrite struct {
 	Path          string `json:"path"`
 	DocUUID       string `json:"doc_uuid"`
 	Replaced      bool   `json:"replaced"`
-	PresentToUser *bool  `json:"present_to_user,omitempty"`
+	PresentToUser *bool  `json:"present_to_user,omitzero"`
 	LocalPath     string `json:"local_path,omitempty"`
 }
 
@@ -1092,37 +1094,37 @@ func UnmarshalProjectsOutput(data []byte) (ProjectsOutput, error) {
 	var probe struct {
 		D string `json:"method"`
 	}
-	if err := json.Unmarshal(data, &probe); err != nil {
+	if err := json.Unmarshal(data, &probe, jsonx.Foreign); err != nil {
 		return nil, err
 	}
 	switch probe.D {
 	case "project_info":
 		var v ProjectsOutputProjectInfo
-		err := json.Unmarshal(data, &v)
+		err := json.Unmarshal(data, &v, jsonx.Foreign)
 		return v, err
 	case "project_read":
 		var v ProjectsOutputProjectRead
-		err := json.Unmarshal(data, &v)
+		err := json.Unmarshal(data, &v, jsonx.Foreign)
 		return v, err
 	case "project_search":
 		var v ProjectsOutputProjectSearch
-		err := json.Unmarshal(data, &v)
+		err := json.Unmarshal(data, &v, jsonx.Foreign)
 		return v, err
 	case "project_write":
 		var v ProjectsOutputProjectWrite
-		err := json.Unmarshal(data, &v)
+		err := json.Unmarshal(data, &v, jsonx.Foreign)
 		return v, err
 	case "project_delete":
 		var v ProjectsOutputProjectDelete
-		err := json.Unmarshal(data, &v)
+		err := json.Unmarshal(data, &v, jsonx.Foreign)
 		return v, err
 	case "project_memory_list":
 		var v ProjectsOutputProjectMemoryList
-		err := json.Unmarshal(data, &v)
+		err := json.Unmarshal(data, &v, jsonx.Foreign)
 		return v, err
 	case "project_memory_read":
 		var v ProjectsOutputProjectMemoryRead
-		err := json.Unmarshal(data, &v)
+		err := json.Unmarshal(data, &v, jsonx.Foreign)
 		return v, err
 	}
 	return nil, fmt.Errorf("tools: unknown ProjectsOutput method %q", probe.D)
@@ -1183,7 +1185,7 @@ type AgentInput struct {
 	Model AgentModel `json:"model,omitempty"`
 
 	// Agents run in the background by default; you will be notified when one completes. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.
-	RunInBackground *bool `json:"run_in_background,omitempty"`
+	RunInBackground *bool `json:"run_in_background,omitzero"`
 
 	// Name for the spawned agent. Makes it addressable via SendMessage({to: name}) while running.
 	Name string `json:"name,omitempty"`
@@ -1237,7 +1239,7 @@ type BashInput struct {
 	Command string `json:"command"`
 
 	// Optional timeout in milliseconds (max 600000 for a foreground command)
-	Timeout *int `json:"timeout,omitempty"`
+	Timeout *int `json:"timeout,omitzero"`
 
 	// Clear, concise description of what this command does in active voice. Never use words like "complex" or "risk" in the description - just describe what it does.
 	//
@@ -1255,10 +1257,10 @@ type BashInput struct {
 	Description string `json:"description,omitempty"`
 
 	// Set to true to run this command in the background. With it, `timeout` limits how long the command may run in the background before it is stopped (default 1800000 ms, max 7200000 ms).
-	RunInBackground *bool `json:"run_in_background,omitempty"`
+	RunInBackground *bool `json:"run_in_background,omitzero"`
 
 	// Set this to true to dangerously override sandbox mode and run commands without sandboxing.
-	DangerouslyDisableSandbox *bool `json:"dangerouslyDisableSandbox,omitempty"`
+	DangerouslyDisableSandbox *bool `json:"dangerouslyDisableSandbox,omitzero"`
 }
 
 // ExitPlanModeInput mirrors the ExitPlanModeInput schema of sdk-tools.d.ts.
@@ -1284,7 +1286,7 @@ func (v ExitPlanModeInput) MarshalJSON() ([]byte, error) {
 func (v *ExitPlanModeInput) UnmarshalJSON(data []byte) error {
 	type plain ExitPlanModeInput
 	var p plain
-	if err := json.Unmarshal(data, &p); err != nil {
+	if err := json.Unmarshal(data, &p, jsonx.Foreign); err != nil {
 		return err
 	}
 	extra, err := extraFields(data, exitPlanModeInputKnown)
@@ -1319,7 +1321,7 @@ type FileEditInput struct {
 	NewString string `json:"new_string"`
 
 	// Replace all occurrences of old_string (default false)
-	ReplaceAll *bool `json:"replace_all,omitempty"`
+	ReplaceAll *bool `json:"replace_all,omitzero"`
 }
 
 // FileReadInput mirrors the FileReadInput schema of sdk-tools.d.ts.
@@ -1328,10 +1330,10 @@ type FileReadInput struct {
 	FilePath string `json:"file_path"`
 
 	// The line number to start reading from. Only provide if the file is too large to read at once
-	Offset *int `json:"offset,omitempty"`
+	Offset *int `json:"offset,omitzero"`
 
 	// The number of lines to read. Only provide if the file is too large to read at once.
-	Limit *int `json:"limit,omitempty"`
+	Limit *int `json:"limit,omitzero"`
 
 	// Page range for PDF files (e.g., "1-5", "3", "10-20"). Only applicable to PDF files. Maximum 20 pages per request.
 	Pages string `json:"pages,omitempty"`
@@ -1370,37 +1372,37 @@ type GrepInput struct {
 	OutputMode GrepOutputMode `json:"output_mode,omitempty"`
 
 	// Number of lines to show before each match (rg -B). Requires output_mode: "content", ignored otherwise.
-	Before *int `json:"-B,omitempty"`
+	Before *int `json:"-B,omitzero"`
 
 	// Number of lines to show after each match (rg -A). Requires output_mode: "content", ignored otherwise.
-	After *int `json:"-A,omitempty"`
+	After *int `json:"-A,omitzero"`
 
 	// Alias for context.
-	ContextAlias *int `json:"-C,omitempty"`
+	ContextAlias *int `json:"-C,omitzero"`
 
 	// Number of lines to show before and after each match (rg -C). Requires output_mode: "content", ignored otherwise.
-	Context *int `json:"context,omitempty"`
+	Context *int `json:"context,omitzero"`
 
 	// Show line numbers in output (rg -n). Requires output_mode: "content", ignored otherwise. Defaults to true.
-	LineNumbers *bool `json:"-n,omitempty"`
+	LineNumbers *bool `json:"-n,omitzero"`
 
 	// Case insensitive search (rg -i)
-	CaseInsensitive *bool `json:"-i,omitempty"`
+	CaseInsensitive *bool `json:"-i,omitzero"`
 
 	// Print only the matched (non-empty) parts of each matching line, one match per output line (rg -o / --only-matching). Requires output_mode: "content", ignored otherwise. Defaults to false.
-	OnlyMatching *bool `json:"-o,omitempty"`
+	OnlyMatching *bool `json:"-o,omitzero"`
 
 	// File type to search (rg --type). Common types: js, py, rust, go, java, etc. More efficient than include for standard file types.
 	Type string `json:"type,omitempty"`
 
 	// Limit output to first N lines/entries, equivalent to "| head -N". Works across all output modes: content (limits output lines), files_with_matches (limits file paths), count (limits count entries). Defaults to 250 when unspecified. Pass 0 for unlimited (use sparingly — large result sets waste context).
-	HeadLimit *int `json:"head_limit,omitempty"`
+	HeadLimit *int `json:"head_limit,omitzero"`
 
 	// Skip first N lines/entries before applying head_limit, equivalent to "| tail -n +N | head -N". Works across all output modes. Defaults to 0.
-	Offset *int `json:"offset,omitempty"`
+	Offset *int `json:"offset,omitzero"`
 
 	// Enable multiline mode where . matches newlines and patterns can span lines (rg -U --multiline-dotall). Default: false.
-	Multiline *bool `json:"multiline,omitempty"`
+	Multiline *bool `json:"multiline,omitzero"`
 }
 
 // GrepOutputMode enumerates the values allowed by the schema (first seen at GrepInput.output_mode).
@@ -1521,7 +1523,7 @@ type Finding struct {
 	File string `json:"file"`
 
 	// 1-indexed line the finding anchors to
-	Line *int `json:"line,omitempty"`
+	Line *int `json:"line,omitzero"`
 
 	// One-sentence statement of the defect
 	Summary string `json:"summary"`
@@ -1619,7 +1621,7 @@ type AskUserQuestionInput struct {
 	Annotations map[string]QuestionAnnotation `json:"annotations,omitempty"`
 
 	// Optional metadata for tracking and analytics purposes. Not displayed to user.
-	Metadata *QuestionMetadata `json:"metadata,omitempty"`
+	Metadata *QuestionMetadata `json:"metadata,omitzero"`
 }
 
 // Question is a nested object of the tool schemas (first seen at AskUserQuestionInput.questions[]).
@@ -1758,13 +1760,13 @@ type ProjectsInput struct {
 	LocalPath string `json:"local_path,omitempty"`
 
 	// project_write: true marks this doc as the file the user needs to see — the deliverable they asked for or must act on. Defaults to false; leave it unset for routine saves, notes, and bulk writes.
-	PresentToUser *bool `json:"present_to_user,omitempty"`
+	PresentToUser *bool `json:"present_to_user,omitzero"`
 
 	// project_search: knowledge-base query
 	Query string `json:"query,omitempty"`
 
 	// project_search: number of hits (default 5)
-	N *int `json:"n,omitempty"`
+	N *int `json:"n,omitzero"`
 }
 
 // ProjectsMethod enumerates the values allowed by the schema (first seen at ProjectsInput.method).
@@ -1882,10 +1884,10 @@ type CronCreateInput struct {
 	Prompt string `json:"prompt"`
 
 	// true (default) = fire on every cron match until deleted or auto-expired after 7 days. false = fire once at the next match, then auto-delete. Use false for "remind me at X" one-shot requests with pinned minute/hour/dom/month.
-	Recurring *bool `json:"recurring,omitempty"`
+	Recurring *bool `json:"recurring,omitzero"`
 
 	// true = persist to .claude/scheduled_tasks.json and survive restarts. false (default) = in-memory only, dies when this Claude session ends. Use true only when the user asks the task to survive across sessions.
-	Durable *bool `json:"durable,omitempty"`
+	Durable *bool `json:"durable,omitzero"`
 }
 
 // CronDeleteInput mirrors the CronDeleteInput schema of sdk-tools.d.ts.
@@ -1900,7 +1902,7 @@ type CronListInput struct{}
 // ScheduleWakeupInput mirrors the ScheduleWakeupInput schema of sdk-tools.d.ts.
 type ScheduleWakeupInput struct {
 	// Seconds from now to wake up. Clamped to [60, 3600] by the runtime. Required unless `stop` is true.
-	DelaySeconds *int `json:"delaySeconds,omitempty"`
+	DelaySeconds *int `json:"delaySeconds,omitzero"`
 
 	// One short sentence explaining the chosen delay. Goes to telemetry and is shown to the user. Be specific. Required unless `stop` is true.
 	Reason string `json:"reason,omitempty"`
@@ -1909,10 +1911,10 @@ type ScheduleWakeupInput struct {
 	Prompt string `json:"prompt,omitempty"`
 
 	// Set to true to end the dynamic loop immediately instead of scheduling another wakeup. When true, all other fields are ignored and no further wakeups fire.
-	Stop *bool `json:"stop,omitempty"`
+	Stop *bool `json:"stop,omitzero"`
 
 	// true = nothing changed (you checked and there is nothing to report). false = something happened worth keeping (edited a file, posted a message, advanced state, surfaced a finding). Consecutive noop:true ticks are collapsed in the user's terminal view and tracked as a streak. Required unless `stop` is true.
-	Noop *bool `json:"noop,omitempty"`
+	Noop *bool `json:"noop,omitzero"`
 }
 
 // RemoteTriggerInput mirrors the RemoteTriggerInput schema of sdk-tools.d.ts.
@@ -1965,7 +1967,7 @@ type MonitorInput struct {
 	Command string `json:"command,omitempty"`
 
 	// WebSocket to open. Each text frame is an event; binary frames are reported as a placeholder line. Socket close ends the watch. Cannot be combined with command.
-	WS *MonitorWebSocket `json:"ws,omitempty"`
+	WS *MonitorWebSocket `json:"ws,omitzero"`
 }
 
 // MonitorWebSocket is a nested object of the tool schemas (first seen at MonitorInput.ws).
@@ -2014,7 +2016,7 @@ type ProposeGoalInput struct {
 	Condition string `json:"condition"`
 
 	// Whether to ask the user for approval before the goal is set. Defaults to true — an approval dialog is shown. Set false ONLY when the user's own words in this conversation stated this outcome as what they want; the goal is then set directly, with a visible notice in the transcript, and the user can clear it with /goal clear.
-	AskUser *bool `json:"ask_user,omitempty"`
+	AskUser *bool `json:"ask_user,omitzero"`
 }
 
 // ArtifactInput mirrors the ArtifactInput schema of sdk-tools.d.ts.
@@ -2032,7 +2034,7 @@ type ArtifactInput struct {
 	Icon string `json:"icon,omitempty"`
 
 	// list only: maximum artifacts to return (default 25).
-	Limit *int `json:"limit,omitempty"`
+	Limit *int `json:"limit,omitzero"`
 
 	// list only: 'mine' (default) lists artifacts the user owns; 'shared' lists artifacts other people shared with the user; 'all' lists both. Rows are labeled (mine)/(shared) whenever scope is not 'mine'.
 	Scope ArtifactListScope `json:"scope,omitempty"`
@@ -2053,10 +2055,10 @@ type ArtifactInput struct {
 	Prompt string `json:"prompt,omitempty"`
 
 	// Last-resort overwrite that DISCARDS the newer published version's page — another session's publish, or someone's save from a page that can publish new versions of itself. On a conflict the fix is to merge your changes onto the newer content (handed to you in the rejection, or re-read) and publish again — not force. Pass force:true only when the user has explicitly said to discard that specific version; never to get past a conflict on your own judgment. The tracked baseVersion is still sent; with force:true the server treats it as informational and overwrites, unless it refuses force over a version saved from inside the page. Omit (or false) so a concurrent write conflicts instead of being silently clobbered.
-	Force *bool `json:"force,omitempty"`
+	Force *bool `json:"force,omitzero"`
 
 	// publish only: true also pins the published artifact to the user's claude.ai sidebar once it is published — pass it only when the user asked for that; a pin that fails never fails the publish (the result says so).
-	Pin *bool `json:"pin,omitempty"`
+	Pin *bool `json:"pin,omitzero"`
 
 	// read_asset: directory to save into — default: this artifact’s folder in your scratchpad directory, where saving needs no approval and which you can Read from. read_asset names the file by the asset id plus the extension for its type; saving to any directory other than the default is an ordinary file save the user may be asked to approve.
 	OutDir string `json:"out_dir,omitempty"`
@@ -2133,7 +2135,7 @@ type ExitWorktreeInput struct {
 	Action WorktreeExitAction `json:"action"`
 
 	// Required true when action is "remove" and the worktree has uncommitted files or unmerged commits. The tool will refuse and list them otherwise.
-	DiscardChanges *bool `json:"discard_changes,omitempty"`
+	DiscardChanges *bool `json:"discard_changes,omitzero"`
 }
 
 // WorktreeExitAction enumerates the values allowed by the schema (first seen at ExitWorktreeInput.action).
@@ -2160,16 +2162,16 @@ type BashOutput struct {
 	Interrupted bool `json:"interrupted"`
 
 	// Flag to indicate if stdout contains image data
-	IsImage *bool `json:"isImage,omitempty"`
+	IsImage *bool `json:"isImage,omitzero"`
 
 	// ID of the background task if command is running in background
 	BackgroundTaskID string `json:"backgroundTaskId,omitempty"`
 
 	// True if the user manually backgrounded the command with Ctrl+B
-	BackgroundedByUser *bool `json:"backgroundedByUser,omitempty"`
+	BackgroundedByUser *bool `json:"backgroundedByUser,omitzero"`
 
 	// Set when the command hit its timeout and was auto-backgrounded; the timeout value in ms
-	TimedOutAfterMs *float64 `json:"timedOutAfterMs,omitempty"`
+	TimedOutAfterMs *float64 `json:"timedOutAfterMs,omitzero"`
 
 	// Model-facing note that the session cwd was not changed by a backgrounded command containing a directory-change builtin (cd/pushd/popd/chdir)
 	BackgroundCwdHint string `json:"backgroundCwdHint,omitempty"`
@@ -2177,16 +2179,16 @@ type BashOutput struct {
 	// True when this backgrounded command is owned by a synchronous subagent and is therefore terminated when that agent gives its final response; absent when the command survives (main loop, async subagents)
 	//
 	// When present it is always true.
-	BackgroundEndsWithFinalResponse bool `json:"backgroundEndsWithFinalResponse,omitempty"`
+	BackgroundEndsWithFinalResponse bool `json:"backgroundEndsWithFinalResponse,omitzero"`
 
 	// Flag to indicate if sandbox mode was overridden
-	DangerouslyDisableSandbox *bool `json:"dangerouslyDisableSandbox,omitempty"`
+	DangerouslyDisableSandbox *bool `json:"dangerouslyDisableSandbox,omitzero"`
 
 	// Semantic interpretation for non-error exit codes with special meaning
 	ReturnCodeInterpretation string `json:"returnCodeInterpretation,omitempty"`
 
 	// Whether the command is expected to produce no output on success
-	NoOutputExpected *bool `json:"noOutputExpected,omitempty"`
+	NoOutputExpected *bool `json:"noOutputExpected,omitzero"`
 
 	// Structured content blocks
 	StructuredContent []any `json:"structuredContent,omitempty"`
@@ -2195,7 +2197,7 @@ type BashOutput struct {
 	PersistedOutputPath string `json:"persistedOutputPath,omitempty"`
 
 	// Total size of the output in bytes (set when output is too large for inline)
-	PersistedOutputSize *int `json:"persistedOutputSize,omitempty"`
+	PersistedOutputSize *int `json:"persistedOutputSize,omitzero"`
 
 	// Model-facing note listing readFileState entries whose mtime bumped during this command (set when WRITE_COMMAND_MARKERS matches)
 	StaleReadFileStateHint string `json:"staleReadFileStateHint,omitempty"`
@@ -2204,15 +2206,15 @@ type BashOutput struct {
 	GhRateLimitHint string `json:"ghRateLimitHint,omitempty"`
 
 	// Structured classification of git/gh operations detected in this command (commit/push/merge/rebase/PR). Client-facing — lets clients render git activity without re-parsing stdout; not surfaced to the model.
-	GitOperation *GitOperation `json:"gitOperation,omitempty"`
+	GitOperation *GitOperation `json:"gitOperation,omitzero"`
 }
 
 // GitOperation is a nested object of the tool schemas (first seen at BashOutput.gitOperation).
 type GitOperation struct {
-	Commit *GitOperationCommit `json:"commit,omitempty"`
-	Push   *GitOperationPush   `json:"push,omitempty"`
-	Branch *GitOperationBranch `json:"branch,omitempty"`
-	PR     *GitPullRequest     `json:"pr,omitempty"`
+	Commit *GitOperationCommit `json:"commit,omitzero"`
+	Push   *GitOperationPush   `json:"push,omitzero"`
+	Branch *GitOperationBranch `json:"branch,omitzero"`
+	PR     *GitPullRequest     `json:"pr,omitzero"`
 }
 
 // GitOperationCommit is a nested object of the tool schemas (first seen at BashOutput.gitOperation.commit).
@@ -2286,13 +2288,13 @@ type ExitPlanModeOutput struct {
 	FilePath string `json:"filePath,omitempty"`
 
 	// Whether the Agent tool is available in the current context
-	HasTaskTool *bool `json:"hasTaskTool,omitempty"`
+	HasTaskTool *bool `json:"hasTaskTool,omitzero"`
 
 	// True when the user edited the plan (CCR web UI or Ctrl+G); determines whether the plan is echoed back in tool_result
-	PlanWasEdited *bool `json:"planWasEdited,omitempty"`
+	PlanWasEdited *bool `json:"planWasEdited,omitzero"`
 
 	// When true, the teammate has sent a plan approval request to the team leader
-	AwaitingLeaderApproval *bool `json:"awaitingLeaderApproval,omitempty"`
+	AwaitingLeaderApproval *bool `json:"awaitingLeaderApproval,omitzero"`
 
 	// Unique identifier for the plan approval request
 	RequestID string `json:"requestId,omitempty"`
@@ -2320,10 +2322,10 @@ type FileEditOutput struct {
 
 	// Whether all occurrences were replaced
 	ReplaceAll bool     `json:"replaceAll"`
-	GitDiff    *GitDiff `json:"gitDiff,omitempty"`
+	GitDiff    *GitDiff `json:"gitDiff,omitzero"`
 
 	// True when the edit was held for the machine owner to review instead of written; the file is unchanged
-	Staged *bool `json:"staged,omitempty"`
+	Staged *bool `json:"staged,omitzero"`
 }
 
 // PatchHunk is a nested object of the tool schemas (first seen at FileEditOutput.structuredPatch[]).
@@ -2345,7 +2347,7 @@ type GitDiff struct {
 	Patch     string        `json:"patch"`
 
 	// GitHub owner/repo when available
-	Repository *string `json:"repository,omitempty"`
+	Repository *string `json:"repository,omitzero"`
 }
 
 // GitDiffStatus enumerates the values allowed by the schema (first seen at FileEditOutput.gitDiff.status).
@@ -2373,13 +2375,13 @@ type FileWriteOutput struct {
 
 	// The original file content before the write (null for new files, or when the previous content was too large to include)
 	OriginalFile *string  `json:"originalFile"`
-	GitDiff      *GitDiff `json:"gitDiff,omitempty"`
+	GitDiff      *GitDiff `json:"gitDiff,omitzero"`
 
 	// True when the user edited the proposed content in the permission dialog before accepting
-	UserModified *bool `json:"userModified,omitempty"`
+	UserModified *bool `json:"userModified,omitzero"`
 
 	// True when the write was held for the machine owner to review instead of written; the file is unchanged
-	Staged *bool `json:"staged,omitempty"`
+	Staged *bool `json:"staged,omitzero"`
 }
 
 // FileWriteType enumerates the values allowed by the schema (first seen at FileWriteOutput.type).
@@ -2406,10 +2408,10 @@ type GlobOutput struct {
 	Truncated bool `json:"truncated"`
 
 	// Total number of matching files before truncation. A lower bound when countIsComplete is false. Absent on results persisted by CLI versions predating this field.
-	TotalMatches *int `json:"totalMatches,omitempty"`
+	TotalMatches *int `json:"totalMatches,omitzero"`
 
 	// Whether totalMatches is the exact total (true) or a floor because the underlying search truncated its own output (false). Absent on results persisted by CLI versions predating this field.
-	CountIsComplete *bool `json:"countIsComplete,omitempty"`
+	CountIsComplete *bool `json:"countIsComplete,omitzero"`
 }
 
 // GrepOutput mirrors the GrepOutput schema of sdk-tools.d.ts.
@@ -2418,12 +2420,12 @@ type GrepOutput struct {
 	NumFiles      int            `json:"numFiles"`
 	Filenames     []string       `json:"filenames"`
 	Content       string         `json:"content,omitempty"`
-	NumLines      *int           `json:"numLines,omitempty"`
-	NumMatches    *int           `json:"numMatches,omitempty"`
-	TotalFiles    *int           `json:"totalFiles,omitempty"`
-	TotalLines    *int           `json:"totalLines,omitempty"`
-	AppliedLimit  *int           `json:"appliedLimit,omitempty"`
-	AppliedOffset *int           `json:"appliedOffset,omitempty"`
+	NumLines      *int           `json:"numLines,omitzero"`
+	NumMatches    *int           `json:"numMatches,omitzero"`
+	TotalFiles    *int           `json:"totalFiles,omitzero"`
+	TotalLines    *int           `json:"totalLines,omitzero"`
+	AppliedLimit  *int           `json:"appliedLimit,omitzero"`
+	AppliedOffset *int           `json:"appliedOffset,omitzero"`
 }
 
 // TaskStopOutput mirrors the TaskStopOutput schema of sdk-tools.d.ts.
@@ -2558,7 +2560,7 @@ type WebFetchOutput struct {
 
 	// The URL that was fetched
 	URL          string           `json:"url"`
-	ArtifactRead *ArtifactReadRef `json:"artifactRead,omitempty"`
+	ArtifactRead *ArtifactReadRef `json:"artifactRead,omitzero"`
 }
 
 // WebSearchOutput mirrors the WebSearchOutput schema of sdk-tools.d.ts.
@@ -2573,7 +2575,7 @@ type WebSearchOutput struct {
 	DurationSeconds float64 `json:"durationSeconds"`
 
 	// Number of web searches performed
-	SearchCount *int `json:"searchCount,omitempty"`
+	SearchCount *int `json:"searchCount,omitzero"`
 }
 
 // WebSearchResult is a nested value of the tool schemas (first seen at WebSearchOutput.results[]).
@@ -2588,9 +2590,9 @@ type WebSearchResult struct {
 func (u WebSearchResult) MarshalJSON() ([]byte, error) {
 	switch {
 	case u.String != nil:
-		return json.Marshal(u.String)
+		return json.Marshal(u.String, marshalOpts)
 	case u.Object != nil:
-		return json.Marshal(u.Object)
+		return json.Marshal(u.Object, marshalOpts)
 	}
 	return []byte("null"), nil
 }
@@ -2600,9 +2602,9 @@ func (u *WebSearchResult) UnmarshalJSON(data []byte) error {
 	*u = WebSearchResult{}
 	switch k := jsonValueKind(data); k {
 	case kindString:
-		return json.Unmarshal(data, &u.String)
+		return json.Unmarshal(data, &u.String, jsonx.Foreign)
 	case kindObject:
-		return json.Unmarshal(data, &u.Object)
+		return json.Unmarshal(data, &u.Object, jsonx.Foreign)
 	case kindNull:
 		return nil
 	default:
@@ -2643,7 +2645,7 @@ type AskUserQuestionOutput struct {
 	Annotations map[string]QuestionAnnotation `json:"annotations,omitempty"`
 
 	// Set when the dialog auto-resolved after this many milliseconds of idle (user away from keyboard). Absent on every human-resolved path.
-	AfkTimeoutMs *float64 `json:"afkTimeoutMs,omitempty"`
+	AfkTimeoutMs *float64 `json:"afkTimeoutMs,omitzero"`
 }
 
 // SendFeedbackOutput mirrors the SendFeedbackOutput schema of sdk-tools.d.ts.
@@ -2666,8 +2668,8 @@ type ExitWorktreeOutput struct {
 	WorktreePath     string             `json:"worktreePath"`
 	WorktreeBranch   string             `json:"worktreeBranch,omitempty"`
 	TmuxSessionName  string             `json:"tmuxSessionName,omitempty"`
-	DiscardedFiles   *int               `json:"discardedFiles,omitempty"`
-	DiscardedCommits *int               `json:"discardedCommits,omitempty"`
+	DiscardedFiles   *int               `json:"discardedFiles,omitzero"`
+	DiscardedCommits *int               `json:"discardedCommits,omitzero"`
 	Message          string             `json:"message"`
 }
 
@@ -2703,7 +2705,7 @@ type TaskUpdateOutput struct {
 	TaskID        string            `json:"taskId"`
 	UpdatedFields []string          `json:"updatedFields"`
 	Error         string            `json:"error,omitempty"`
-	StatusChange  *TaskStatusChange `json:"statusChange,omitempty"`
+	StatusChange  *TaskStatusChange `json:"statusChange,omitzero"`
 }
 
 // TaskStatusChange is a nested object of the tool schemas (first seen at TaskUpdateOutput.statusChange).
@@ -2736,7 +2738,7 @@ type RemoteTriggerOutput struct {
 // ShowOnboardingRolePickerOutput mirrors the ShowOnboardingRolePickerOutput schema of sdk-tools.d.ts.
 type ShowOnboardingRolePickerOutput struct {
 	Role      string `json:"role,omitempty"`
-	Dismissed *bool  `json:"dismissed,omitempty"`
+	Dismissed *bool  `json:"dismissed,omitzero"`
 }
 
 // ReadNotificationsOutput mirrors the ReadNotificationsOutput schema of sdk-tools.d.ts.
@@ -2774,10 +2776,10 @@ type ScheduleWakeupOutput struct {
 	WasClamped bool `json:"wasClamped"`
 
 	// True when the model ended the loop via `stop: true`
-	Stopped *bool `json:"stopped,omitempty"`
+	Stopped *bool `json:"stopped,omitzero"`
 
 	// How many pending dynamic-loop wakeups stop:true cancelled. 0 means nothing was pending — a recurring /loop cron is not cancelled by stop:true.
-	CancelledWakeups *int `json:"cancelledWakeups,omitempty"`
+	CancelledWakeups *int `json:"cancelledWakeups,omitzero"`
 }
 
 // MonitorOutput mirrors the MonitorOutput schema of sdk-tools.d.ts.
@@ -2789,7 +2791,7 @@ type MonitorOutput struct {
 	TimeoutMs float64 `json:"timeoutMs"`
 
 	// No timeout — runs until TaskStop or session end.
-	Persistent *bool `json:"persistent,omitempty"`
+	Persistent *bool `json:"persistent,omitzero"`
 }
 
 // ProposeSkillsOutput mirrors the ProposeSkillsOutput schema of sdk-tools.d.ts.
@@ -2867,7 +2869,7 @@ type CronCreateOutput struct {
 	ID            string `json:"id"`
 	HumanSchedule string `json:"humanSchedule"`
 	Recurring     bool   `json:"recurring"`
-	Durable       *bool  `json:"durable,omitempty"`
+	Durable       *bool  `json:"durable,omitzero"`
 }
 
 // CronDeleteOutput mirrors the CronDeleteOutput schema of sdk-tools.d.ts.
@@ -2886,15 +2888,15 @@ type CronJob struct {
 	Cron          string `json:"cron"`
 	HumanSchedule string `json:"humanSchedule"`
 	Prompt        string `json:"prompt"`
-	Recurring     *bool  `json:"recurring,omitempty"`
-	Durable       *bool  `json:"durable,omitempty"`
+	Recurring     *bool  `json:"recurring,omitzero"`
+	Durable       *bool  `json:"durable,omitzero"`
 }
 
 // PushNotificationOutput mirrors the PushNotificationOutput schema of sdk-tools.d.ts.
 type PushNotificationOutput struct {
 	Message        string             `json:"message"`
-	PushSent       *bool              `json:"pushSent,omitempty"`
-	LocalSent      *bool              `json:"localSent,omitempty"`
+	PushSent       *bool              `json:"pushSent,omitzero"`
+	LocalSent      *bool              `json:"localSent,omitzero"`
 	DisabledReason PushDisabledReason `json:"disabledReason,omitempty"`
 
 	// ISO timestamp captured at tool execution on the emitting process. Optional — resumed sessions replay pre-sentAt outputs verbatim.
@@ -2915,5 +2917,5 @@ const (
 type ClaudeDesignOutput struct {
 	Operation string           `json:"operation"`
 	Content   []map[string]any `json:"content"`
-	IsError   *bool            `json:"isError,omitempty"`
+	IsError   *bool            `json:"isError,omitzero"`
 }

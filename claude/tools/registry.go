@@ -3,11 +3,14 @@ package tools
 //go:generate go run ./internal/gen -sdk-version 0.3.286 -out zz_generated.go
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // Built-in tool names as they appear in ToolUseBlock.Name, CanUseTool's
@@ -110,7 +113,7 @@ func tool[In, Out any](name string) Tool {
 		Output: reflect.TypeFor[Out](),
 		decodeOut: func(b []byte) (any, error) {
 			var v Out
-			err := json.Unmarshal(b, &v)
+			err := json.Unmarshal(b, &v, jsonx.Foreign)
 			return v, err
 		},
 	}
@@ -221,12 +224,12 @@ func DecodeInput(name string, input map[string]any) (any, error) {
 	if t.Name == McpPrefix {
 		return McpInput(input), nil
 	}
-	b, err := json.Marshal(input)
+	b, err := json.Marshal(input, marshalOpts)
 	if err != nil {
 		return nil, fmt.Errorf("tools: encode %s input: %w", name, err)
 	}
 	v := reflect.New(t.Input)
-	if err := json.Unmarshal(b, v.Interface()); err != nil {
+	if err := json.Unmarshal(b, v.Interface(), jsonx.Foreign); err != nil {
 		return nil, fmt.Errorf("tools: decode %s input: %w", name, err)
 	}
 	return v.Elem().Interface(), nil
@@ -235,7 +238,7 @@ func DecodeInput(name string, input map[string]any) (any, error) {
 // DecodeOutput converts a tool's structured result (UserMessage.ToolUseResult
 // or a PostToolUse hook's tool_response) into its typed form, e.g. BashOutput
 // for "Bash" or one of the AgentOutput variants for "Agent". output may be
-// json.RawMessage or []byte holding raw JSON, or any value that encodes to it
+// jsontext.Value or []byte holding raw JSON, or any value that encodes to it
 // (a map[string]any, []any, string, ...). Unknown tool names yield an error
 // wrapping ErrUnknownTool.
 func DecodeOutput(name string, output any) (any, error) {
@@ -245,13 +248,13 @@ func DecodeOutput(name string, output any) (any, error) {
 	}
 	var b []byte
 	switch o := output.(type) {
-	case json.RawMessage:
+	case jsontext.Value:
 		b = o
 	case []byte:
 		b = o
 	default:
 		var err error
-		if b, err = json.Marshal(output); err != nil {
+		if b, err = json.Marshal(output, marshalOpts); err != nil {
 			return nil, fmt.Errorf("tools: encode %s output: %w", name, err)
 		}
 	}
@@ -269,11 +272,11 @@ func DecodeOutput(name string, output any) (any, error) {
 // It does not check the tool name; use DecodeInput to dispatch by name.
 func As[T any](input map[string]any) (T, error) {
 	var v T
-	b, err := json.Marshal(input)
+	b, err := json.Marshal(input, marshalOpts)
 	if err != nil {
 		return v, err
 	}
-	err = json.Unmarshal(b, &v)
+	err = json.Unmarshal(b, &v, jsonx.Foreign)
 	return v, err
 }
 
@@ -281,12 +284,12 @@ func As[T any](input map[string]any) (T, error) {
 // object) back into the map[string]any form used by ToolUseBlock.Input and
 // PermissionResultAllow.UpdatedInput.
 func ToMap(v any) (map[string]any, error) {
-	b, err := json.Marshal(v)
+	b, err := json.Marshal(v, marshalOpts)
 	if err != nil {
 		return nil, err
 	}
 	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil {
+	if err := json.Unmarshal(b, &m, jsonx.Foreign); err != nil {
 		return nil, fmt.Errorf("tools: %T does not encode to a JSON object: %w", v, err)
 	}
 	return m, nil

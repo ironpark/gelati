@@ -3,13 +3,16 @@ package codex
 import (
 	"cmp"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math/rand/v2"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // Error is implemented by every error type this package originates
@@ -72,7 +75,7 @@ type RPCError struct {
 	// Message is the human-readable error message.
 	Message string `json:"message"`
 	// Data carries optional structured error detail.
-	Data json.RawMessage `json:"data,omitempty"`
+	Data jsontext.Value `json:"data,omitempty"`
 }
 
 // Error implements the error interface.
@@ -139,7 +142,7 @@ func IsOverloaded(err error) bool {
 		return false
 	}
 	var data any
-	if json.Unmarshal(rpcErr.Data, &data) != nil {
+	if json.Unmarshal(rpcErr.Data, &data, jsonx.Foreign) != nil {
 		return false
 	}
 	return mentionsOverload(data)

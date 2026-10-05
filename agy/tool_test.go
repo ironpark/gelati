@@ -2,7 +2,8 @@ package agy
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"reflect"
 	"strings"
@@ -36,7 +37,7 @@ func TestNewToolSchema(t *testing.T) {
 		"required": []any{"location"},
 	}
 	if !reflect.DeepEqual(got, want) {
-		gb, _ := json.Marshal(got)
+		gb, _ := json.Marshal(got, json.Deterministic(true))
 		t.Fatalf("schema %s", gb)
 	}
 	if tool.Name() != "get_weather" || tool.Description() != "Gets the weather." {
@@ -63,7 +64,7 @@ func TestSchemaForTypes(t *testing.T) {
 		Items     []Item            `json:"items"`
 		Meta      map[string]int    `json:"meta"`
 		When      time.Time         `json:"when"`
-		Raw       json.RawMessage   `json:"raw"`
+		Raw       jsontext.Value    `json:"raw"`
 		Anything  any               `json:"anything"`
 		Blob      []byte            `json:"blob"`
 		Tree      Node              `json:"tree"`
@@ -154,7 +155,7 @@ func TestNormalizeSchema(t *testing.T) {
 		"additionalProperties": false,
 	}
 	if !reflect.DeepEqual(got, want) {
-		gb, _ := json.Marshal(got)
+		gb, _ := json.Marshal(got, json.Deterministic(true))
 		t.Fatalf("normalized %s", gb)
 	}
 	if NormalizeSchema("STRING") != "string" || NormalizeSchema("Hello") != "Hello" || NormalizeSchema(5) != 5 {

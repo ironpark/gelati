@@ -14,10 +14,10 @@ type ToolProgressMessage struct {
 	ElapsedTimeSeconds float64 `json:"elapsed_time_seconds"`
 	TaskID             string  `json:"task_id,omitempty"`
 	// Heartbeat marks a keep-alive tick rather than new progress.
-	Heartbeat    bool   `json:"heartbeat,omitempty"`
+	Heartbeat    bool   `json:"heartbeat,omitzero"`
 	SubagentType string `json:"subagent_type,omitempty"`
 	// SubagentRetry is set while a subagent waits to retry a failed API call.
-	SubagentRetry *SubagentRetry `json:"subagent_retry,omitempty"`
+	SubagentRetry *SubagentRetry `json:"subagent_retry,omitzero"`
 	UUID          string         `json:"uuid"`
 	SessionID     string         `json:"session_id"`
 }

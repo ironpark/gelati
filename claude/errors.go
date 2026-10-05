@@ -1,7 +1,7 @@
 package claude
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"strings"
@@ -212,10 +212,10 @@ func (e *JSONDecodeError) Unwrap() error { return e.Err }
 type MessageParseError struct {
 	baseError
 	// Data is the offending payload, when available.
-	Data json.RawMessage
+	Data jsontext.Value
 }
 
 // NewMessageParseError builds a MessageParseError. data may be nil.
-func NewMessageParseError(msg string, data json.RawMessage) *MessageParseError {
+func NewMessageParseError(msg string, data jsontext.Value) *MessageParseError {
 	return &MessageParseError{baseError{Msg: msg}, data}
 }

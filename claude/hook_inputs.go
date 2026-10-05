@@ -2,8 +2,10 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // ---------------------------------------------------------------------------
@@ -42,7 +44,7 @@ type BaseHookInput struct {
 	// set them.
 	AgentID   string      `json:"agent_id,omitempty"`
 	AgentType string      `json:"agent_type,omitempty"`
-	Effort    *HookEffort `json:"effort,omitempty"`
+	Effort    *HookEffort `json:"effort,omitzero"`
 }
 
 // Base returns b, so every per-event struct satisfies HookInput through the
@@ -78,7 +80,7 @@ type PostToolBatchToolCall struct {
 	ToolName     string         `json:"tool_name"`
 	ToolInput    map[string]any `json:"tool_input"`
 	ToolUseID    string         `json:"tool_use_id"`
-	ToolResponse any            `json:"tool_response,omitempty"`
+	ToolResponse any            `json:"tool_response,omitzero"`
 }
 
 // PreToolUseHookInput is the input of a PreToolUse hook.
@@ -88,7 +90,7 @@ type PreToolUseHookInput struct {
 	ToolInput map[string]any `json:"tool_input"`
 	ToolUseID string         `json:"tool_use_id"`
 	// MCPServer is set for mcp__* tools.
-	MCPServer *MCPServerProvenance `json:"mcp_server,omitempty"`
+	MCPServer *MCPServerProvenance `json:"mcp_server,omitzero"`
 }
 
 // PostToolUseHookInput is the input of a PostToolUse hook.
@@ -98,8 +100,8 @@ type PostToolUseHookInput struct {
 	ToolInput    map[string]any       `json:"tool_input"`
 	ToolResponse any                  `json:"tool_response"`
 	ToolUseID    string               `json:"tool_use_id"`
-	DurationMS   *float64             `json:"duration_ms,omitempty"`
-	MCPServer    *MCPServerProvenance `json:"mcp_server,omitempty"`
+	DurationMS   *float64             `json:"duration_ms,omitzero"`
+	MCPServer    *MCPServerProvenance `json:"mcp_server,omitzero"`
 }
 
 // PostToolUseFailureHookInput is the input of a PostToolUseFailure hook.
@@ -109,9 +111,9 @@ type PostToolUseFailureHookInput struct {
 	ToolInput   map[string]any       `json:"tool_input"`
 	ToolUseID   string               `json:"tool_use_id"`
 	Error       string               `json:"error"`
-	IsInterrupt bool                 `json:"is_interrupt,omitempty"`
-	DurationMS  *float64             `json:"duration_ms,omitempty"`
-	MCPServer   *MCPServerProvenance `json:"mcp_server,omitempty"`
+	IsInterrupt bool                 `json:"is_interrupt,omitzero"`
+	DurationMS  *float64             `json:"duration_ms,omitzero"`
+	MCPServer   *MCPServerProvenance `json:"mcp_server,omitzero"`
 }
 
 // PostToolBatchHookInput is the input of a PostToolBatch hook, fired once a
@@ -158,10 +160,10 @@ type SessionStartHookInput struct {
 	Source                   string   `json:"source"`
 	Model                    string   `json:"model,omitempty"`
 	SessionTitle             string   `json:"session_title,omitempty"`
-	SecondsSinceLastResponse *float64 `json:"seconds_since_last_response,omitempty"`
-	ContextTokens            *int     `json:"context_tokens,omitempty"`
-	PromptCacheLikelyExpired *bool    `json:"prompt_cache_likely_expired,omitempty"`
-	EstimatedCacheWriteUSD   *float64 `json:"estimated_cache_write_usd,omitempty"`
+	SecondsSinceLastResponse *float64 `json:"seconds_since_last_response,omitzero"`
+	ContextTokens            *int     `json:"context_tokens,omitzero"`
+	PromptCacheLikelyExpired *bool    `json:"prompt_cache_likely_expired,omitzero"`
+	EstimatedCacheWriteUSD   *float64 `json:"estimated_cache_write_usd,omitzero"`
 }
 
 // SessionEndHookInput is the input of a SessionEnd hook.
@@ -259,7 +261,7 @@ type PermissionRequestHookInput struct {
 	ToolName              string               `json:"tool_name"`
 	ToolInput             map[string]any       `json:"tool_input"`
 	PermissionSuggestions []PermissionUpdate   `json:"permission_suggestions,omitempty"`
-	MCPServer             *MCPServerProvenance `json:"mcp_server,omitempty"`
+	MCPServer             *MCPServerProvenance `json:"mcp_server,omitzero"`
 }
 
 // PermissionDeniedHookInput is the input of a PermissionDenied hook.
@@ -269,7 +271,7 @@ type PermissionDeniedHookInput struct {
 	ToolInput map[string]any       `json:"tool_input"`
 	ToolUseID string               `json:"tool_use_id"`
 	Reason    string               `json:"reason"`
-	MCPServer *MCPServerProvenance `json:"mcp_server,omitempty"`
+	MCPServer *MCPServerProvenance `json:"mcp_server,omitzero"`
 }
 
 // SetupHookInput is the input of a Setup hook.
@@ -446,7 +448,7 @@ var hookInputFactories = map[HookEvent]func() HookInput{
 // had an unexpected JSON type. Nested values with their own decoders, such as
 // permission suggestions, are read leniently and keep their zero values.
 func DecodeHookInput(raw map[string]any) (HookInput, error) {
-	payload, err := json.Marshal(raw)
+	payload, err := json.Marshal(raw, marshalOpts)
 	if err != nil {
 		return nil, fmt.Errorf("claude: encoding hook input: %w", err)
 	}
@@ -454,13 +456,13 @@ func DecodeHookInput(raw map[string]any) (HookInput, error) {
 	factory, ok := hookInputFactories[event]
 	if !ok {
 		unknown := &UnknownHookInput{Raw: raw}
-		if err := json.Unmarshal(payload, &unknown.BaseHookInput); err != nil {
+		if err := json.Unmarshal(payload, &unknown.BaseHookInput, jsonx.Foreign); err != nil {
 			return nil, fmt.Errorf("claude: decoding %q hook input: %w", event, err)
 		}
 		return unknown, nil
 	}
 	in := factory()
-	if err := json.Unmarshal(payload, in); err != nil {
+	if err := json.Unmarshal(payload, in, jsonx.Foreign); err != nil {
 		return nil, fmt.Errorf("claude: decoding %s hook input: %w", event, err)
 	}
 	return in, nil

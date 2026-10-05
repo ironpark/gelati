@@ -2,7 +2,8 @@ package codex
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"testing"
 	"time"
@@ -130,7 +131,7 @@ func TestRunInterruptsOnCancel(t *testing.T) {
 	stream := startTurn(t, client, server, threadID, "turn_1", Text("hi"))
 
 	ctx, cancel := context.WithCancel(context.Background())
-	interrupted := make(chan json.RawMessage, 1)
+	interrupted := make(chan jsontext.Value, 1)
 	done := serve(t, func() {
 		req := server.expect("turn/interrupt")
 		interrupted <- req.Params
@@ -222,10 +223,10 @@ func TestIsOverloaded(t *testing.T) {
 		want bool
 	}{
 		{&RPCError{Code: CodeServerOverloaded}, true},
-		{&RPCError{Code: -32000, Data: json.RawMessage(`{"codexErrorInfo":"server_overloaded"}`)}, true},
-		{&RPCError{Code: -32000, Data: json.RawMessage(`{"codexErrorInfo":{"serverOverloaded":{}}}`)}, true},
-		{&RPCError{Code: -32000, Data: json.RawMessage(`{"codexErrorInfo":"other"}`)}, false},
-		{&RPCError{Code: CodeInvalidParams, Data: json.RawMessage(`"server_overloaded"`)}, false},
+		{&RPCError{Code: -32000, Data: jsontext.Value(`{"codexErrorInfo":"server_overloaded"}`)}, true},
+		{&RPCError{Code: -32000, Data: jsontext.Value(`{"codexErrorInfo":{"serverOverloaded":{}}}`)}, true},
+		{&RPCError{Code: -32000, Data: jsontext.Value(`{"codexErrorInfo":"other"}`)}, false},
+		{&RPCError{Code: CodeInvalidParams, Data: jsontext.Value(`"server_overloaded"`)}, false},
 		{errors.New("plain"), false},
 	}
 	for _, tc := range cases {

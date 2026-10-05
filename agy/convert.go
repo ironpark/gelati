@@ -2,10 +2,12 @@ package agy
 
 import (
 	"cmp"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"reflect"
 	"slices"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 
 	"github.com/ironpark/gelati/agy/internal/wire"
 	"google.golang.org/protobuf/proto"
@@ -192,7 +194,7 @@ func stepFromUpdate(su *wire.StepUpdate) *Step {
 	if step.Type == StepTypeFinish {
 		if out := su.GetFinish().GetOutputString(); out != "" {
 			var v any
-			if err := json.Unmarshal([]byte(out), &v); err == nil {
+			if err := json.Unmarshal([]byte(out), &v, jsonx.Foreign); err == nil {
 				step.StructuredOutput = v
 			}
 		}
@@ -438,7 +440,7 @@ func toolResponse(r *ToolResult) (*wire.ToolResponse, error) {
 		}
 		res.Result = cleaned
 	}
-	b, err := json.Marshal(toolResultPayload(&res))
+	b, err := json.Marshal(toolResultPayload(&res), json.Deterministic(true))
 	if err != nil {
 		return nil, err
 	}

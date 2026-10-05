@@ -14,16 +14,16 @@ const (
 
 // MCPToolAnnotations are the tool hints reported in MCP server status.
 type MCPToolAnnotations struct {
-	ReadOnly    *bool `json:"readOnly,omitempty"`
-	Destructive *bool `json:"destructive,omitempty"`
-	OpenWorld   *bool `json:"openWorld,omitempty"`
+	ReadOnly    *bool `json:"readOnly,omitzero"`
+	Destructive *bool `json:"destructive,omitzero"`
+	OpenWorld   *bool `json:"openWorld,omitzero"`
 }
 
 // MCPToolInfo describes one tool provided by an MCP server.
 type MCPToolInfo struct {
 	Name        string              `json:"name"`
 	Description string              `json:"description,omitempty"`
-	Annotations *MCPToolAnnotations `json:"annotations,omitempty"`
+	Annotations *MCPToolAnnotations `json:"annotations,omitzero"`
 	// Meta holds the MCP Apps members of the tool's _meta (ui,
 	// ui/resourceUri), for hosts that render the tool's ui:// resource.
 	Meta map[string]any `json:"_meta,omitempty"`
@@ -42,7 +42,7 @@ type MCPServerStatus struct {
 	// Status is the current connection state.
 	Status MCPServerConnectionStatus `json:"status"`
 	// ServerInfo is set once the server is connected.
-	ServerInfo *MCPServerInfo `json:"serverInfo,omitempty"`
+	ServerInfo *MCPServerInfo `json:"serverInfo,omitzero"`
 	// Error is set when Status is "failed".
 	Error string `json:"error,omitempty"`
 	// Config is the server's configuration as the CLI reports it. Its "type"

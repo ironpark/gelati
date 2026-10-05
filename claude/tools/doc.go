@@ -77,7 +77,8 @@
 //     "-o" OnlyMatching).
 //   - Required properties have no omitempty. Optional strings, slices and
 //     maps use omitempty (absent and empty are not distinguished); optional
-//     booleans, numbers and objects are pointers.
+//     booleans, numbers and objects are pointers, and they and other
+//     optional properties use omitzero (only nil is left out).
 //   - "T | null" is *T; a required nullable property encodes as null when nil.
 //   - Unions of string literals are named string types with constants (e.g.
 //     GrepOutputMode); single literals are plain strings documented with

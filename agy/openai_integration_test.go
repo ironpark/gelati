@@ -2,7 +2,7 @@ package agy_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 
 	"github.com/ironpark/gelati/agy"
 	"github.com/ironpark/gelati/agy/policy"
@@ -99,7 +101,7 @@ func TestRealHarnessOpenAI(t *testing.T) {
 				Role string `json:"role"`
 			} `json:"messages"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.UnmarshalRead(r.Body, &body, jsonx.Foreign); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

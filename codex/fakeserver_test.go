@@ -3,7 +3,8 @@ package codex
 import (
 	"bufio"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"io"
 	"sync"
 	"testing"
@@ -150,14 +151,14 @@ func (s *fakeServer) respond(req *wireMessage, result any) {
 	if result == nil {
 		result = struct{}{}
 	}
-	s.send(map[string]any{"id": json.RawMessage(req.ID), "result": result})
+	s.send(map[string]any{"id": jsontext.Value(req.ID), "result": result})
 }
 
 // respondError answers a client request with a JSON-RPC error.
 func (s *fakeServer) respondError(req *wireMessage, code int, message string) {
 	s.t.Helper()
 	s.send(map[string]any{
-		"id":    json.RawMessage(req.ID),
+		"id":    jsontext.Value(req.ID),
 		"error": map[string]any{"code": code, "message": message},
 	})
 }

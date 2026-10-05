@@ -1,8 +1,10 @@
 package claude
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"maps"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // Settings is a Claude Code settings object, the same shape as a
@@ -16,21 +18,21 @@ type Settings map[string]any
 // Filesystem and network access themselves are governed by permission rules
 // (Read, Edit and WebFetch); these settings control the sandbox's behavior.
 type SandboxSettings struct {
-	Enabled *bool `json:"enabled,omitempty"`
+	Enabled *bool `json:"enabled,omitzero"`
 	// FailIfUnavailable makes the run fail when the sandbox cannot start.
 	// Options.Sandbox defaults it to true whenever Enabled is true.
-	FailIfUnavailable            *bool                      `json:"failIfUnavailable,omitempty"`
-	AutoAllowBashIfSandboxed     *bool                      `json:"autoAllowBashIfSandboxed,omitempty"`
-	AllowUnsandboxedCommands     *bool                      `json:"allowUnsandboxedCommands,omitempty"`
-	Network                      *SandboxNetworkSettings    `json:"network,omitempty"`
-	Filesystem                   *SandboxFilesystemSettings `json:"filesystem,omitempty"`
+	FailIfUnavailable            *bool                      `json:"failIfUnavailable,omitzero"`
+	AutoAllowBashIfSandboxed     *bool                      `json:"autoAllowBashIfSandboxed,omitzero"`
+	AllowUnsandboxedCommands     *bool                      `json:"allowUnsandboxedCommands,omitzero"`
+	Network                      *SandboxNetworkSettings    `json:"network,omitzero"`
+	Filesystem                   *SandboxFilesystemSettings `json:"filesystem,omitzero"`
 	Credentials                  map[string]any             `json:"credentials,omitempty"`
 	IgnoreViolations             map[string][]string        `json:"ignoreViolations,omitempty"`
-	EnableWeakerNestedSandbox    *bool                      `json:"enableWeakerNestedSandbox,omitempty"`
-	EnableWeakerNetworkIsolation *bool                      `json:"enableWeakerNetworkIsolation,omitempty"`
-	AllowAppleEvents             *bool                      `json:"allowAppleEvents,omitempty"`
+	EnableWeakerNestedSandbox    *bool                      `json:"enableWeakerNestedSandbox,omitzero"`
+	EnableWeakerNetworkIsolation *bool                      `json:"enableWeakerNetworkIsolation,omitzero"`
+	AllowAppleEvents             *bool                      `json:"allowAppleEvents,omitzero"`
 	ExcludedCommands             []string                   `json:"excludedCommands,omitempty"`
-	Ripgrep                      *SandboxRipgrepConfig      `json:"ripgrep,omitempty"`
+	Ripgrep                      *SandboxRipgrepConfig      `json:"ripgrep,omitzero"`
 	BwrapPath                    string                     `json:"bwrapPath,omitempty"`
 	SocatPath                    string                     `json:"socatPath,omitempty"`
 
@@ -43,15 +45,15 @@ type SandboxSettings struct {
 type SandboxNetworkSettings struct {
 	AllowedDomains          []string             `json:"allowedDomains,omitempty"`
 	DeniedDomains           []string             `json:"deniedDomains,omitempty"`
-	StrictAllowlist         *bool                `json:"strictAllowlist,omitempty"`
-	AllowManagedDomainsOnly *bool                `json:"allowManagedDomainsOnly,omitempty"`
+	StrictAllowlist         *bool                `json:"strictAllowlist,omitzero"`
+	AllowManagedDomainsOnly *bool                `json:"allowManagedDomainsOnly,omitzero"`
 	AllowUnixSockets        []string             `json:"allowUnixSockets,omitempty"`
-	AllowAllUnixSockets     *bool                `json:"allowAllUnixSockets,omitempty"`
-	AllowLocalBinding       *bool                `json:"allowLocalBinding,omitempty"`
+	AllowAllUnixSockets     *bool                `json:"allowAllUnixSockets,omitzero"`
+	AllowLocalBinding       *bool                `json:"allowLocalBinding,omitzero"`
 	AllowMachLookup         []string             `json:"allowMachLookup,omitempty"`
-	HTTPProxyPort           *int                 `json:"httpProxyPort,omitempty"`
-	SOCKSProxyPort          *int                 `json:"socksProxyPort,omitempty"`
-	TLSTerminate            *SandboxTLSTerminate `json:"tlsTerminate,omitempty"`
+	HTTPProxyPort           *int                 `json:"httpProxyPort,omitzero"`
+	SOCKSProxyPort          *int                 `json:"socksProxyPort,omitzero"`
+	TLSTerminate            *SandboxTLSTerminate `json:"tlsTerminate,omitzero"`
 }
 
 // SandboxTLSTerminate configures TLS termination in the sandbox proxy.
@@ -66,8 +68,8 @@ type SandboxFilesystemSettings struct {
 	DenyWrite                 []string `json:"denyWrite,omitempty"`
 	DenyRead                  []string `json:"denyRead,omitempty"`
 	AllowRead                 []string `json:"allowRead,omitempty"`
-	AllowManagedReadPathsOnly *bool    `json:"allowManagedReadPathsOnly,omitempty"`
-	Disabled                  *bool    `json:"disabled,omitempty"`
+	AllowManagedReadPathsOnly *bool    `json:"allowManagedReadPathsOnly,omitzero"`
+	Disabled                  *bool    `json:"disabled,omitzero"`
 }
 
 // SandboxRipgrepConfig points the sandbox at a ripgrep binary.
@@ -79,17 +81,17 @@ type SandboxRipgrepConfig struct {
 // MarshalJSON emits the typed fields merged over Extra.
 func (s SandboxSettings) MarshalJSON() ([]byte, error) {
 	type alias SandboxSettings
-	typed, err := json.Marshal(alias(s))
+	typed, err := json.Marshal(alias(s), marshalOpts)
 	if err != nil || len(s.Extra) == 0 {
 		return typed, err
 	}
 	merged := maps.Clone(s.Extra)
 	var fields map[string]any
-	if err := json.Unmarshal(typed, &fields); err != nil {
+	if err := json.Unmarshal(typed, &fields, jsonx.Foreign); err != nil {
 		return nil, err
 	}
 	maps.Copy(merged, fields)
-	return json.Marshal(merged)
+	return json.Marshal(merged, marshalOpts)
 }
 
 // ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -814,7 +814,7 @@ func TestEngineReportMirrorError(t *testing.T) {
 		t.Fatalf("uuid = %q", u)
 	}
 	// The payload parses back to the same message.
-	raw, err := json.Marshal(d)
+	raw, err := json.Marshal(d, json.Deterministic(true))
 	if err != nil {
 		t.Fatal(err)
 	}

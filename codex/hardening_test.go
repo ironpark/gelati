@@ -3,7 +3,7 @@ package codex
 import (
 	"bufio"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"strings"
 	"testing"
@@ -106,7 +106,7 @@ func TestOverloadErrorIsDistinct(t *testing.T) {
 
 	done := serve(t, func() {
 		req := server.expect("thread/list")
-		server.send(map[string]any{"id": json.RawMessage(req.ID), "error": map[string]any{
+		server.send(map[string]any{"id": jsontext.Value(req.ID), "error": map[string]any{
 			"code": CodeServerOverloaded, "message": "Server overloaded; retry later.",
 			"data": map[string]any{"retryAfterMs": 250},
 		}})

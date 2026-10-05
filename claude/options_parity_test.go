@@ -2,7 +2,8 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"os"
 	"os/exec"
@@ -61,7 +62,7 @@ func TestInitializeExtras(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := json.Marshal(initializeExtras(t, tc.opts))
+			got, err := json.Marshal(initializeExtras(t, tc.opts), json.Deterministic(true))
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -88,7 +89,7 @@ func TestOptionsValidation(t *testing.T) {
 		{"badPluginTypeViaInitialize", Options{PluginDelivery: PluginDeliveryInitialize,
 			Plugins: []PluginConfig{{Type: "remote", Path: "/p"}}}, "unsupported plugin type"},
 		{"settingsPathWithSandbox", Options{Settings: "/s.json", Sandbox: map[string]any{"enabled": true}}, "settings file path"},
-		{"sandboxNotObject", Options{Sandbox: json.RawMessage(`[1]`)}, "JSON object"},
+		{"sandboxNotObject", Options{Sandbox: jsontext.Value(`[1]`)}, "JSON object"},
 		{"settingsNotObject", Options{Settings: []string{"x"}}, "JSON object"},
 		{"badSkillName", Options{Skills: SkillList{"bad,name"}}, "invalid skill name"},
 		{"canUseToolWithPromptTool", Options{PermissionPromptToolName: "mcp__x",
@@ -133,7 +134,7 @@ func TestBuildSettingsValue(t *testing.T) {
 			`{"sandbox":{"enabled":true,"failIfUnavailable":false}}`},
 		{"disabledNotDefaulted", Options{Sandbox: SandboxSettings{Enabled: new(false)}},
 			`{"sandbox":{"enabled":false}}`},
-		{"rawSandboxMergedIntoInline", Options{Settings: `{"model":"opus"}`, Sandbox: json.RawMessage(`{"enabled":true}`)},
+		{"rawSandboxMergedIntoInline", Options{Settings: `{"model":"opus"}`, Sandbox: jsontext.Value(`{"enabled":true}`)},
 			`{"model":"opus","sandbox":{"enabled":true,"failIfUnavailable":true}}`},
 		{"sandboxReplacesSettingsSandbox", Options{Settings: Settings{"sandbox": map[string]any{"x": 1}},
 			Sandbox: map[string]any{"autoAllowBashIfSandboxed": true}},
@@ -174,7 +175,7 @@ func TestSandboxSettingsMarshalJSON(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := json.Marshal(tc.in)
+			got, err := json.Marshal(tc.in, json.Deterministic(true))
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -182,7 +183,7 @@ func TestSandboxSettingsMarshalJSON(t *testing.T) {
 				t.Fatalf("json = %s, want %s", got, tc.want)
 			}
 			// The pointer form encodes identically.
-			ptr, _ := json.Marshal(&tc.in)
+			ptr, _ := json.Marshal(&tc.in, json.Deterministic(true))
 			if string(ptr) != tc.want {
 				t.Fatalf("pointer json = %s, want %s", ptr, tc.want)
 			}
@@ -226,7 +227,7 @@ func TestFilterEscalatingDefaultMode(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			before, _ := json.Marshal(tc.in)
+			before, _ := json.Marshal(tc.in, json.Deterministic(true))
 			got := FilterEscalatingDefaultMode(tc.in)
 			_, has := defaultModeOf(got)
 			if has == tc.stripped {
@@ -238,7 +239,7 @@ func TestFilterEscalatingDefaultMode(t *testing.T) {
 					t.Fatalf("other permission keys lost: %v", got)
 				}
 			}
-			after, _ := json.Marshal(tc.in)
+			after, _ := json.Marshal(tc.in, json.Deterministic(true))
 			if string(before) != string(after) {
 				t.Fatalf("input modified: %s -> %s", before, after)
 			}

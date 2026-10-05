@@ -3,7 +3,8 @@ package codex
 import (
 	"cmp"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/ironpark/gelati/internal/buildinfo"
+	"github.com/ironpark/gelati/internal/jsonx"
 	"github.com/ironpark/gelati/internal/logx"
 	"github.com/ironpark/gelati/internal/proc"
 	"github.com/ironpark/gelati/internal/safecall"
@@ -68,7 +70,7 @@ type Options struct {
 
 	// OnNotification, when set, receives every notification the server sends,
 	// including those routed to thread and turn subscribers.
-	OnNotification func(method string, params json.RawMessage)
+	OnNotification func(method string, params jsontext.Value)
 
 	// EventBuffer is the per-turn event channel capacity. It defaults to 64.
 	EventBuffer int
@@ -239,12 +241,12 @@ type notificationEnvelope struct {
 }
 
 // routeIDs extracts the thread and turn ids a notification applies to.
-func routeIDs(params json.RawMessage) (threadID, turnID string) {
+func routeIDs(params jsontext.Value) (threadID, turnID string) {
 	if len(params) == 0 {
 		return "", ""
 	}
 	var env notificationEnvelope
-	if err := json.Unmarshal(params, &env); err != nil {
+	if err := json.Unmarshal(params, &env, jsonx.Foreign); err != nil {
 		return "", ""
 	}
 	threadID, turnID = env.ThreadID, env.TurnID
@@ -264,7 +266,7 @@ func routeIDs(params json.RawMessage) (threadID, turnID string) {
 
 // handleNotification runs on the transport reader goroutine. It must not
 // block, so every fan-out path uses buffered channels or dedicated goroutines.
-func (c *Client) handleNotification(method string, params json.RawMessage) {
+func (c *Client) handleNotification(method string, params jsontext.Value) {
 	if c.opts.OnNotification != nil {
 		if err := c.notifyUser(method, params); err != nil {
 			c.logger.Error("codex: notification callback failed", "method", method, "error", err)
@@ -282,14 +284,14 @@ func (c *Client) handleNotification(method string, params json.RawMessage) {
 
 // notifyUser calls Options.OnNotification, returning a panic there as an
 // error rather than letting it kill the reader.
-func (c *Client) notifyUser(method string, params json.RawMessage) (err error) {
+func (c *Client) notifyUser(method string, params jsontext.Value) (err error) {
 	defer safecall.Recover(&err, "OnNotification")
 	c.opts.OnNotification(method, params)
 	return nil
 }
 
 // dispatchNotification routes a notification to its subscribers.
-func (c *Client) dispatchNotification(method string, params json.RawMessage) {
+func (c *Client) dispatchNotification(method string, params jsontext.Value) {
 	threadID, turnID := routeIDs(params)
 	if c.routeTurnNotification(method, params, threadID, turnID) {
 		return

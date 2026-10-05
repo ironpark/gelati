@@ -2,7 +2,7 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"reflect"
 	"strings"
@@ -85,7 +85,7 @@ func TestHookOutputWireFormatTS(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := json.Marshal(tc.out)
+			got, err := json.Marshal(tc.out, json.Deterministic(true))
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
@@ -113,7 +113,7 @@ func TestHookOutputUnmarshalKeepsUnknownKeys(t *testing.T) {
 func TestHookOutputBadPermissionRequestDecision(t *testing.T) {
 	t.Parallel()
 	type otherResult struct{ PermissionResult }
-	_, err := json.Marshal(HookOutput{Specific: &PermissionRequestHookSpecificOutput{Decision: otherResult{}}})
+	_, err := json.Marshal(HookOutput{Specific: &PermissionRequestHookSpecificOutput{Decision: otherResult{}}}, json.Deterministic(true))
 	if err == nil {
 		t.Fatal("want an error for an unknown decision type")
 	}
@@ -267,7 +267,7 @@ func TestEngineHookCallbackTypedAndVerbatim(t *testing.T) {
 		"subtype": "hook_callback", "callback_id": "hook_0", "tool_use_id": "tu",
 		"input": map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Bash"}}})
 	out := ft.nextResponse(t)
-	got, _ := json.Marshal(out["response"])
+	got, _ := json.Marshal(out["response"], json.Deterministic(true))
 	want := `{"futureField":"Bash","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask"},"terminalSequence":"\u0007"}`
 	if out["subtype"] != "success" || string(got) != want {
 		t.Fatalf("response = %#v\n got %s\nwant %s", out, got, want)

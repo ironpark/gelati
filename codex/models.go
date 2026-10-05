@@ -30,9 +30,9 @@ type ReasoningEffortOption struct {
 // ListModelsParams are the parameters of model/list.
 type ListModelsParams struct {
 	Cursor string `json:"cursor,omitempty"`
-	Limit  int    `json:"limit,omitempty"`
+	Limit  int    `json:"limit,omitzero"`
 	// IncludeHidden also lists models hidden from the default picker.
-	IncludeHidden bool `json:"includeHidden,omitempty"`
+	IncludeHidden bool `json:"includeHidden,omitzero"`
 }
 
 // ListModelsResult is one page of model/list results.

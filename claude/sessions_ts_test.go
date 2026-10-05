@@ -1,7 +1,7 @@
 package claude
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"os"
 	"path/filepath"
 	"slices"
@@ -403,12 +403,10 @@ func TestSessionJSONLByteSize(t *testing.T) {
 	}
 	var want int64
 	for _, e := range entries {
-		b, _ := json.Marshal(e)
+		b, _ := json.Marshal(e, json.Deterministic(true))
 		want += int64(len(b)) + 1
 	}
-	// Go escapes <, >, & (3 x 5 extra bytes) and U+2028 (3 extra bytes);
-	// JSON.stringify writes them raw.
-	want -= 3*5 + 3
+	// Like JSON.stringify, encoding/json/v2 writes <, >, & and U+2028 raw.
 	if got := jsonlByteSize(entries); got != want {
 		t.Errorf("jsonlByteSize = %d, want %d", got, want)
 	}

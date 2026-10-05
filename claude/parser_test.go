@@ -1,7 +1,6 @@
 package claude
 
 import (
-	"encoding/json"
 	"errors"
 	"testing"
 )
@@ -339,7 +338,7 @@ func TestParseMalformedMessages(t *testing.T) {
 			if !errors.As(err, &pe) {
 				t.Fatalf("error = %T (%v), want *MessageParseError", err, err)
 			}
-			if len(pe.Data) == 0 || !json.Valid(pe.Data) && tc.name != "notJSON" {
+			if len(pe.Data) == 0 || !pe.Data.IsValid() && tc.name != "notJSON" {
 				t.Fatalf("error should carry the offending payload: %q", pe.Data)
 			}
 		})

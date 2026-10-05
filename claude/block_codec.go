@@ -2,7 +2,8 @@ package claude
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 )
 
 // ---------------------------------------------------------------------------
@@ -43,7 +44,7 @@ var blockFactories = func() map[string]func() ContentBlock {
 
 // parseContent decodes a message's content: a string, a block array, or (for
 // anything else that is not null) its JSON text.
-func parseContent(raw json.RawMessage) (*string, []ContentBlock) {
+func parseContent(raw jsontext.Value) (*string, []ContentBlock) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
@@ -54,7 +55,7 @@ func parseContent(raw json.RawMessage) (*string, []ContentBlock) {
 		decodeLenient(raw, &s)
 		return &s, nil
 	case '[':
-		var items []json.RawMessage
+		var items []jsontext.Value
 		decodeLenient(raw, &items)
 		return nil, parseBlocks(items)
 	}
@@ -64,7 +65,7 @@ func parseContent(raw json.RawMessage) (*string, []ContentBlock) {
 
 // parseBlocks decodes a content array. Items that are not objects are
 // skipped; objects of an unknown type become UnknownBlock.
-func parseBlocks(items []json.RawMessage) []ContentBlock {
+func parseBlocks(items []jsontext.Value) []ContentBlock {
 	blocks := make([]ContentBlock, 0, len(items))
 	for _, item := range items {
 		if b := parseBlock(item); b != nil {
@@ -76,7 +77,7 @@ func parseBlocks(items []json.RawMessage) []ContentBlock {
 
 // parseBlock decodes one content block, or returns nil when item is not a
 // JSON object.
-func parseBlock(item json.RawMessage) ContentBlock {
+func parseBlock(item jsontext.Value) ContentBlock {
 	item = bytes.TrimSpace(item)
 	if len(item) == 0 || item[0] != '{' {
 		return nil
@@ -145,7 +146,7 @@ func (w wireBlock) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(m)
+	return json.Marshal(m, marshalOpts)
 }
 
 // textOrList picks the populated one of a text-or-list content pair, or nil.

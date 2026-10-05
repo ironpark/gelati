@@ -2,7 +2,7 @@ package sessionstoretest_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"sync"
 	"testing"
 
@@ -38,7 +38,7 @@ func (s *minimalStore) Append(_ context.Context, key claude.SessionKey, entries 
 			return err
 		}
 	}
-	b, err := json.Marshal(append(all, entries...))
+	b, err := json.Marshal(append(all, entries...), json.Deterministic(true))
 	if err != nil {
 		return err
 	}

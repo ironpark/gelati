@@ -1,7 +1,8 @@
 package tools
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"reflect"
 	"testing"
@@ -177,7 +178,7 @@ func TestInputRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, _ := json.Marshal(back)
+			got, _ := json.Marshal(back, json.Deterministic(true))
 			if !jsonEqual(t, got, []byte(s.json)) {
 				t.Errorf("round trip mismatch:\n got %s\nwant %s", got, s.json)
 			}
@@ -194,7 +195,7 @@ func TestOutputRoundTrip(t *testing.T) {
 			if err := json.Unmarshal([]byte(s.json), &generic); err != nil {
 				t.Fatal(err)
 			}
-			for _, in := range []any{json.RawMessage(s.json), generic} {
+			for _, in := range []any{jsontext.Value(s.json), generic} {
 				v, err := DecodeOutput(s.tool, in)
 				if err != nil {
 					t.Fatal(err)
@@ -202,7 +203,7 @@ func TestOutputRoundTrip(t *testing.T) {
 				if reflect.TypeOf(v) != reflect.TypeOf(s.want) {
 					t.Fatalf("DecodeOutput returned %T, want %T", v, s.want)
 				}
-				got, err := json.Marshal(v)
+				got, err := json.Marshal(v, json.Deterministic(true))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -224,7 +225,7 @@ func TestTypedFields(t *testing.T) {
 		t.Errorf("unexpected GrepInput %+v", g)
 	}
 
-	out, err := DecodeOutput(Agent, json.RawMessage(outputSamples[8].json))
+	out, err := DecodeOutput(Agent, jsontext.Value(outputSamples[8].json))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +234,7 @@ func TestTypedFields(t *testing.T) {
 		t.Errorf("unexpected AgentOutputCompleted %+v", c)
 	}
 
-	ws, err := DecodeOutput(WebSearch, json.RawMessage(outputSamples[13].json))
+	ws, err := DecodeOutput(WebSearch, jsontext.Value(outputSamples[13].json))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +243,7 @@ func TestTypedFields(t *testing.T) {
 		t.Errorf("unexpected WebSearch results %+v", res)
 	}
 
-	art, err := DecodeOutput(Artifact, json.RawMessage(outputSamples[21].json))
+	art, err := DecodeOutput(Artifact, jsontext.Value(outputSamples[21].json))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +252,7 @@ func TestTypedFields(t *testing.T) {
 		t.Errorf("unexpected watches %+v", w)
 	}
 
-	mcp, err := DecodeOutput("mcp__srv__tool", json.RawMessage(outputSamples[23].json))
+	mcp, err := DecodeOutput("mcp__srv__tool", jsontext.Value(outputSamples[23].json))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,11 +270,11 @@ func TestExtraPreserved(t *testing.T) {
 	if in.Extra["plan"] != "do it" || in.Extra["planFilePath"] != "/p.md" || in.AllowedPrompts != nil {
 		t.Fatalf("Extra = %v", in.Extra)
 	}
-	b, err := json.Marshal(ExitPlanModeInput{})
+	b, err := json.Marshal(ExitPlanModeInput{}, json.Deterministic(true))
 	if err != nil || string(b) != "{}" {
 		t.Fatalf("empty marshal = %s, %v", b, err)
 	}
-	b, err = json.Marshal(ExitPlanModeInput{Extra: map[string]any{"b": 1, "a": "x", "allowedPrompts": "ignored"}})
+	b, err = json.Marshal(ExitPlanModeInput{Extra: map[string]any{"b": 1, "a": "x", "allowedPrompts": "ignored"}}, json.Deterministic(true))
 	if err != nil || string(b) != `{"a":"x","b":1}` {
 		t.Fatalf("extra-only marshal = %s, %v", b, err)
 	}

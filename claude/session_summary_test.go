@@ -1,7 +1,8 @@
 package claude
 
 import (
-	"encoding/json"
+	jsonv1 "encoding/json" // Number: callers may hand in values decoded with UseNumber
+	"encoding/json/v2"
 	"maps"
 	"reflect"
 	"strings"
@@ -214,7 +215,7 @@ func TestSummaryEntryToSessionInfo(t *testing.T) {
 	}
 
 	want := &SessionInfo{SessionID: "s", Summary: "t", LastModified: 99, CustomTitle: "t", GitBranch: "main", Tag: "wip", CreatedAt: 50}
-	for _, createdAt := range []any{int64(50), 50.0, json.Number("50"), 50} {
+	for _, createdAt := range []any{int64(50), 50.0, jsonv1.Number("50"), 50} {
 		info := summaryEntryToSessionInfo(SessionSummaryEntry{SessionID: "s", MTime: 99, Data: map[string]any{
 			"customTitle": "t", "gitBranch": "main", "tag": "wip", "createdAt": createdAt,
 		}}, "")
@@ -308,7 +309,7 @@ func TestSummaryRoundTripsThroughJSON(t *testing.T) {
 		{"type": "tag", "tag": "wip"},
 	})
 	folded.MTime = 7
-	b, err := json.Marshal(folded)
+	b, err := json.Marshal(folded, json.Deterministic(true))
 	if err != nil {
 		t.Fatal(err)
 	}

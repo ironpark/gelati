@@ -1,7 +1,7 @@
 package claude
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"maps"
 	"reflect"
@@ -40,9 +40,9 @@ const (
 type HookOutput struct {
 	// Continue reports whether Claude should proceed. nil leaves it unset
 	// (the CLI defaults to true).
-	Continue *bool `json:"continue,omitempty"`
+	Continue *bool `json:"continue,omitzero"`
 	// SuppressOutput hides stdout from transcript mode.
-	SuppressOutput *bool `json:"suppressOutput,omitempty"`
+	SuppressOutput *bool `json:"suppressOutput,omitzero"`
 	// StopReason is shown to the user when Continue is false.
 	StopReason string `json:"stopReason,omitempty"`
 	// Decision is HookDecisionBlock to block the action or
@@ -63,9 +63,9 @@ type HookOutput struct {
 	// are merged over HookSpecificOutput on the wire.
 	Specific HookSpecific `json:"-"`
 	// Async defers hook execution; the CLI continues without waiting.
-	Async bool `json:"async,omitempty"`
+	Async bool `json:"async,omitzero"`
 	// AsyncTimeout is the timeout in milliseconds for an async hook.
-	AsyncTimeout *int `json:"asyncTimeout,omitempty"`
+	AsyncTimeout *int `json:"asyncTimeout,omitzero"`
 	// Extra holds output keys this SDK version does not model. The
 	// TypeScript SDK forwards a callback's output verbatim, so Extra is
 	// merged in on marshal; modeled fields win.
@@ -98,7 +98,7 @@ func (h HookOutput) MarshalJSON() ([]byte, error) {
 func (h *HookOutput) UnmarshalJSON(data []byte) error {
 	type alias HookOutput
 	var a alias
-	if err := json.Unmarshal(data, &a); err != nil {
+	if err := json.Unmarshal(data, &a, jsonx.Foreign); err != nil {
 		return err
 	}
 	extra, err := jsonx.ExtraFields(data, func(k string) bool { return hookOutputFields[k] })
@@ -142,7 +142,7 @@ func (*PreToolUseHookSpecificOutput) HookEventName() HookEvent { return HookPreT
 type UserPromptSubmitHookSpecificOutput struct {
 	AdditionalContext      string `json:"additionalContext,omitempty"`
 	SessionTitle           string `json:"sessionTitle,omitempty"`
-	SuppressOriginalPrompt bool   `json:"suppressOriginalPrompt,omitempty"`
+	SuppressOriginalPrompt bool   `json:"suppressOriginalPrompt,omitzero"`
 }
 
 // HookEventName reports UserPromptSubmit.
@@ -151,7 +151,7 @@ func (*UserPromptSubmitHookSpecificOutput) HookEventName() HookEvent { return Ho
 // UserPromptExpansionHookSpecificOutput answers a UserPromptExpansion hook.
 type UserPromptExpansionHookSpecificOutput struct {
 	AdditionalContext      string `json:"additionalContext,omitempty"`
-	SuppressOriginalPrompt bool   `json:"suppressOriginalPrompt,omitempty"`
+	SuppressOriginalPrompt bool   `json:"suppressOriginalPrompt,omitzero"`
 }
 
 // HookEventName reports UserPromptExpansion.
@@ -165,7 +165,7 @@ type SessionStartHookSpecificOutput struct {
 	InitialUserMessage string   `json:"initialUserMessage,omitempty"`
 	SessionTitle       string   `json:"sessionTitle,omitempty"`
 	WatchPaths         []string `json:"watchPaths,omitempty"`
-	ReloadSkills       bool     `json:"reloadSkills,omitempty"`
+	ReloadSkills       bool     `json:"reloadSkills,omitzero"`
 }
 
 // HookEventName reports SessionStart.
@@ -210,9 +210,9 @@ type PostToolUseHookSpecificOutput struct {
 	AdditionalContext string `json:"additionalContext,omitempty"`
 	ClassifierContext string `json:"classifierContext,omitempty"`
 	// UpdatedToolOutput replaces a built-in tool's output.
-	UpdatedToolOutput any `json:"updatedToolOutput,omitempty"`
+	UpdatedToolOutput any `json:"updatedToolOutput,omitzero"`
 	// UpdatedMCPToolOutput replaces an MCP tool's output.
-	UpdatedMCPToolOutput any `json:"updatedMCPToolOutput,omitempty"`
+	UpdatedMCPToolOutput any `json:"updatedMCPToolOutput,omitzero"`
 }
 
 // HookEventName reports PostToolUse.
@@ -255,7 +255,7 @@ func (*SubagentStopHookSpecificOutput) HookEventName() HookEvent { return HookSu
 // PermissionDeniedHookSpecificOutput answers a PermissionDenied hook. Retry
 // asks the CLI to retry the denied call.
 type PermissionDeniedHookSpecificOutput struct {
-	Retry bool `json:"retry,omitempty"`
+	Retry bool `json:"retry,omitzero"`
 }
 
 // HookEventName reports PermissionDenied.
@@ -291,7 +291,7 @@ func (o *PermissionRequestHookSpecificOutput) MarshalJSON() ([]byte, error) {
 		}
 		out["decision"] = decision
 	}
-	return json.Marshal(out)
+	return json.Marshal(out, marshalOpts)
 }
 
 // ElicitationHookSpecificOutput answers an Elicitation hook on the user's

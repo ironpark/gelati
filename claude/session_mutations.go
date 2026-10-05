@@ -1,11 +1,14 @@
 package claude
 
 import (
+	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -13,6 +16,8 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // Session mutations: rename, tag, delete and fork, for local transcripts and
@@ -411,7 +416,7 @@ type forkEntry struct {
 	// raw holds the source JSON of each value so unchanged fields are
 	// copied verbatim (number literals, nested key order); nil for store
 	// entries.
-	raw map[string]json.RawMessage
+	raw map[string]jsontext.Value
 }
 
 // value returns the value to serialize for key k.
@@ -464,34 +469,39 @@ func (e forkEntry) marshal(overrides []jsonField, drop []string) (string, error)
 // parseForkLine parses one JSONL line, keeping its key order and raw values.
 // It reports false for invalid JSON and for values that are not objects.
 func parseForkLine(line string) (forkEntry, bool) {
-	if !json.Valid([]byte(line)) {
+	dec := jsontext.NewDecoder(strings.NewReader(line), jsonx.Foreign)
+	if dec.PeekKind() != '{' {
 		return forkEntry{}, false
 	}
-	dec := json.NewDecoder(strings.NewReader(line))
-	dec.UseNumber()
-	var fields map[string]any
-	if dec.Decode(&fields) != nil || fields == nil {
+	if _, err := dec.ReadToken(); err != nil { // '{'
 		return forkEntry{}, false
 	}
-	e := forkEntry{fields: fields, raw: make(map[string]json.RawMessage, len(fields))}
-	dec = json.NewDecoder(strings.NewReader(line))
-	if _, err := dec.Token(); err != nil { // '{'
-		return forkEntry{}, false
-	}
-	for dec.More() {
-		tok, err := dec.Token()
+	e := forkEntry{fields: map[string]any{}, raw: map[string]jsontext.Value{}}
+	for dec.PeekKind() != '}' {
+		tok, err := dec.ReadToken()
 		if err != nil {
 			return forkEntry{}, false
 		}
-		k, _ := tok.(string)
-		var v json.RawMessage
-		if err := dec.Decode(&v); err != nil {
+		k := tok.String()
+		v, err := dec.ReadValue()
+		if err != nil {
+			return forkEntry{}, false
+		}
+		field, err := readJSONValue(jsontext.NewDecoder(bytes.NewReader(v), jsonx.Foreign))
+		if err != nil {
 			return forkEntry{}, false
 		}
 		if _, dup := e.raw[k]; !dup {
 			e.keys = append(e.keys, k)
 		}
-		e.raw[k] = v // duplicate keys: last value wins, first position kept
+		e.raw[k] = v.Clone() // duplicate keys: last value wins, first position kept
+		e.fields[k] = field
+	}
+	if _, err := dec.ReadToken(); err != nil { // '}'
+		return forkEntry{}, false
+	}
+	if _, err := dec.ReadToken(); err != io.EOF {
+		return forkEntry{}, false // trailing data
 	}
 	return e, true
 }
@@ -514,8 +524,8 @@ func parseForkTranscript(content, sessionID string) ([]forkEntry, []any) {
 		if isTranscriptEntry(e.fields) {
 			transcript = append(transcript, e)
 		} else if isOwnContentReplacement(e.fields, sessionID) {
-			var list []json.RawMessage
-			if json.Unmarshal(e.raw["replacements"], &list) == nil {
+			var list []jsontext.Value
+			if json.Unmarshal(e.raw["replacements"], &list, jsonx.Foreign) == nil {
 				for _, r := range list {
 					replacements = append(replacements, r)
 				}
@@ -838,7 +848,7 @@ func ForkSessionViaStore(ctx context.Context, store SessionStore, sessionID stri
 	// from the transcript mirror.
 	entries := make([]SessionStoreEntry, len(lines))
 	for i, line := range lines {
-		if err := json.Unmarshal([]byte(line), &entries[i]); err != nil {
+		if err := json.Unmarshal([]byte(line), &entries[i], jsonx.Foreign); err != nil {
 			return nil, fmt.Errorf("claude: fork session %s: %w", sessionID, err)
 		}
 	}

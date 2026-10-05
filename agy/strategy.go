@@ -2,7 +2,7 @@ package agy
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -203,7 +203,7 @@ func buildHarnessConfig(cc *compiledConfig, resolvedModels []ModelTarget) (*wire
 
 // toolProto declares a custom tool to the harness.
 func toolProto(t *Tool) (*wire.Tool, error) {
-	b, err := json.Marshal(t.Schema())
+	b, err := json.Marshal(t.Schema(), json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("agy: encode schema of tool %q: %w", t.name, err)
 	}

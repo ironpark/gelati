@@ -2,7 +2,7 @@ package agy
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"reflect"
 	"strings"
@@ -567,7 +567,7 @@ func TestToolResultPayload(t *testing.T) {
 		{&ToolResult{Result: make(chan int)}, `{"result":"`},
 		{&ToolResult{Error: "bad"}, `{"error":"bad"}`},
 	} {
-		b, _ := json.Marshal(toolResultPayload(tc.res))
+		b, _ := json.Marshal(toolResultPayload(tc.res), json.Deterministic(true))
 		if !strings.HasPrefix(string(b), tc.want) {
 			t.Errorf("payload of %+v = %s, want %s", tc.res, b, tc.want)
 		}

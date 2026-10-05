@@ -3,7 +3,8 @@ package codex
 import (
 	"bufio"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"runtime"
@@ -101,7 +102,7 @@ func TestTransportCallResponse(t *testing.T) {
 			t.Errorf("model = %q", params.Model)
 		}
 		peer.send(map[string]any{
-			"id":     json.RawMessage(req.ID),
+			"id":     jsontext.Value(req.ID),
 			"result": map[string]any{"thread": map[string]any{"id": "thr_123"}},
 		})
 	}()
@@ -127,7 +128,7 @@ func TestTransportCallError(t *testing.T) {
 	go func() {
 		req := peer.recv()
 		peer.send(map[string]any{
-			"id":    json.RawMessage(req.ID),
+			"id":    jsontext.Value(req.ID),
 			"error": map[string]any{"code": CodeServerOverloaded, "message": "Server overloaded; retry later."},
 		})
 	}()
@@ -152,8 +153,8 @@ func TestTransportOutOfOrderResponses(t *testing.T) {
 		first := peer.recv()
 		second := peer.recv()
 		// Reply in reverse order.
-		peer.send(map[string]any{"id": json.RawMessage(second.ID), "result": map[string]any{"v": second.Method}})
-		peer.send(map[string]any{"id": json.RawMessage(first.ID), "result": map[string]any{"v": first.Method}})
+		peer.send(map[string]any{"id": jsontext.Value(second.ID), "result": map[string]any{"v": second.Method}})
+		peer.send(map[string]any{"id": jsontext.Value(first.ID), "result": map[string]any{"v": first.Method}})
 	}()
 
 	type out struct {
@@ -194,7 +195,7 @@ func TestTransportOutOfOrderResponses(t *testing.T) {
 func TestTransportNotification(t *testing.T) {
 	got := make(chan string, 4)
 	_, peer := newTestTransport(t, transportConfig{
-		onNotification: func(method string, params json.RawMessage) {
+		onNotification: func(method string, params jsontext.Value) {
 			got <- method + ":" + string(params)
 		},
 	})
@@ -214,7 +215,7 @@ func TestTransportNotification(t *testing.T) {
 func TestTransportSkipsMalformedLines(t *testing.T) {
 	got := make(chan string, 4)
 	_, peer := newTestTransport(t, transportConfig{
-		onNotification: func(method string, params json.RawMessage) { got <- method },
+		onNotification: func(method string, params jsontext.Value) { got <- method },
 	})
 
 	peer.sendRaw("this is not json")
@@ -233,7 +234,7 @@ func TestTransportSkipsMalformedLines(t *testing.T) {
 
 func TestTransportServerRequestReply(t *testing.T) {
 	tr, peer := newTestTransport(t, transportConfig{
-		onServerRequest: func(ctx context.Context, method string, params json.RawMessage) (any, error) {
+		onServerRequest: func(ctx context.Context, method string, params jsontext.Value) (any, error) {
 			switch method {
 			case "item/commandExecution/requestApproval":
 				return map[string]any{"decision": "accept"}, nil

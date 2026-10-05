@@ -2,13 +2,16 @@ package claude
 
 import (
 	"encoding"
-	"encoding/json"
+	jsonv1 "encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
 	"math"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -59,7 +62,7 @@ func toInt64(v any) (int64, bool) {
 			return 0, false
 		}
 		return int64(n), true
-	case json.Number:
+	case numberText:
 		if i, err := n.Int64(); err == nil {
 			return i, true
 		}
@@ -69,6 +72,27 @@ func toInt64(v any) (int64, bool) {
 	}
 	return 0, false
 }
+
+// numberText is a JSON number kept as its literal text: an encoding/json
+// (v1) Number a caller put in a generic value, or a jsonNumber read by
+// decodeJSONObject.
+type numberText interface {
+	Int64() (int64, error)
+	Float64() (float64, error)
+	String() string
+}
+
+// jsonNumber is the literal text of a JSON number. It encodes as that text,
+// so a number re-serializes unchanged.
+type jsonNumber string
+
+func (n jsonNumber) String() string { return string(n) }
+
+func (n jsonNumber) Int64() (int64, error) { return strconv.ParseInt(string(n), 10, 64) }
+
+func (n jsonNumber) Float64() (float64, error) { return strconv.ParseFloat(string(n), 64) }
+
+func (n jsonNumber) MarshalJSON() ([]byte, error) { return []byte(n), nil }
 
 // stringItems keeps the string elements of a JSON array.
 func stringItems(list []any) []string {
@@ -96,6 +120,23 @@ func objectItems(items []any) []map[string]any {
 // Lenient decoding
 // ---------------------------------------------------------------------------
 
+// marshalOpts holds the options for encoding, chosen so the SDK writes what
+// it wrote with encoding/json v1: map keys sorted, a nil slice or map as null,
+// invalid UTF-8 in strings replaced, and raw values with repeated member
+// names (passed through from the CLI) accepted.
+var marshalOpts = json.JoinOptions(
+	json.Deterministic(true),
+	json.FormatNilSliceAsNull(true),
+	json.FormatNilMapAsNull(true),
+	jsonx.Foreign,
+)
+
+// lenient holds the options for lenient reads of foreign input: as tolerant
+// as jsonx.Foreign, and, like encoding/json v1, decoding the rest of a value
+// after a member of the wrong JSON type, which is then reported as a
+// *jsonv1.UnmarshalTypeError.
+var lenient = json.JoinOptions(jsonx.Foreign, jsonv1.ReportErrorsWithLegacySemantics(true))
+
 // decodeLenient fills v from data the way the TypeScript SDK reads frames:
 // without validation. A field whose JSON type does not match is left at its
 // zero value (nil for a pointer); the rest is still decoded.
@@ -106,12 +147,12 @@ func decodeLenient(data []byte, v any) {
 // unmarshalLenient is decodeLenient for custom UnmarshalJSON methods: it
 // returns the errors worse than a type mismatch (see fatalDecodeErr).
 func unmarshalLenient(data []byte, v any) error {
-	err := json.Unmarshal(data, v)
+	err := json.Unmarshal(data, v, lenient)
 	if !isTypeMismatch(err) {
 		return err
 	}
 	var src any
-	if json.Unmarshal(data, &src) == nil {
+	if json.Unmarshal(data, &src, jsonx.Foreign) == nil {
 		clearMismatched(reflect.ValueOf(v), src)
 	}
 	return nil
@@ -120,13 +161,13 @@ func unmarshalLenient(data []byte, v any) error {
 // isTypeMismatch reports whether err is a field type mismatch, the only
 // decode error lenient reads tolerate.
 func isTypeMismatch(err error) bool {
-	var te *json.UnmarshalTypeError
+	var te *jsonv1.UnmarshalTypeError
 	return errors.As(err, &te)
 }
 
 // fatalDecodeErr reports whether err is worse than a field type mismatch.
 // Custom UnmarshalJSON methods of inbound types ignore mismatches, which
-// encoding/json reports only after decoding the rest: returning one would
+// the lenient options report only after decoding the rest: returning one would
 // abort the decode of any enclosing value.
 func fatalDecodeErr(err error) bool {
 	return err != nil && !isTypeMismatch(err)
@@ -179,19 +220,23 @@ func jsonMemberNames(t reflect.Type) map[string]bool {
 // marshalWithExtra encodes v, a struct, followed by the members of extra its
 // own encoding does not have, in sorted key order.
 func marshalWithExtra(v any, extra map[string]any) ([]byte, error) {
-	return jsonx.MarshalWithExtra(v, extra, nil)
+	b, err := json.Marshal(v, marshalOpts)
+	if err != nil {
+		return nil, err
+	}
+	return jsonx.MarshalWithExtra(jsontext.Value(b), extra, nil)
 }
 
 // toWireMap renders v as the generic JSON object it marshals to, so typed
 // values can be merged into wire maps. A value that marshals to null yields a
 // nil map. what names the value in errors.
 func toWireMap(v any, what string) (map[string]any, error) {
-	b, err := json.Marshal(v)
+	b, err := json.Marshal(v, marshalOpts)
 	if err != nil {
 		return nil, fmt.Errorf("claude: encoding %s: %w", what, err)
 	}
 	var out map[string]any
-	if err := json.Unmarshal(b, &out); err != nil {
+	if err := json.Unmarshal(b, &out, jsonx.Foreign); err != nil {
 		return nil, fmt.Errorf("claude: encoding %s: %w", what, err)
 	}
 	return out, nil
@@ -212,13 +257,14 @@ func decodeResponse(data map[string]any, out any) error {
 }
 
 // remarshal decodes the generic JSON value v into out through its encoding.
-// Errors wrap encoding/json's, so a type mismatch is still recognizable.
+// It decodes with the lenient options, so a type mismatch leaves the rest
+// decoded, and errors wrap the decoder's, so a mismatch is still recognizable.
 func remarshal(v any, out any) error {
-	b, err := json.Marshal(v)
+	b, err := json.Marshal(v, marshalOpts)
 	if err != nil {
 		return fmt.Errorf("claude: re-encoding control response: %w", err)
 	}
-	if err := json.Unmarshal(b, out); err != nil {
+	if err := json.Unmarshal(b, out, lenient); err != nil {
 		return fmt.Errorf("claude: decoding control response: %w", err)
 	}
 	return nil
@@ -308,7 +354,7 @@ func jsonKindOf(v any) jsonKind {
 	switch v.(type) {
 	case string:
 		return kindString
-	case float64, json.Number, int, int64:
+	case float64, numberText, int, int64:
 		return kindNumber
 	case bool:
 		return kindBool
@@ -321,8 +367,9 @@ func jsonKindOf(v any) jsonKind {
 }
 
 var (
-	jsonUnmarshalerType = reflect.TypeFor[json.Unmarshaler]()
-	textUnmarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
+	jsonUnmarshalerType     = reflect.TypeFor[json.Unmarshaler]()
+	jsonUnmarshalerFromType = reflect.TypeFor[json.UnmarshalerFrom]()
+	textUnmarshalerType     = reflect.TypeFor[encoding.TextUnmarshaler]()
 )
 
 // wantedKind is the JSON kind encoding/json decodes into t without a type
@@ -331,7 +378,8 @@ func wantedKind(t reflect.Type) jsonKind {
 	pt := reflect.PointerTo(t)
 	switch {
 	case t.Implements(jsonUnmarshalerType) || pt.Implements(jsonUnmarshalerType),
-		t == reflect.TypeFor[json.Number]():
+		t.Implements(jsonUnmarshalerFromType) || pt.Implements(jsonUnmarshalerFromType),
+		t.Kind() == reflect.String && t.Implements(reflect.TypeFor[numberText]()):
 		return kindAny
 	case t.Implements(textUnmarshalerType) || pt.Implements(textUnmarshalerType):
 		return kindString

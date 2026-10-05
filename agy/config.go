@@ -1,7 +1,8 @@
 package agy
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"log/slog"
@@ -67,7 +68,7 @@ type Config struct {
 	AppDataDir string
 	// ResponseSchema asks the agent for structured output (read with
 	// ChatResponse.StructuredOutput). It may be a JSON schema as a string,
-	// []byte, json.RawMessage or map[string]any; a reflect.Type; or any
+	// []byte, jsontext.Value or map[string]any; a reflect.Type; or any
 	// other value, whose type's schema is derived as for tool parameters.
 	ResponseSchema any
 	// SkillsPaths are directories to load skills from.
@@ -274,31 +275,31 @@ func (c *Config) responseSchemaJSON() (string, error) {
 	case nil:
 		return "", nil
 	case string:
-		if !json.Valid([]byte(s)) {
+		if !jsontext.Value(s).IsValid() {
 			return "", validationErrorf("response_schema string is not valid JSON.")
 		}
 		return s, nil
 	case []byte:
-		if !json.Valid(s) {
+		if !jsontext.Value(s).IsValid() {
 			return "", validationErrorf("response_schema is not valid JSON.")
 		}
 		return string(s), nil
-	case json.RawMessage:
-		if !json.Valid(s) {
+	case jsontext.Value:
+		if !s.IsValid() {
 			return "", validationErrorf("response_schema is not valid JSON.")
 		}
 		return string(s), nil
 	case map[string]any:
-		b, err := json.Marshal(s)
+		b, err := json.Marshal(s, json.Deterministic(true))
 		if err != nil {
 			return "", &ValidationError{Message: "response_schema is not JSON-encodable: " + err.Error(), Err: err}
 		}
 		return string(b), nil
 	case reflect.Type:
-		b, err := json.Marshal(schemaForType(s))
+		b, err := json.Marshal(schemaForType(s), json.Deterministic(true))
 		return string(b), err
 	}
-	b, err := json.Marshal(schemaForType(reflect.TypeOf(c.ResponseSchema)))
+	b, err := json.Marshal(schemaForType(reflect.TypeOf(c.ResponseSchema)), json.Deterministic(true))
 	return string(b), err
 }
 

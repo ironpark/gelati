@@ -2,9 +2,21 @@ package tools
 
 import (
 	"bytes"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"slices"
 
 	"github.com/ironpark/gelati/internal/jsonx"
+)
+
+// marshalOpts holds the options for encoding, chosen so values encode as they
+// did with encoding/json v1: map keys sorted, a nil slice or map as null, and
+// invalid UTF-8 in strings replaced.
+var marshalOpts = json.JoinOptions(
+	json.Deterministic(true),
+	json.FormatNilSliceAsNull(true),
+	json.FormatNilMapAsNull(true),
+	jsonx.Foreign,
 )
 
 // valueKind is the kind of a JSON value, used by the generated untagged-union
@@ -71,5 +83,9 @@ func extraFields(data []byte, known []string) (map[string]any, error) {
 // marshalWithExtra encodes v (a struct without custom marshaling) and appends
 // the members of extra, in sorted key order, that do not collide with known.
 func marshalWithExtra(v any, extra map[string]any, known []string) ([]byte, error) {
-	return jsonx.MarshalWithExtra(v, extra, func(k string) bool { return slices.Contains(known, k) })
+	b, err := json.Marshal(v, marshalOpts)
+	if err != nil {
+		return nil, err
+	}
+	return jsonx.MarshalWithExtra(jsontext.Value(b), extra, func(k string) bool { return slices.Contains(known, k) })
 }

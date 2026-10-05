@@ -2,7 +2,7 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -140,7 +140,7 @@ func newMirrorBatcherForOptions(opts *Options, projectsDir string, onError func(
 func (b *transcriptMirrorBatcher) enqueue(filePath string, entries []SessionStoreEntry) {
 	// Approximate wire size: one encode per frame keeps this cheap.
 	size := 0
-	if raw, err := json.Marshal(entries); err == nil {
+	if raw, err := json.Marshal(entries, marshalOpts); err == nil {
 		size = len(raw)
 	}
 	b.mu.Lock()

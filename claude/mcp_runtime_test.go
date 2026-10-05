@@ -2,7 +2,8 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"strings"
 	"sync"
@@ -33,7 +34,7 @@ func TestMCPToolMetaAndInstructions(t *testing.T) {
 	if init["instructions"] != "Use srv for math." {
 		t.Fatalf("initialize = %#v", init)
 	}
-	if caps, _ := json.Marshal(init["capabilities"]); string(caps) != `{"tools":{"listChanged":true}}` {
+	if caps, _ := json.Marshal(init["capabilities"], json.Deterministic(true)); string(caps) != `{"tools":{"listChanged":true}}` {
 		t.Fatalf("capabilities = %s", caps)
 	}
 
@@ -45,7 +46,7 @@ func TestMCPToolMetaAndInstructions(t *testing.T) {
 		`{"anthropic/alwaysLoad":false,"ui":{"resourceUri":"ui://x"}}`,
 	}
 	for i, tool := range tools {
-		meta, _ := json.Marshal(tool.(map[string]any)["_meta"])
+		meta, _ := json.Marshal(tool.(map[string]any)["_meta"], json.Deterministic(true))
 		if string(meta) != want[i] {
 			t.Fatalf("tool %d _meta = %s, want %s", i, meta, want[i])
 		}
@@ -84,7 +85,7 @@ func TestToolResultWire(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := json.Marshal(tc.result.wire())
+			got, err := json.Marshal(tc.result.wire(), json.Deterministic(true))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -116,7 +117,7 @@ func TestMCPServerConfigJSONTSFields(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := json.Marshal(tc.cfg)
+			got, err := json.Marshal(tc.cfg, json.Deterministic(true))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -137,7 +138,7 @@ type funcHandler struct {
 	seen []map[string]any
 }
 
-func (h *funcHandler) HandleMCPMessage(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+func (h *funcHandler) HandleMCPMessage(ctx context.Context, raw jsontext.Value) (jsontext.Value, error) {
 	var msg map[string]any
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return nil, err
@@ -149,7 +150,7 @@ func (h *funcHandler) HandleMCPMessage(ctx context.Context, raw json.RawMessage)
 	if err != nil || out == nil {
 		return nil, err
 	}
-	return json.Marshal(out)
+	return json.Marshal(out, json.Deterministic(true))
 }
 
 func (h *funcHandler) ConnectMCP(send MCPSendFunc) func() {
@@ -197,15 +198,15 @@ func TestSDKMCPInitializeFields(t *testing.T) {
 	}}
 	fields := sdkMCPInitializeFields(sdkMCPServers(opts))
 
-	names, _ := json.Marshal(fields["sdkMcpServers"])
+	names, _ := json.Marshal(fields["sdkMcpServers"], json.Deterministic(true))
 	if string(names) != `["calc","failing","noTools","slow"]` {
 		t.Fatalf("sdkMcpServers = %s", names)
 	}
-	configs, _ := json.Marshal(fields["sdkMcpServerConfigs"])
+	configs, _ := json.Marshal(fields["sdkMcpServerConfigs"], json.Deterministic(true))
 	if string(configs) != `{"calc":{"timeout":5000}}` {
 		t.Fatalf("sdkMcpServerConfigs = %s", configs)
 	}
-	manifests, _ := json.Marshal(fields["sdkMcpServerManifests"])
+	manifests, _ := json.Marshal(fields["sdkMcpServerManifests"], json.Deterministic(true))
 	want := `{"calc":{"initializeResult":{"capabilities":{"tools":{"listChanged":true}},"instructions":"hi","protocolVersion":"2025-11-25","serverInfo":{"name":"calc","version":"2.0.0"}},` +
 		`"toolsListResult":{"tools":[{"description":"","inputSchema":{"properties":{},"type":"object"},"name":"add"}]}},` +
 		`"noTools":{"initializeResult":{"capabilities":{},"protocolVersion":"2025-11-25","serverInfo":{"name":"x","version":"1"}}}}`
@@ -257,7 +258,7 @@ func TestEngineMCPNotificationAckShape(t *testing.T) {
 	t.Parallel()
 	_, ft := mcpEngine(t, map[string]MCPServerConfig{"calc": NewSDKMCPServer("calc", "")})
 	pushMCP(ft, "n1", "calc", map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
-	got, _ := json.Marshal(ft.nextResponse(t)["response"])
+	got, _ := json.Marshal(ft.nextResponse(t)["response"], json.Deterministic(true))
 	if string(got) != `{"mcp_response":{"id":0,"jsonrpc":"2.0","result":{}}}` {
 		t.Fatalf("ack = %s", got)
 	}
@@ -275,7 +276,7 @@ func TestEngineMCPCancelledNotificationCancelsHandler(t *testing.T) {
 	started := make(chan struct{})
 	cfg := NewSDKMCPServer("calc", "", ToolDef{
 		Name: "wait",
-		Handler: func(ctx context.Context, _ json.RawMessage) (ToolResult, error) {
+		Handler: func(ctx context.Context, _ jsontext.Value) (ToolResult, error) {
 			close(started)
 			select {
 			case <-ctx.Done():
@@ -323,7 +324,7 @@ func TestMCPServerNotifiesConnectedSessions(t *testing.T) {
 	if id, _ := frame["request_id"].(string); len(id) != 36 {
 		t.Fatalf("request_id = %v, want a UUID", frame["request_id"])
 	}
-	msg, _ := json.Marshal(request["message"])
+	msg, _ := json.Marshal(request["message"], json.Deterministic(true))
 	if string(msg) != `{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}` {
 		t.Fatalf("message = %s", msg)
 	}
@@ -342,7 +343,7 @@ func TestMCPServerNotifiesConnectedSessions(t *testing.T) {
 	if err := server.Notify(t.Context(), "notifications/message", map[string]any{"level": "info", "data": "x"}); err != nil {
 		t.Fatalf("notify: %v", err)
 	}
-	msg, _ = json.Marshal(ft.nextWrite(t)["request"].(map[string]any)["message"])
+	msg, _ = json.Marshal(ft.nextWrite(t)["request"].(map[string]any)["message"], json.Deterministic(true))
 	if string(msg) != `{"jsonrpc":"2.0","method":"notifications/message","params":{"data":"x","level":"info"}}` {
 		t.Fatalf("message = %s", msg)
 	}
@@ -397,7 +398,7 @@ func TestCustomMCPHandler(t *testing.T) {
 	if send == nil {
 		t.Fatal("handler was not connected")
 	}
-	if err := send(t.Context(), json.RawMessage(`{"jsonrpc":"2.0","id":"s1","method":"elicitation/create","params":{}}`)); err != nil {
+	if err := send(t.Context(), jsontext.Value(`{"jsonrpc":"2.0","id":"s1","method":"elicitation/create","params":{}}`)); err != nil {
 		t.Fatal(err)
 	}
 	out := ft.nextWrite(t)["request"].(map[string]any)
@@ -414,7 +415,7 @@ func TestCustomMCPHandler(t *testing.T) {
 		t.Fatalf("response not delivered: %#v", last)
 	}
 
-	if err := send(t.Context(), json.RawMessage(`not json`)); err == nil || !strings.Contains(err.Error(), "invalid JSON") {
+	if err := send(t.Context(), jsontext.Value(`not json`)); err == nil || !strings.Contains(err.Error(), "invalid JSON") {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -3,7 +3,8 @@ package codex
 import (
 	"bufio"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ironpark/gelati/internal/jsonx"
 	"github.com/ironpark/gelati/internal/lifecycle"
 	"github.com/ironpark/gelati/internal/proc"
 	"github.com/ironpark/gelati/internal/safecall"
@@ -31,21 +33,21 @@ const maxLineBytes = 32 << 20
 //	method      -> notification
 //	id          -> response (result or error)
 type wireMessage struct {
-	ID     json.RawMessage `json:"id,omitempty"`
-	Method string          `json:"method,omitempty"`
-	Params json.RawMessage `json:"params,omitempty"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  *RPCError       `json:"error,omitempty"`
+	ID     jsontext.Value `json:"id,omitempty"`
+	Method string         `json:"method,omitempty"`
+	Params jsontext.Value `json:"params,omitempty"`
+	Result jsontext.Value `json:"result,omitempty"`
+	Error  *RPCError      `json:"error,omitzero"`
 }
 
 // notifyFunc receives server notifications. It runs on the transport reader
 // goroutine and must not block.
-type notifyFunc func(method string, params json.RawMessage)
+type notifyFunc func(method string, params jsontext.Value)
 
 // serverRequestFunc handles a server-initiated request. It runs on its own
 // goroutine; the returned value is marshaled as the JSON-RPC result, and a
 // non-nil error is reported as a JSON-RPC error object.
-type serverRequestFunc func(ctx context.Context, method string, params json.RawMessage) (any, error)
+type serverRequestFunc func(ctx context.Context, method string, params jsontext.Value) (any, error)
 
 // transportConfig configures a transport.
 type transportConfig struct {
@@ -154,7 +156,7 @@ func (t *transport) Call(ctx context.Context, method string, params any, result 
 		if result == nil || len(resp.Result) == 0 {
 			return nil
 		}
-		if err := json.Unmarshal(resp.Result, result); err != nil {
+		if err := json.Unmarshal(resp.Result, result, jsonx.Foreign); err != nil {
 			return fmt.Errorf("codex: decode result of %s: %w", method, err)
 		}
 		return nil
@@ -191,7 +193,7 @@ func (t *transport) Close() error {
 
 // write serializes v as one compact JSON line.
 func (t *transport) write(v any) error {
-	b, err := json.Marshal(v)
+	b, err := json.Marshal(v, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("codex: encode message: %w", err)
 	}
@@ -225,7 +227,7 @@ func (t *transport) readLoop() {
 			continue
 		}
 		var msg wireMessage
-		if err := json.Unmarshal(line, &msg); err != nil {
+		if err := json.Unmarshal(line, &msg, jsonx.Foreign); err != nil {
 			// Malformed input is skipped rather than fatal: a stray line on
 			// the stream must not tear down a working connection.
 			continue
@@ -270,9 +272,9 @@ func (t *transport) dispatch(msg *wireMessage) {
 // so that a slow handler (an approval prompt, for instance) never blocks the
 // reader.
 func (t *transport) handleServerRequest(msg *wireMessage) {
-	id := append(json.RawMessage(nil), msg.ID...)
+	id := append(jsontext.Value(nil), msg.ID...)
 	method := msg.Method
-	params := append(json.RawMessage(nil), msg.Params...)
+	params := append(jsontext.Value(nil), msg.Params...)
 
 	t.handler.Add(1)
 	go func() {
@@ -293,13 +295,13 @@ func (t *transport) handleServerRequest(msg *wireMessage) {
 // serveRequest runs the server-request handler, which calls user code (the
 // approval handlers): a panic becomes an internal-error reply instead of
 // taking the process down.
-func (t *transport) serveRequest(method string, params json.RawMessage) (result any, err error) {
+func (t *transport) serveRequest(method string, params jsontext.Value) (result any, err error) {
 	defer safecall.Recover(&err, method+" handler")
 	return t.cfg.onServerRequest(t.ctx, method, params)
 }
 
 // respond writes the reply to a server-initiated request.
-func (t *transport) respond(id json.RawMessage, result any, err error) {
+func (t *transport) respond(id jsontext.Value, result any, err error) {
 	reply := map[string]any{"id": id}
 	if err != nil {
 		var rpcErr *RPCError

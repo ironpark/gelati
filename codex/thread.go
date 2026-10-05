@@ -2,9 +2,12 @@ package codex
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"iter"
 	"sync"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // ThreadEvent is a thread lifecycle notification delivered to a subscriber.
@@ -20,7 +23,7 @@ type ThreadEvent struct {
 	// Name is set for thread/name/updated.
 	Name string
 	// Params is the raw notification payload.
-	Params json.RawMessage
+	Params jsontext.Value
 }
 
 // threadSubscription tracks one subscribed thread and its active turns.
@@ -137,7 +140,7 @@ func isThreadMethod(method string) bool {
 
 // routeThreadNotification delivers a thread lifecycle notification to its
 // subscriber.
-func (c *Client) routeThreadNotification(method string, params json.RawMessage, threadID string) {
+func (c *Client) routeThreadNotification(method string, params jsontext.Value, threadID string) {
 	if !isThreadMethod(method) {
 		return
 	}
@@ -151,17 +154,17 @@ func (c *Client) routeThreadNotification(method string, params json.RawMessage, 
 	switch method {
 	case MethodThreadStarted:
 		var payload ThreadStartedParams
-		if err := json.Unmarshal(params, &payload); err == nil {
+		if err := json.Unmarshal(params, &payload, jsonx.Foreign); err == nil {
 			event.Thread = &payload.Thread
 		}
 	case MethodThreadStatusChanged:
 		var payload ThreadStatusChangedParams
-		if err := json.Unmarshal(params, &payload); err == nil {
+		if err := json.Unmarshal(params, &payload, jsonx.Foreign); err == nil {
 			event.Status = &payload.Status
 		}
 	case MethodThreadNameUpdated:
 		var payload ThreadNameUpdatedParams
-		if err := json.Unmarshal(params, &payload); err == nil {
+		if err := json.Unmarshal(params, &payload, jsonx.Foreign); err == nil {
 			event.Name = payload.Name
 		}
 	}

@@ -1,7 +1,7 @@
 package claude
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"strings"
 	"time"
 	"unicode"
@@ -77,7 +77,7 @@ func truthy(v any) bool {
 		return x != 0
 	case int64:
 		return x != 0
-	case json.Number:
+	case numberText:
 		f, err := x.Float64()
 		return err != nil || f != 0
 	case []any:
@@ -263,6 +263,6 @@ func jsStrictEqual(a any, aok bool, b any, bok bool) bool {
 // jsJSONStringify serializes a decoded JSON value for equality checks.
 // Keys are sorted, so (unlike JSON.stringify) key order is ignored.
 func jsJSONStringify(v any) string {
-	b, _ := json.Marshal(v)
+	b, _ := json.Marshal(v, marshalOpts)
 	return string(b)
 }

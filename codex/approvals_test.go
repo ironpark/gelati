@@ -2,7 +2,8 @@ package codex
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"strings"
 	"testing"
@@ -143,7 +144,7 @@ func TestPermissionsApproval(t *testing.T) {
 					t.Errorf("request = %+v", req)
 				}
 				return &PermissionsResponse{
-					Permissions: json.RawMessage(`{"network":{"enabled":true}}`),
+					Permissions: jsontext.Value(`{"network":{"enabled":true}}`),
 					Scope:       ScopeSession,
 				}, nil
 			},
@@ -184,7 +185,7 @@ func TestPermissionsApprovalDefaultGrantsNothing(t *testing.T) {
 func TestUserInputRequest(t *testing.T) {
 	_, server := connect(t, Options{
 		Approvals: ApprovalFuncs{
-			UserInput: func(ctx context.Context, params json.RawMessage) (any, error) {
+			UserInput: func(ctx context.Context, params jsontext.Value) (any, error) {
 				return map[string]any{"answers": []string{"yes"}}, nil
 			},
 		},
@@ -386,7 +387,7 @@ func TestUnmodeledServerRequests(t *testing.T) {
 	})
 	t.Run("handler", func(t *testing.T) {
 		_, server := connect(t, Options{Approvals: ApprovalFuncs{
-			Other: func(ctx context.Context, method string, params json.RawMessage) (any, error) {
+			Other: func(ctx context.Context, method string, params jsontext.Value) (any, error) {
 				return map[string]any{"success": true, "contentItems": []any{}, "method": method}, nil
 			},
 		}})

@@ -1,7 +1,7 @@
 package codex
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"testing"
 )
 
@@ -310,7 +310,7 @@ func TestDecodeThreadItems(t *testing.T) {
 
 func mustMarshal(t *testing.T, v any) []byte {
 	t.Helper()
-	b, err := json.Marshal(v)
+	b, err := json.Marshal(v, json.Deterministic(true))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

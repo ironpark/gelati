@@ -2,7 +2,7 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"io"
 	"os"
@@ -224,7 +224,7 @@ type blockingConnector struct {
 	onDisconnect func()
 }
 
-func (blockingConnector) HandleMCPMessage(context.Context, json.RawMessage) (json.RawMessage, error) {
+func (blockingConnector) HandleMCPMessage(context.Context, jsontext.Value) (jsontext.Value, error) {
 	return nil, nil
 }
 

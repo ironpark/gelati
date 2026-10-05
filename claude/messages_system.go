@@ -106,12 +106,12 @@ type CompactMetadata struct {
 	// Trigger is "manual" or "auto".
 	Trigger    string `json:"trigger"`
 	PreTokens  int    `json:"pre_tokens"`
-	PostTokens int    `json:"post_tokens,omitempty"`
-	DurationMS int    `json:"duration_ms,omitempty"`
+	PostTokens int    `json:"post_tokens,omitzero"`
+	DurationMS int    `json:"duration_ms,omitzero"`
 	// PreservedSegment and PreservedMessages describe the messages kept
 	// verbatim; both are nil when everything was summarized.
-	PreservedSegment  *PreservedSegment  `json:"preserved_segment,omitempty"`
-	PreservedMessages *PreservedMessages `json:"preserved_messages,omitempty"`
+	PreservedSegment  *PreservedSegment  `json:"preserved_segment,omitzero"`
+	PreservedMessages *PreservedMessages `json:"preserved_messages,omitzero"`
 }
 
 // PreservedSegment is the relink info of a partial compaction.
@@ -152,7 +152,7 @@ type APIRetryMessage struct {
 	ErrorStatus *int                  `json:"error_status"`
 	Error       AssistantMessageError `json:"error"`
 	// NoResponse is set when the API sent no response headers in time.
-	NoResponse *APIRetryNoResponse `json:"no_response,omitempty"`
+	NoResponse *APIRetryNoResponse `json:"no_response,omitzero"`
 	UUID       string              `json:"uuid"`
 	SessionID  string              `json:"session_id"`
 }
@@ -171,10 +171,10 @@ type ControlRequestProgressMessage struct {
 	// Status is "started" or "api_retry"; the retry counters are set only
 	// for the latter.
 	Status       string `json:"status"`
-	Attempt      int    `json:"attempt,omitempty"`
-	MaxRetries   int    `json:"max_retries,omitempty"`
-	RetryDelayMS int    `json:"retry_delay_ms,omitempty"`
-	ErrorStatus  *int   `json:"error_status,omitempty"`
+	Attempt      int    `json:"attempt,omitzero"`
+	MaxRetries   int    `json:"max_retries,omitzero"`
+	RetryDelayMS int    `json:"retry_delay_ms,omitzero"`
+	ErrorStatus  *int   `json:"error_status,omitzero"`
 	UUID         string `json:"uuid"`
 	SessionID    string `json:"session_id"`
 }
@@ -258,7 +258,7 @@ type BackgroundTask struct {
 	TaskType    string `json:"task_type"`
 	Description string `json:"description"`
 	// Ambient marks a task that is not activity.
-	Ambient bool `json:"ambient,omitempty"`
+	Ambient bool `json:"ambient,omitzero"`
 }
 
 // ThinkingTokensMessage (subtype "thinking_tokens") is a live estimate of
@@ -308,7 +308,7 @@ type NotificationMessage struct {
 	// Priority is one of the NotificationPriority* constants.
 	Priority  string `json:"priority"`
 	Color     string `json:"color,omitempty"`
-	TimeoutMS int    `json:"timeout_ms,omitempty"`
+	TimeoutMS int    `json:"timeout_ms,omitzero"`
 	UUID      string `json:"uuid"`
 	SessionID string `json:"session_id"`
 }
@@ -393,7 +393,7 @@ type InformationalMessage struct {
 	Level     string `json:"level"`
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	// PreventContinuation reports that execution stops after this message.
-	PreventContinuation bool   `json:"prevent_continuation,omitempty"`
+	PreventContinuation bool   `json:"prevent_continuation,omitzero"`
 	UUID                string `json:"uuid"`
 	SessionID           string `json:"session_id"`
 }
@@ -405,7 +405,7 @@ type MCPResourceLink struct {
 	Title       string         `json:"title,omitempty"`
 	Description string         `json:"description,omitempty"`
 	MimeType    string         `json:"mimeType,omitempty"`
-	Size        *int64         `json:"size,omitempty"`
+	Size        *int64         `json:"size,omitzero"`
 	Annotations map[string]any `json:"annotations,omitempty"`
 }
 
@@ -452,17 +452,17 @@ type TaskStartedMessage struct {
 	// SubagentType is the subagent type of an Agent tool task.
 	SubagentType string `json:"subagent_type,omitempty"`
 	// IsBackgrounded reports whether the task started in the background.
-	IsBackgrounded bool `json:"is_backgrounded,omitempty"`
+	IsBackgrounded bool `json:"is_backgrounded,omitzero"`
 	// SpawnDepth is the nesting depth of a subagent task (1 = top level).
-	SpawnDepth int `json:"spawn_depth,omitempty"`
+	SpawnDepth int `json:"spawn_depth,omitzero"`
 	// WorkflowName is the workflow script name ("local_workflow" tasks).
 	WorkflowName string `json:"workflow_name,omitempty"`
 	Prompt       string `json:"prompt,omitempty"`
 	// SkipTranscript marks a housekeeping task to hide from the transcript.
-	SkipTranscript bool `json:"skip_transcript,omitempty"`
+	SkipTranscript bool `json:"skip_transcript,omitzero"`
 	// Ambient marks a task that is not activity; exclude it from activity
 	// indicators.
-	Ambient bool `json:"ambient,omitempty"`
+	Ambient bool `json:"ambient,omitzero"`
 }
 
 // TaskProgressMessage is emitted while a task is in progress.
@@ -493,15 +493,15 @@ type TaskNotificationMessage struct {
 	UUID       string     `json:"uuid"`
 	SessionID  string     `json:"session_id"`
 	ToolUseID  string     `json:"tool_use_id,omitempty"`
-	Usage      *TaskUsage `json:"usage,omitempty"`
+	Usage      *TaskUsage `json:"usage,omitzero"`
 	// Reason is set when the task did not end normally, e.g.
 	// "worker_restart".
 	Reason string `json:"reason,omitempty"`
 	// ResourceLinks are the resource_link blocks of a backgrounded MCP task's
 	// final result.
 	ResourceLinks  []MCPResourceLink `json:"resource_links,omitempty"`
-	SkipTranscript bool              `json:"skip_transcript,omitempty"`
-	Ambient        bool              `json:"ambient,omitempty"`
+	SkipTranscript bool              `json:"skip_transcript,omitzero"`
+	Ambient        bool              `json:"ambient,omitzero"`
 }
 
 // TaskUpdatedMessage is emitted when a background task's state changes. Patch
@@ -522,11 +522,11 @@ type TaskPatch struct {
 	// Status is pending, running, completed, failed, killed or paused.
 	Status        string `json:"status,omitempty"`
 	Description   string `json:"description,omitempty"`
-	EndTime       int64  `json:"end_time,omitempty"`
-	TotalPausedMS int64  `json:"total_paused_ms,omitempty"`
+	EndTime       int64  `json:"end_time,omitzero"`
+	TotalPausedMS int64  `json:"total_paused_ms,omitzero"`
 	Error         string `json:"error,omitempty"`
 	// IsBackgrounded is set when the task moved to (or from) the background.
-	IsBackgrounded *bool `json:"is_backgrounded,omitempty"`
+	IsBackgrounded *bool `json:"is_backgrounded,omitzero"`
 }
 
 // MirrorErrorMessage reports that a batch of transcript entries could not be
@@ -565,7 +565,7 @@ type HookEventMessage struct {
 	Output string `json:"output,omitempty"`
 	// ExitCode is the hook process's exit status (hook_response), when
 	// reported.
-	ExitCode *int `json:"exit_code,omitempty"`
+	ExitCode *int `json:"exit_code,omitzero"`
 	// Outcome is success, error or cancelled (hook_response).
 	Outcome HookOutcome `json:"outcome,omitempty"`
 }

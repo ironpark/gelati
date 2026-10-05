@@ -2,7 +2,8 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"iter"
 	"sync"
@@ -453,7 +454,7 @@ func TestEngineMCPMessageUnknownServer(t *testing.T) {
 func TestEngineMCPMessageRouted(t *testing.T) {
 	t.Parallel()
 	eng, ft := startEngine(t, nil)
-	eng.mcpServers.connect("calc", &MCPSDKServerConfig{Name: "calc", Instance: mcpHandlerFunc(func(_ context.Context, message json.RawMessage) (json.RawMessage, error) {
+	eng.mcpServers.connect("calc", &MCPSDKServerConfig{Name: "calc", Instance: mcpHandlerFunc(func(_ context.Context, message jsontext.Value) (jsontext.Value, error) {
 		var req map[string]any
 		if err := json.Unmarshal(message, &req); err != nil {
 			return nil, err
@@ -464,7 +465,7 @@ func TestEngineMCPMessageRouted(t *testing.T) {
 		case "boom":
 			return nil, errors.New("handler failed")
 		}
-		return json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`), nil
+		return jsontext.Value(`{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`), nil
 	})})
 
 	ft.push(map[string]any{"type": "control_request", "request_id": "m1", "request": map[string]any{
@@ -774,8 +775,8 @@ func TestEngineContextCancelsControlRequest(t *testing.T) {
 }
 
 // mcpHandlerFunc adapts a function to MCPHandler.
-type mcpHandlerFunc func(ctx context.Context, message json.RawMessage) (json.RawMessage, error)
+type mcpHandlerFunc func(ctx context.Context, message jsontext.Value) (jsontext.Value, error)
 
-func (f mcpHandlerFunc) HandleMCPMessage(ctx context.Context, message json.RawMessage) (json.RawMessage, error) {
+func (f mcpHandlerFunc) HandleMCPMessage(ctx context.Context, message jsontext.Value) (jsontext.Value, error) {
 	return f(ctx, message)
 }

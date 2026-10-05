@@ -1,7 +1,8 @@
 package claude
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"maps"
 
 	"github.com/ironpark/gelati/internal/jsonx"
@@ -48,16 +49,16 @@ func (*TextBlock) BlockType() string { return "text" }
 type TextCitation struct {
 	Type              string `json:"type"`
 	CitedText         string `json:"cited_text"`
-	DocumentIndex     int    `json:"document_index,omitempty"`
+	DocumentIndex     int    `json:"document_index,omitzero"`
 	DocumentTitle     string `json:"document_title,omitempty"`
 	FileID            string `json:"file_id,omitempty"`
-	StartCharIndex    int    `json:"start_char_index,omitempty"`
-	EndCharIndex      int    `json:"end_char_index,omitempty"`
-	StartPageNumber   int    `json:"start_page_number,omitempty"`
-	EndPageNumber     int    `json:"end_page_number,omitempty"`
-	StartBlockIndex   int    `json:"start_block_index,omitempty"`
-	EndBlockIndex     int    `json:"end_block_index,omitempty"`
-	SearchResultIndex int    `json:"search_result_index,omitempty"`
+	StartCharIndex    int    `json:"start_char_index,omitzero"`
+	EndCharIndex      int    `json:"end_char_index,omitzero"`
+	StartPageNumber   int    `json:"start_page_number,omitzero"`
+	EndPageNumber     int    `json:"end_page_number,omitzero"`
+	StartBlockIndex   int    `json:"start_block_index,omitzero"`
+	EndBlockIndex     int    `json:"end_block_index,omitzero"`
+	SearchResultIndex int    `json:"search_result_index,omitzero"`
 	Source            string `json:"source,omitempty"`
 	Title             string `json:"title,omitempty"`
 	URL               string `json:"url,omitempty"`
@@ -105,7 +106,7 @@ type ToolResultBlock struct {
 	ToolUseID   string           `json:"tool_use_id"`
 	ContentText *string          `json:"-"`
 	ContentList []map[string]any `json:"-"`
-	IsError     *bool            `json:"is_error,omitempty"`
+	IsError     *bool            `json:"is_error,omitzero"`
 }
 
 func (*ToolResultBlock) isContentBlock()   {}
@@ -122,7 +123,19 @@ func (b ToolResultBlock) MarshalJSON() ([]byte, error) {
 // as its "content" member. The content fields of the result blocks are tagged
 // "-", so their own encoding never has that key and nothing is checked.
 func marshalWithContent(block, content any) ([]byte, error) {
-	return jsonx.MarshalWithExtra(block, contentMember(content), func(string) bool { return false })
+	b, err := json.Marshal(block, marshalOpts)
+	if err != nil {
+		return nil, err
+	}
+	extra := contentMember(content)
+	if extra != nil {
+		c, err := json.Marshal(content, marshalOpts)
+		if err != nil {
+			return nil, err
+		}
+		extra["content"] = jsontext.Value(c)
+	}
+	return jsonx.MarshalWithExtra(jsontext.Value(b), extra, func(string) bool { return false })
 }
 
 // UnmarshalJSON reads the wire shape produced by MarshalJSON. A member of an
@@ -364,7 +377,7 @@ type BlockSource struct {
 	Data      string `json:"data,omitempty"`
 	URL       string `json:"url,omitempty"`
 	FileID    string `json:"file_id,omitempty"`
-	Content   any    `json:"content,omitempty"`
+	Content   any    `json:"content,omitzero"`
 }
 
 // ImageBlock is an image. It appears in user messages, and can be sent with
@@ -409,14 +422,14 @@ func (b *UnknownBlock) BlockType() string { return b.Type }
 
 // MarshalJSON writes Raw, with Type as its "type" key.
 func (b UnknownBlock) MarshalJSON() ([]byte, error) {
-	return json.Marshal(b.wire())
+	return json.Marshal(b.wire(), marshalOpts)
 }
 
 // UnmarshalJSON keeps the whole object in Raw. A value that is not an object
 // leaves b empty.
 func (b *UnknownBlock) UnmarshalJSON(data []byte) error {
 	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); fatalDecodeErr(err) {
+	if err := json.Unmarshal(data, &raw, lenient); fatalDecodeErr(err) {
 		return err
 	}
 	*b = UnknownBlock{Type: str(raw["type"]), Raw: raw}

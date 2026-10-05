@@ -3,7 +3,7 @@ package claude
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,28 +42,23 @@ func typeFirstKeys(e map[string]any) []string {
 }
 
 // jsonAppender appends values to byte slices as compact JSON without HTML
-// escaping or a trailing newline. It reuses one encoder and scratch buffer
-// across calls, so a batch of writes shares them.
+// escaping or a trailing newline, map keys sorted. It reuses one scratch
+// buffer across calls, so a batch of writes shares it.
 type jsonAppender struct {
 	buf bytes.Buffer
-	enc *json.Encoder
 }
 
 func newJSONAppender() *jsonAppender {
-	a := new(jsonAppender)
-	a.enc = json.NewEncoder(&a.buf)
-	a.enc.SetEscapeHTML(false)
-	return a
+	return new(jsonAppender)
 }
 
 // append appends v to dst. On error dst is returned unchanged.
 func (a *jsonAppender) append(dst []byte, v any) ([]byte, error) {
 	a.buf.Reset()
-	if err := a.enc.Encode(v); err != nil {
+	if err := json.MarshalWrite(&a.buf, v, marshalOpts); err != nil {
 		return dst, err
 	}
-	b := a.buf.Bytes()
-	return append(dst, b[:len(b)-1]...), nil // drop Encode's trailing newline
+	return append(dst, a.buf.Bytes()...), nil
 }
 
 // appendObject appends the n fields returned by field, in order, to dst as
@@ -168,7 +163,7 @@ func asciiEscapeJSON(b []byte) string {
 
 // pyJSONObject serializes fields, in order, as a compact JSON object the way
 // Python's json.dumps with compact separators does: no HTML escaping and
-// every non-ASCII character escaped (ensure_ascii). json.RawMessage values
+// every non-ASCII character escaped (ensure_ascii). jsontext.Value values
 // are copied compacted.
 func pyJSONObject(fields []jsonField) (string, error) {
 	buf, err := newJSONAppender().appendObject(nil, len(fields), func(i int) (string, any) {

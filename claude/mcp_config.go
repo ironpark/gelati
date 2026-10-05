@@ -1,7 +1,7 @@
 package claude
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"reflect"
 )
 
@@ -24,11 +24,11 @@ type MCPStdioServerConfig struct {
 	// Timeout is the per-call tool timeout in milliseconds, overriding
 	// MCP_TOOL_TIMEOUT for this server. Zero leaves the default; the CLI
 	// ignores values below 1000.
-	Timeout int `json:"timeout,omitempty"`
+	Timeout int `json:"timeout,omitzero"`
 	// AlwaysLoad keeps every tool of the server in the prompt instead of
 	// deferring it behind tool search, and makes startup wait for the
 	// server to connect.
-	AlwaysLoad bool `json:"alwaysLoad,omitempty"`
+	AlwaysLoad bool `json:"alwaysLoad,omitzero"`
 }
 
 func (*MCPStdioServerConfig) isMCPServerConfig() {}
@@ -39,7 +39,7 @@ func (c *MCPStdioServerConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type string `json:"type"`
 		*alias
-	}{"stdio", (*alias)(c)})
+	}{"stdio", (*alias)(c)}, marshalOpts)
 }
 
 // MCPSSEServerConfig connects to an MCP server over server-sent events.
@@ -50,9 +50,9 @@ type MCPSSEServerConfig struct {
 	Tools []MCPServerToolPolicy `json:"tools,omitempty"`
 	// Timeout is the per-call tool timeout in milliseconds; see
 	// MCPStdioServerConfig.Timeout.
-	Timeout int `json:"timeout,omitempty"`
+	Timeout int `json:"timeout,omitzero"`
 	// AlwaysLoad: see MCPStdioServerConfig.AlwaysLoad.
-	AlwaysLoad bool `json:"alwaysLoad,omitempty"`
+	AlwaysLoad bool `json:"alwaysLoad,omitzero"`
 }
 
 func (*MCPSSEServerConfig) isMCPServerConfig() {}
@@ -63,7 +63,7 @@ func (c *MCPSSEServerConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type string `json:"type"`
 		*alias
-	}{"sse", (*alias)(c)})
+	}{"sse", (*alias)(c)}, marshalOpts)
 }
 
 // MCPHTTPServerConfig connects to an MCP server over streamable HTTP.
@@ -74,9 +74,9 @@ type MCPHTTPServerConfig struct {
 	Tools []MCPServerToolPolicy `json:"tools,omitempty"`
 	// Timeout is the per-call tool timeout in milliseconds; see
 	// MCPStdioServerConfig.Timeout.
-	Timeout int `json:"timeout,omitempty"`
+	Timeout int `json:"timeout,omitzero"`
 	// AlwaysLoad: see MCPStdioServerConfig.AlwaysLoad.
-	AlwaysLoad bool `json:"alwaysLoad,omitempty"`
+	AlwaysLoad bool `json:"alwaysLoad,omitzero"`
 }
 
 func (*MCPHTTPServerConfig) isMCPServerConfig() {}
@@ -87,7 +87,7 @@ func (c *MCPHTTPServerConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type string `json:"type"`
 		*alias
-	}{"http", (*alias)(c)})
+	}{"http", (*alias)(c)}, marshalOpts)
 }
 
 // MCPSDKServerConfig serves an in-process MCP server to the CLI over the
@@ -124,7 +124,7 @@ func (c *MCPSDKServerConfig) MarshalJSON() ([]byte, error) {
 	if c.Timeout > 0 {
 		out["timeout"] = c.Timeout
 	}
-	return json.Marshal(out)
+	return json.Marshal(out, marshalOpts)
 }
 
 // MCPServerToolPolicy sets the permission policy of one tool of an SSE or HTTP

@@ -2,7 +2,8 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"reflect"
 	"sync"
 	"testing"
@@ -12,7 +13,7 @@ func TestClientSetMCPServers(t *testing.T) {
 	t.Parallel()
 	initial := NewSDKMCPServer("initial", "", ToolDef{Name: "t"})
 	added := NewSDKMCPServerWithOptions(SDKMCPServerOptions{Name: "added", Timeout: 5000,
-		Tools: []ToolDef{{Name: "x", Handler: func(_ context.Context, _ json.RawMessage) (ToolResult, error) {
+		Tools: []ToolDef{{Name: "x", Handler: func(_ context.Context, _ jsontext.Value) (ToolResult, error) {
 			return TextResult("from added"), nil
 		}}}})
 
@@ -58,7 +59,7 @@ func TestClientSetMCPServers(t *testing.T) {
 	}
 
 	mu.Lock()
-	got, _ := json.Marshal(requests[0])
+	got, _ := json.Marshal(requests[0], json.Deterministic(true))
 	mu.Unlock()
 	want := `{"servers":{"added":{"name":"added","timeout":5000,"type":"sdk"},"fs":{"command":"node","timeout":2000,"type":"stdio"}},"subtype":"mcp_set_servers"}`
 	if string(got) != want {
@@ -91,7 +92,7 @@ func TestClientSetMCPServers(t *testing.T) {
 		t.Fatal(err)
 	}
 	mu.Lock()
-	got, _ = json.Marshal(requests[1]["servers"])
+	got, _ = json.Marshal(requests[1]["servers"], json.Deterministic(true))
 	mu.Unlock()
 	if string(got) != `{"added":{"name":"added","timeout":5000,"type":"sdk"}}` {
 		t.Fatalf("servers = %s", got)
@@ -102,7 +103,7 @@ func TestClientSetMCPServers(t *testing.T) {
 		t.Fatal(err)
 	}
 	mu.Lock()
-	got, _ = json.Marshal(requests[2]["servers"])
+	got, _ = json.Marshal(requests[2]["servers"], json.Deterministic(true))
 	mu.Unlock()
 	if string(got) != `{}` {
 		t.Fatalf("servers = %s", got)

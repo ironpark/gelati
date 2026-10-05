@@ -2,7 +2,8 @@ package claude
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -10,6 +11,8 @@ import (
 	"sync"
 
 	"github.com/ironpark/gelati/internal/safecall"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // DefaultMCPProtocolVersion is offered when the client does not name one.
@@ -164,10 +167,10 @@ func (r ToolResult) wire() map[string]any {
 // ToolAnnotations are hints about a tool's behavior, plus MaxResultSizeChars.
 type ToolAnnotations struct {
 	Title           string `json:"title,omitempty"`
-	ReadOnlyHint    *bool  `json:"readOnlyHint,omitempty"`
-	DestructiveHint *bool  `json:"destructiveHint,omitempty"`
-	IdempotentHint  *bool  `json:"idempotentHint,omitempty"`
-	OpenWorldHint   *bool  `json:"openWorldHint,omitempty"`
+	ReadOnlyHint    *bool  `json:"readOnlyHint,omitzero"`
+	DestructiveHint *bool  `json:"destructiveHint,omitzero"`
+	IdempotentHint  *bool  `json:"idempotentHint,omitzero"`
+	OpenWorldHint   *bool  `json:"openWorldHint,omitzero"`
 	// MaxResultSizeChars is the size up to which Claude Code keeps a result
 	// inline rather than persisting it and showing a preview. It is not an
 	// MCP hint: it travels in the tool's _meta, because MCP clients drop
@@ -177,7 +180,7 @@ type ToolAnnotations struct {
 
 // ToolHandler runs one tool call. args is the raw JSON arguments object.
 // Returning an error produces an isError result, never a protocol error.
-type ToolHandler func(ctx context.Context, args json.RawMessage) (ToolResult, error)
+type ToolHandler func(ctx context.Context, args jsontext.Value) (ToolResult, error)
 
 // ToolDef declares one tool of an in-process MCP server.
 type ToolDef struct {
@@ -207,10 +210,10 @@ func NewTool[T any](name, description string, schema map[string]any, handler fun
 		Name:        name,
 		Description: description,
 		InputSchema: schema,
-		Handler: func(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+		Handler: func(ctx context.Context, raw jsontext.Value) (ToolResult, error) {
 			var args T
 			if len(raw) > 0 {
-				if err := json.Unmarshal(raw, &args); err != nil {
+				if err := json.Unmarshal(raw, &args, jsonx.Foreign); err != nil {
 					return ErrorResult("Input validation error: %s", err), nil
 				}
 			}
@@ -367,7 +370,7 @@ func (s *MCPServer) Notify(ctx context.Context, method string, params any) error
 	if params != nil {
 		message["params"] = params
 	}
-	raw, err := json.Marshal(message)
+	raw, err := json.Marshal(message, marshalOpts)
 	if err != nil {
 		return fmt.Errorf("claude: encoding mcp notification: %w", err)
 	}
@@ -407,18 +410,18 @@ func (s *MCPServer) ConnectMCP(send MCPSendFunc) (disconnect func()) {
 
 // jsonRPCRequest is one message from the CLI's MCP client.
 type jsonRPCRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params"`
+	JSONRPC string         `json:"jsonrpc"`
+	ID      jsontext.Value `json:"id"`
+	Method  string         `json:"method"`
+	Params  jsontext.Value `json:"params"`
 }
 
 // HandleMCPMessage answers one JSON-RPC message from the CLI's MCP client,
 // implementing MCPHandler. It returns nil for notifications and responses,
 // which get no reply.
-func (s *MCPServer) HandleMCPMessage(ctx context.Context, message json.RawMessage) (json.RawMessage, error) {
+func (s *MCPServer) HandleMCPMessage(ctx context.Context, message jsontext.Value) (jsontext.Value, error) {
 	var req jsonRPCRequest
-	if err := json.Unmarshal(message, &req); err != nil {
+	if err := json.Unmarshal(message, &req, jsonx.Foreign); err != nil {
 		return jsonRPCErrorReply(nil, jsonRPCInvalidRequest, "Invalid JSON-RPC message")
 	}
 	if len(req.ID) == 0 || string(req.ID) == "null" {
@@ -497,13 +500,13 @@ func (s *MCPServer) toolMeta(tool ToolDef) map[string]any {
 // callTool dispatches one tools/call. Unknown tools, invalid arguments, handler
 // errors and handler panics all become isError results the model can read,
 // never protocol errors.
-func (s *MCPServer) callTool(ctx context.Context, params json.RawMessage) (result ToolResult) {
+func (s *MCPServer) callTool(ctx context.Context, params jsontext.Value) (result ToolResult) {
 	var call struct {
-		Name      string          `json:"name"`
-		Arguments json.RawMessage `json:"arguments"`
+		Name      string         `json:"name"`
+		Arguments jsontext.Value `json:"arguments"`
 	}
 	if len(params) > 0 {
-		if err := json.Unmarshal(params, &call); err != nil {
+		if err := json.Unmarshal(params, &call, jsonx.Foreign); err != nil {
 			return ErrorResult("Input validation error: %s", err)
 		}
 	}
@@ -531,18 +534,18 @@ func (s *MCPServer) callTool(ctx context.Context, params json.RawMessage) (resul
 }
 
 // jsonRPCReply encodes a JSON-RPC success response.
-func jsonRPCReply(id json.RawMessage, result any) (json.RawMessage, error) {
-	return json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+func jsonRPCReply(id jsontext.Value, result any) (jsontext.Value, error) {
+	return json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": result}, marshalOpts)
 }
 
 // jsonRPCErrorReply encodes a JSON-RPC error response. A missing id is sent as
 // null.
-func jsonRPCErrorReply(id json.RawMessage, code int, message string) (json.RawMessage, error) {
+func jsonRPCErrorReply(id jsontext.Value, code int, message string) (jsontext.Value, error) {
 	var rawID any
 	if len(id) > 0 {
 		rawID = id
 	}
-	return json.Marshal(jsonRPCError(rawID, code, message))
+	return json.Marshal(jsonRPCError(rawID, code, message), marshalOpts)
 }
 
 // jsonRPCError builds a JSON-RPC error response object.
@@ -556,11 +559,11 @@ func jsonRPCError(id any, code int, message string) map[string]any {
 
 // negotiateProtocolVersion echoes the client's protocol version when it named
 // one, so a newer CLI is not forced down to an older revision.
-func negotiateProtocolVersion(params json.RawMessage) string {
+func negotiateProtocolVersion(params jsontext.Value) string {
 	var p struct {
 		ProtocolVersion string `json:"protocolVersion"`
 	}
-	if len(params) > 0 && json.Unmarshal(params, &p) == nil && p.ProtocolVersion != "" {
+	if len(params) > 0 && json.Unmarshal(params, &p, jsonx.Foreign) == nil && p.ProtocolVersion != "" {
 		return p.ProtocolVersion
 	}
 	return DefaultMCPProtocolVersion
@@ -570,13 +573,13 @@ func negotiateProtocolVersion(params json.RawMessage) string {
 // without a schema library: the argument object decodes, every required
 // property is present, and declared primitive types match. Anything else in the
 // schema is left to the handler.
-func validateAgainstSchema(schema map[string]any, raw json.RawMessage) error {
+func validateAgainstSchema(schema map[string]any, raw jsontext.Value) error {
 	if schema == nil {
 		return nil
 	}
 	args := map[string]any{}
 	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &args); err != nil {
+		if err := json.Unmarshal(raw, &args, jsonx.Foreign); err != nil {
 			return fmt.Errorf("arguments must be an object: %w", err)
 		}
 	}

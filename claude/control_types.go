@@ -19,7 +19,7 @@ type SlashCommand struct {
 	Aliases []string `json:"aliases,omitempty"`
 	// Builtin is true for Claude Code's own commands; false for commands
 	// defined by a user, project, plugin or MCP server.
-	Builtin bool `json:"builtin,omitempty"`
+	Builtin bool `json:"builtin,omitzero"`
 }
 
 // ModelInfo describes one model the session can use.
@@ -32,11 +32,11 @@ type ModelInfo struct {
 	Description   string `json:"description"`
 	// SupportsEffort reports whether the model supports effort levels,
 	// listed in SupportedEffortLevels.
-	SupportsEffort           bool          `json:"supportsEffort,omitempty"`
+	SupportsEffort           bool          `json:"supportsEffort,omitzero"`
 	SupportedEffortLevels    []EffortLevel `json:"supportedEffortLevels,omitempty"`
-	SupportsAdaptiveThinking bool          `json:"supportsAdaptiveThinking,omitempty"`
-	SupportsFastMode         bool          `json:"supportsFastMode,omitempty"`
-	SupportsAutoMode         bool          `json:"supportsAutoMode,omitempty"`
+	SupportsAdaptiveThinking bool          `json:"supportsAdaptiveThinking,omitzero"`
+	SupportsFastMode         bool          `json:"supportsFastMode,omitzero"`
+	SupportsAutoMode         bool          `json:"supportsAutoMode,omitzero"`
 }
 
 // AgentInfo describes a subagent invokable through the Agent tool.
@@ -72,10 +72,10 @@ type InitializeResult struct {
 	Account               AccountInfo `json:"account"`
 	// HooksApplied reports whether the hooks this initialize carried were
 	// registered; nil when it carried none or the CLI predates the field.
-	HooksApplied *bool `json:"hooks_applied,omitempty"`
+	HooksApplied *bool `json:"hooks_applied,omitzero"`
 	// PluginsApplied reports whether every plugin the request listed is
 	// loaded; nil when it listed none or the CLI predates the field.
-	PluginsApplied *bool `json:"plugins_applied,omitempty"`
+	PluginsApplied *bool `json:"plugins_applied,omitzero"`
 	// SDKMCPManifestsParked reports, per in-process server, what became of
 	// its pre-captured MCP manifest (parked, already_connected,
 	// protocol_version_mismatch, malformed or not_honoured).
@@ -121,11 +121,11 @@ type RewindFilesResult struct {
 	CanRewind    bool     `json:"canRewind"`
 	Error        string   `json:"error,omitempty"`
 	FilesChanged []string `json:"filesChanged,omitempty"`
-	Insertions   int      `json:"insertions,omitempty"`
-	Deletions    int      `json:"deletions,omitempty"`
+	Insertions   int      `json:"insertions,omitzero"`
+	Deletions    int      `json:"deletions,omitzero"`
 	// SkippedLinks counts tracked files left alone because a link or other
 	// non-regular file sat at their path. Set by real rewinds only.
-	SkippedLinks int `json:"skippedLinks,omitempty"`
+	SkippedLinks int `json:"skippedLinks,omitzero"`
 	// Raw is the full response payload.
 	Raw map[string]any `json:"-"`
 }
@@ -213,8 +213,8 @@ type ReloadPluginsResult struct {
 	ErrorCount int               `json:"error_count"`
 	// Held is set when HoldOnCacheImpact was requested: true means the
 	// reload was not applied and CacheImpact says why.
-	Held        *bool              `json:"held,omitempty"`
-	CacheImpact *PluginCacheImpact `json:"cache_impact,omitempty"`
+	Held        *bool              `json:"held,omitzero"`
+	CacheImpact *PluginCacheImpact `json:"cache_impact,omitzero"`
 	// Raw is the full response payload.
 	Raw map[string]any `json:"-"`
 }
@@ -259,7 +259,7 @@ type ReadFileOptions struct {
 type ReadFileResult struct {
 	Contents  string `json:"contents"`
 	AbsPath   string `json:"absPath"`
-	Truncated bool   `json:"truncated,omitempty"`
+	Truncated bool   `json:"truncated,omitzero"`
 	// Encoding is "base64" when requested and honored; empty means utf-8.
 	Encoding ReadFileEncoding `json:"encoding,omitempty"`
 }
@@ -313,18 +313,18 @@ type UsageExtraUsage struct {
 	MonthlyLimit *float64 `json:"monthly_limit"`
 	UsedCredits  *float64 `json:"used_credits"`
 	Utilization  *float64 `json:"utilization"`
-	Currency     *string  `json:"currency,omitempty"`
+	Currency     *string  `json:"currency,omitzero"`
 }
 
 // UsageRateLimits holds the plan's rate-limit windows.
 type UsageRateLimits struct {
-	FiveHour          *UsageWindow       `json:"five_hour,omitempty"`
-	SevenDay          *UsageWindow       `json:"seven_day,omitempty"`
-	SevenDayOAuthApps *UsageWindow       `json:"seven_day_oauth_apps,omitempty"`
-	SevenDayOpus      *UsageWindow       `json:"seven_day_opus,omitempty"`
-	SevenDaySonnet    *UsageWindow       `json:"seven_day_sonnet,omitempty"`
+	FiveHour          *UsageWindow       `json:"five_hour,omitzero"`
+	SevenDay          *UsageWindow       `json:"seven_day,omitzero"`
+	SevenDayOAuthApps *UsageWindow       `json:"seven_day_oauth_apps,omitzero"`
+	SevenDayOpus      *UsageWindow       `json:"seven_day_opus,omitzero"`
+	SevenDaySonnet    *UsageWindow       `json:"seven_day_sonnet,omitzero"`
 	ModelScoped       []UsageModelWindow `json:"model_scoped,omitempty"`
-	ExtraUsage        *UsageExtraUsage   `json:"extra_usage,omitempty"`
+	ExtraUsage        *UsageExtraUsage   `json:"extra_usage,omitzero"`
 }
 
 // UsageSession is the cost and usage accumulated by the current session.
@@ -376,12 +376,12 @@ type PermissionRuleEntry struct {
 	// Rule is the stored rule string verbatim. It may carry control
 	// characters: escape it before display.
 	Rule        string                     `json:"rule"`
-	Description *PermissionRuleDescription `json:"description,omitempty"`
+	Description *PermissionRuleDescription `json:"description,omitzero"`
 	// Editability is persistent, session or readonly.
 	Editability string `json:"editability"`
 	// NotInEffect marks a rule ignored because managed settings allow
 	// policy rules only.
-	NotInEffect bool `json:"notInEffect,omitempty"`
+	NotInEffect bool `json:"notInEffect,omitzero"`
 }
 
 // PermissionWorkspaceDirectory is one additional working directory in the

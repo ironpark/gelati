@@ -2,7 +2,8 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,10 +15,10 @@ import (
 // tools/call and ping.
 
 type rpcRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
+	JSONRPC string         `json:"jsonrpc"`
+	ID      jsontext.Value `json:"id,omitempty"`
+	Method  string         `json:"method"`
+	Params  jsontext.Value `json:"params,omitempty"`
 }
 
 type rpcError struct {
@@ -26,10 +27,10 @@ type rpcError struct {
 }
 
 type rpcResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Result  any             `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
+	JSONRPC string         `json:"jsonrpc"`
+	ID      jsontext.Value `json:"id"`
+	Result  any            `json:"result,omitzero"`
+	Error   *rpcError      `json:"error,omitzero"`
 }
 
 var pirateTools = []map[string]any{
@@ -71,7 +72,8 @@ func handle(req rpcRequest) *rpcResponse {
 		var p struct {
 			Name      string `json:"name"`
 			Arguments struct {
-				A, B int
+				A int `json:"a"`
+				B int `json:"b"`
 			} `json:"arguments"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -101,14 +103,17 @@ func handle(req rpcRequest) *rpcResponse {
 func serveMCPStdio(r io.Reader, w io.Writer) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 1<<20), 1<<24)
-	enc := json.NewEncoder(w)
 	for sc.Scan() {
 		var req rpcRequest
 		if err := json.Unmarshal(sc.Bytes(), &req); err != nil {
 			continue
 		}
 		if resp := handle(req); resp != nil {
-			if err := enc.Encode(resp); err != nil {
+			b, err := json.Marshal(resp)
+			if err != nil {
+				return err
+			}
+			if _, err := w.Write(append(b, '\n')); err != nil {
 				return err
 			}
 		}
@@ -124,7 +129,7 @@ func serveMCPHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req rpcRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.UnmarshalRead(r.Body, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -134,5 +139,5 @@ func serveMCPHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	json.MarshalWrite(w, resp)
 }

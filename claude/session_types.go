@@ -161,7 +161,7 @@ type SessionInfo struct {
 	// FileSize is the transcript size in bytes. Store-backed results
 	// report the size of the transcript serialized as compact JSONL, or
 	// zero when they come from a session summary.
-	FileSize int64 `json:"file_size,omitempty"`
+	FileSize int64 `json:"file_size,omitzero"`
 	// CustomTitle is the user-set or generated session title.
 	CustomTitle string `json:"custom_title,omitempty"`
 	// FirstPrompt is the first meaningful user prompt.
@@ -174,7 +174,7 @@ type SessionInfo struct {
 	Tag string `json:"tag,omitempty"`
 	// CreatedAt is the creation time in Unix epoch milliseconds, taken
 	// from the first entry's timestamp.
-	CreatedAt int64 `json:"created_at,omitempty"`
+	CreatedAt int64 `json:"created_at,omitzero"`
 }
 
 // SessionMessage is a message read back from a session transcript: a user
@@ -205,18 +205,18 @@ type SessionMessage struct {
 	// IsMeta marks messages not typed by the user: meta messages kept
 	// for their origin (channel, observer, peer, ...), compact summaries
 	// and transcript-only messages.
-	IsMeta bool `json:"is_meta,omitempty"`
+	IsMeta bool `json:"is_meta,omitzero"`
 	// IsCompactSummary marks the summary that replaced the conversation
 	// before a compaction.
-	IsCompactSummary bool `json:"isCompactSummary,omitempty"`
+	IsCompactSummary bool `json:"isCompactSummary,omitzero"`
 	// IsQueuedCommand marks a prompt that was queued while a turn was
 	// running and recorded as a queued_command attachment.
-	IsQueuedCommand bool `json:"isQueuedCommand,omitempty"`
+	IsQueuedCommand bool `json:"isQueuedCommand,omitzero"`
 	// IsCompletedLocalCommand marks the record and output of a local slash
 	// command that ran to completion.
-	IsCompletedLocalCommand bool `json:"isCompletedLocalCommand,omitempty"`
+	IsCompletedLocalCommand bool `json:"isCompletedLocalCommand,omitzero"`
 	// InterruptedByShutdown marks a message cut short by a shutdown.
-	InterruptedByShutdown bool `json:"interruptedByShutdown,omitempty"`
+	InterruptedByShutdown bool `json:"interruptedByShutdown,omitzero"`
 	// ToolDenialUnanswered is "stream-closed" when a permission prompt was
 	// left unanswered because the stream closed; empty otherwise.
 	ToolDenialUnanswered string `json:"toolDenialUnanswered,omitempty"`

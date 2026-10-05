@@ -1,19 +1,21 @@
 package agy
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/ironpark/gelati/internal/jsonx"
 )
 
 // decodeJSONObject decodes s into a map when it holds a JSON object.
 func decodeJSONObject(s string) (map[string]any, bool) {
 	var m map[string]any
-	if err := json.Unmarshal([]byte(s), &m); err != nil || m == nil {
+	if err := json.Unmarshal([]byte(s), &m, jsonx.Foreign); err != nil || m == nil {
 		return nil, false
 	}
 	return m, true
@@ -28,13 +30,15 @@ func argsFromJSON(s string) map[string]any {
 	return map[string]any{}
 }
 
-// jsonConvert converts src into dst through encoding/json.
+// jsonConvert converts src into dst through encoding/json. src often holds
+// what the model sent, so both directions tolerate invalid UTF-8 (replaced
+// by U+FFFD, as encoding/json v1 did) and dst decodes with jsonx.Foreign.
 func jsonConvert(src, dst any) error {
-	b, err := json.Marshal(src)
+	b, err := json.Marshal(src, jsonx.Foreign)
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(b, dst)
+	return json.Unmarshal(b, dst, jsonx.Foreign)
 }
 
 // toJSONValue converts v to its generic JSON form (nil, bool, float64,
