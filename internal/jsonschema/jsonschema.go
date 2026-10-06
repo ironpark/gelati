@@ -61,17 +61,18 @@ func For(t reflect.Type) map[string]any {
 // interface fields have no strict form; they are left as For derives them,
 // and the API rejects them.
 func Strict(t reflect.Type) map[string]any {
-	return strict(For(t))
+	return MakeStrict(For(t))
 }
 
-// strict returns a strict copy of schema s; see Strict.
-func strict(s map[string]any) map[string]any {
+// MakeStrict returns a strict copy of schema s, as Strict derives; s is not
+// changed.
+func MakeStrict(s map[string]any) map[string]any {
 	out := maps.Clone(s)
 	if items, ok := s["items"].(map[string]any); ok {
-		out["items"] = strict(items)
+		out["items"] = MakeStrict(items)
 	}
 	if extra, ok := s["additionalProperties"].(map[string]any); ok {
-		out["additionalProperties"] = strict(extra)
+		out["additionalProperties"] = MakeStrict(extra)
 	}
 	props, ok := s["properties"].(map[string]any)
 	if !ok {
@@ -84,7 +85,7 @@ func strict(s map[string]any) map[string]any {
 	// ones For already requires.
 	for _, name := range slices.Sorted(maps.Keys(props)) {
 		prop, _ := props[name].(map[string]any)
-		prop = strict(prop)
+		prop = MakeStrict(prop)
 		if !slices.Contains(req, any(name)) {
 			nullable(prop)
 			required = append(required, name)

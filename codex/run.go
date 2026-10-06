@@ -20,6 +20,11 @@ type TurnResult struct {
 	Items []ThreadItem
 	// Usage is the turn's last token usage update, or nil when none arrived.
 	Usage *ThreadTokenUsage
+	// TurnUsage is the turn's own usage: how much the thread's total grew
+	// during it. It is nil when no update arrived, or when the thread's
+	// total before the turn is unknown, as for the first turn of a resumed
+	// or forked thread on this client.
+	TurnUsage *TokenUsage
 }
 
 // Text returns the turn's final response: the text of the last agent message
@@ -107,6 +112,11 @@ func (s *TurnStream) Result(ctx context.Context) (*TurnResult, error) {
 	// Nothing appends to s.items once the stream has ended. The capacity is
 	// capped so a caller's append cannot write into a shared backing array.
 	result := &TurnResult{Turn: s.final, Items: s.items[:len(s.items):len(s.items)], Usage: s.usage}
+	if s.usage != nil && s.baseline != nil {
+		if d := s.usage.Total.Sub(*s.baseline); d.InputTokens >= 0 && d.CachedInputTokens >= 0 && d.OutputTokens >= 0 {
+			result.TurnUsage = &d
+		}
+	}
 	if s.final.Status == TurnFailed {
 		if s.final.Error != nil {
 			return result, s.final.Error

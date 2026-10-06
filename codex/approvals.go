@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -113,6 +114,10 @@ type FileChangeApprovalRequest struct {
 	// GrantRoot is the root the agent asks to be granted write access to.
 	GrantRoot   string `json:"grantRoot,omitempty"`
 	StartedAtMs int64  `json:"startedAtMs,omitzero"`
+	// Changes are the proposed edits. The request does not carry them: the
+	// client takes them from the item's item/started notification, and
+	// leaves them nil when it saw none.
+	Changes []FileChange `json:"-"`
 	// Params is the raw request payload.
 	Params jsontext.Value `json:"-"`
 }
@@ -203,9 +208,10 @@ type TokenRefresher interface {
 
 // ServerRequestHandler is an optional ApprovalHandler extension that answers
 // every server request the client does not model, such as
-// MethodDynamicToolCall, MethodMcpElicitation, or attestation/generate. The
-// returned value is marshaled as the JSON-RPC result. Without it, MCP
-// elicitations are declined and other requests fail with method-not-found.
+// MethodMcpElicitation or attestation/generate, and MethodDynamicToolCall
+// when the handler is no DynamicToolHandler. The returned value is
+// marshaled as the JSON-RPC result. Without it, MCP elicitations are
+// declined and other requests fail with method-not-found.
 type ServerRequestHandler interface {
 	HandleServerRequest(ctx context.Context, method string, params jsontext.Value) (any, error)
 }
@@ -218,7 +224,10 @@ type ApprovalFuncs struct {
 	Permissions  func(ctx context.Context, req *PermissionsRequest) (*PermissionsResponse, error)
 	UserInput    func(ctx context.Context, params jsontext.Value) (any, error)
 	TokenRefresh func(ctx context.Context, req *TokenRefreshRequest) (*ChatGPTAuthTokens, error)
-	Other        func(ctx context.Context, method string, params jsontext.Value) (any, error)
+	// DynamicTool answers MethodDynamicToolCall; nil passes it to Other,
+	// whose result is read as a DynamicToolCallResponse.
+	DynamicTool func(ctx context.Context, req *DynamicToolCallRequest) (*DynamicToolCallResponse, error)
+	Other       func(ctx context.Context, method string, params jsontext.Value) (any, error)
 }
 
 // ApproveCommand implements ApprovalHandler.
@@ -270,6 +279,31 @@ func (f ApprovalFuncs) HandleServerRequest(ctx context.Context, method string, p
 	return f.Other(ctx, method, params)
 }
 
+// funcsOf returns the ApprovalFuncs that answer requests as h does. Keep it
+// in step with the optional ApprovalHandler extensions.
+func funcsOf(h ApprovalHandler) ApprovalFuncs {
+	if f, ok := h.(ApprovalFuncs); ok || h == nil {
+		return f
+	}
+	f := ApprovalFuncs{Command: h.ApproveCommand, FileChange: h.ApproveFileChange}
+	if x, ok := h.(PermissionApprover); ok {
+		f.Permissions = x.ApprovePermissions
+	}
+	if x, ok := h.(UserInputResponder); ok {
+		f.UserInput = x.RequestUserInput
+	}
+	if x, ok := h.(TokenRefresher); ok {
+		f.TokenRefresh = x.RefreshChatGPTTokens
+	}
+	if x, ok := h.(DynamicToolHandler); ok {
+		f.DynamicTool = x.CallDynamicTool
+	}
+	if x, ok := h.(ServerRequestHandler); ok {
+		f.Other = x.HandleServerRequest
+	}
+	return f
+}
+
 // defaultServerRequest answers a server request no handler takes: MCP
 // elicitations are declined so the tool call fails cleanly, and anything else
 // is method-not-found.
@@ -289,6 +323,58 @@ func defaultServerRequest(method string) (any, error) {
 // decisionResult is the JSON-RPC result of an approval request.
 type decisionResult struct {
 	Decision Decision `json:"decision"`
+}
+
+// fileChangeCache keeps the changes of the file change items in progress,
+// by turn and item, for their approval requests.
+type fileChangeCache struct {
+	mu     sync.Mutex
+	byTurn map[string]map[string][]FileChange
+}
+
+// observe records the file change of an item/started notification, and
+// forgets it on item/completed or when its turn completes. It runs on the
+// transport reader, so it decodes only the items that can be file changes.
+func (c *fileChangeCache) observe(method string, params jsontext.Value) {
+	if method == MethodTurnCompleted {
+		threadID, turnID := routeIDs(params)
+		c.mu.Lock()
+		delete(c.byTurn, turnKey(threadID, turnID))
+		c.mu.Unlock()
+		return
+	}
+	if !bytes.Contains(params, []byte(`"fileChange"`)) {
+		return
+	}
+	var p ItemParams
+	if err := jsonx.Unmarshal(params, &p); err != nil {
+		return
+	}
+	item, ok := p.Item.Item.(*FileChangeItem)
+	if !ok {
+		return
+	}
+	key := turnKey(p.ThreadID, p.TurnID)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if method == MethodItemCompleted {
+		delete(c.byTurn[key], item.ID)
+		return
+	}
+	if c.byTurn == nil {
+		c.byTurn = make(map[string]map[string][]FileChange)
+	}
+	if c.byTurn[key] == nil {
+		c.byTurn[key] = make(map[string][]FileChange)
+	}
+	c.byTurn[key][item.ID] = item.Changes
+}
+
+// get returns the changes of an item, or nil.
+func (c *fileChangeCache) get(threadID, turnID, itemID string) []FileChange {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.byTurn[turnKey(threadID, turnID)][itemID]
 }
 
 // pendingRequests tracks in-flight server requests so their handler contexts
@@ -386,6 +472,7 @@ func (c *Client) handleServerRequest(ctx context.Context, method string, params 
 			return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
 		}
 		req.Params = params
+		req.Changes = c.fileChanges.get(req.ThreadID, req.TurnID, req.ItemID)
 		decision := DecisionDecline
 		if c.opts.Approvals != nil {
 			var err error
@@ -425,10 +512,21 @@ func (c *Client) handleServerRequest(ctx context.Context, method string, params 
 		_, err := defaultServerRequest(MethodChatGPTTokenRefresh)
 		return nil, err
 
-	default:
-		if handler, ok := c.opts.Approvals.(ServerRequestHandler); ok {
-			return handler.HandleServerRequest(ctx, method, params)
+	case MethodDynamicToolCall:
+		if handler, ok := c.opts.Approvals.(DynamicToolHandler); ok {
+			return callDynamicTool(ctx, handler.CallDynamicTool, params)
 		}
-		return defaultServerRequest(method)
+		return c.otherServerRequest(ctx, method, params)
+
+	default:
+		return c.otherServerRequest(ctx, method, params)
 	}
+}
+
+// otherServerRequest answers a request the client does not model.
+func (c *Client) otherServerRequest(ctx context.Context, method string, params jsontext.Value) (any, error) {
+	if handler, ok := c.opts.Approvals.(ServerRequestHandler); ok {
+		return handler.HandleServerRequest(ctx, method, params)
+	}
+	return defaultServerRequest(method)
 }

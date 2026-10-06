@@ -478,14 +478,26 @@ func (*StreamEvent) isMessage() {}
 // TextDelta returns the text appended by a content_block_delta event carrying
 // a text_delta, the event IncludePartialMessages is usually enabled for.
 func (e *StreamEvent) TextDelta() (string, bool) {
+	return e.delta("text_delta", "text")
+}
+
+// thinkingDelta returns the reasoning appended by a content_block_delta event
+// carrying a thinking_delta.
+func (e *StreamEvent) thinkingDelta() (string, bool) {
+	return e.delta("thinking_delta", "thinking")
+}
+
+// delta returns the string member field of the delta of a
+// content_block_delta event whose delta type is kind.
+func (e *StreamEvent) delta(kind, field string) (string, bool) {
 	if e.Event["type"] != "content_block_delta" {
 		return "", false
 	}
 	delta, _ := e.Event["delta"].(map[string]any)
-	if delta["type"] != "text_delta" {
+	if delta["type"] != kind {
 		return "", false
 	}
-	text, ok := delta["text"].(string)
+	text, ok := delta[field].(string)
 	return text, ok
 }
 

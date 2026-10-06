@@ -382,11 +382,11 @@ func TestUnmodeledServerRequests(t *testing.T) {
 	t.Run("handler", func(t *testing.T) {
 		_, server := connect(t, Options{Approvals: ApprovalFuncs{
 			Other: func(ctx context.Context, method string, params jsontext.Value) (any, error) {
-				return map[string]any{"success": true, "contentItems": []any{}, "method": method}, nil
+				return map[string]any{"success": true, "contentItems": []any{map[string]any{"type": "inputText", "text": method}}}, nil
 			},
 		}})
 		reply := server.awaitReply(server.request("sr-t", MethodDynamicToolCall, map[string]any{"threadId": "thr_1"}))
-		if reply.Error != nil || string(reply.Result) != `{"contentItems":[],"method":"item/tool/call","success":true}` {
+		if reply.Error != nil || string(reply.Result) != `{"contentItems":[{"type":"inputText","text":"item/tool/call"}],"success":true}` {
 			t.Fatalf("tool call reply = %s, %+v", reply.Result, reply.Error)
 		}
 	})

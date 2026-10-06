@@ -4,6 +4,7 @@ Go SDKs for driving coding agents from Go programs.
 
 | Package | What it does |
 |---|---|
+| [`gelati`](.) | One provider-neutral API over the three agents below: run turns, stream text and tool calls, structured output |
 | [`claude`](./claude) | Claude Agent SDK for Go: drives the Claude Code CLI over its stream-json control protocol |
 | [`claude/tools`](./claude/tools) | Typed inputs and outputs for Claude Code's built-in tools (Bash, Read, Edit, Agent, …) |
 | [`claude/sessions`](./claude/sessions) | Read and edit session transcripts, locally or in a `sessions.Store` |
@@ -29,6 +30,90 @@ Besides the Go standard library, the module depends only on
 ```sh
 go get github.com/ironpark/gelati
 ```
+
+## Unified API
+
+Package `gelati` drives any of the three agents through one API. A provider,
+built from a package's native options, opens an `Agent`; `gelati.Config` sets
+the common settings over those options:
+
+```go
+a, err := gelati.Open(ctx, claude.Provider(claude.Options{}), gelati.Config{
+	Dir:          "/repo",
+	Instructions: "Answer briefly.",
+})
+if err != nil {
+	log.Fatal(err)
+}
+defer a.Close()
+
+turn, err := a.Send(ctx, gelati.Text("Summarize this repository"))
+if err != nil {
+	log.Fatal(err)
+}
+for ev, err := range turn.Events(ctx) {
+	if err != nil {
+		log.Fatal(err)
+	}
+	switch ev.Kind {
+	case gelati.EventTextDelta:
+		fmt.Print(ev.Text)
+	case gelati.EventToolCall:
+		fmt.Printf("\n[%s]\n", ev.Tool.Name)
+	}
+}
+res, err := turn.Result(ctx)
+```
+
+Switching agents changes only the provider: `codex.Provider(codex.Options{},
+codex.StartThreadParams{})` or `agy.Provider(agy.Options{})`. `gelati.Run(ctx,
+provider, prompt, cfg)` runs a single prompt.
+
+Custom tools, tool approval and images work the same way on every agent:
+
+```go
+type lookupArgs struct {
+	Key string `json:"key" description:"The key to look up"`
+}
+lookup := gelati.NewTool("lookup", "Looks up a value",
+	func(ctx context.Context, in lookupArgs) (string, error) {
+		return store[in.Key], nil
+	})
+
+a, err := gelati.Open(ctx, provider, gelati.Config{
+	Tools: []gelati.Tool{lookup},
+	Approve: func(ctx context.Context, req gelati.ToolRequest) (gelati.Decision, error) {
+		if req.Name == "Bash" || req.Name == "command" || req.Name == "run_command" {
+			return gelati.Deny("no shell commands"), nil
+		}
+		return gelati.Allow(), nil
+	},
+})
+res, err := a.Run(ctx, gelati.Text("What is in this picture?"), gelati.Image(png, ""))
+```
+
+| `Config` | `claude` | `codex` | `agy` |
+|---|---|---|---|
+| `Model` | `Options.Model` | `ThreadSettings.Model` | `Options.Model` |
+| `Dir` | `Options.Cwd` | `ThreadSettings.Cwd` | workspace |
+| `Instructions` | appended to the system prompt | `DeveloperInstructions` | added to the system instructions |
+| `OutputSchema` | `OutputFormat` | every turn's `OutputSchema`, made strict | `ResponseSchema` |
+| `Approve` | `CanUseTool` | `Approvals` (command, file change, permissions) | `AskUser` of the policies |
+| `Tools` | in-process MCP server `gelati`, allowed | thread `DynamicTools` | `Tools`, allowed by policy |
+| `CLIPath`, `Env`, `Logger` | same names | same names | same names |
+
+`Approve` answers only the calls the agent asks about, which its native
+settings decide: Claude Code's permission mode, Codex's approval policy and
+sandbox, Antigravity's policies (`run_command` by default). Without `Approve`
+each agent keeps its native answer. Custom tools run without asking.
+Antigravity reports no tool results, so it has no `EventToolResult` events.
+
+The unified API covers what the agents share. For the rest (hooks, MCP
+management, policy rules, sessions), build the provider from native
+options, which `Config` only overrides where set, and reach the native handle
+through `Agent.Native()`. `Event.Raw` and `Result.Raw` hold the provider's own
+event and result. Package `gelati` imports no provider, so a program links only
+the ones it uses; the native packages work on their own as before.
 
 ## Common shape
 

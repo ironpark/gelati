@@ -73,8 +73,15 @@
 //
 // Methods this package does not wrap are reachable through Client.Call.
 //
+// Provider adapts the package to the provider-neutral gelati API: each
+// session is a Client with one thread, and its Native handle is the *Thread.
+//
 // Unlike upstream, approval requests are declined when Options.Approvals is
 // nil: upstream's default handler accepts every command and file change.
+//
+// StartThreadParams.DynamicTools declares tools that run in this process;
+// the Options.Approvals handler answers their calls as a
+// DynamicToolHandler, or through ApprovalFuncs.DynamicTool.
 //
 // # Delivery guarantees
 //

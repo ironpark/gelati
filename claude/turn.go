@@ -105,34 +105,59 @@ func (t *TurnStream) Text(ctx context.Context) iter.Seq2[string, error] {
 // emitText passes the main-conversation text of m to yield, as Text
 // documents, and reports whether yield asked for more.
 func (t *TurnStream) emitText(m Message, yield func(string) bool) bool {
+	return t.emitContent(m, func(text string, thinking bool) bool { return thinking || yield(text) })
+}
+
+// emitContent passes the main-conversation text and thinking of m to yield,
+// each piece once: the deltas of stream events, and the blocks of the
+// AssistantMessages whose deltas were not streamed. It reports whether
+// yield asked for more. Every message of the turn must pass through it, so
+// that it sees the stream events before the AssistantMessages they repeat.
+func (t *TurnStream) emitContent(m Message, yield func(text string, thinking bool) bool) bool {
 	switch m := m.(type) {
 	case *StreamEvent:
 		// Stream events arrive only with Options.IncludePartialMessages.
-		if m.ParentToolUseID != "" {
-			return true
-		}
-		if id, ok := m.messageStartID(); ok {
-			// The AssistantMessages of this API message repeat the
-			// deltas that follow.
-			if t.streamed == nil {
-				t.streamed = map[string]bool{}
-			}
-			t.streamed[id] = true
+		if m.ParentToolUseID != "" || t.markStreamed(m) {
 			return true
 		}
 		if text, ok := m.TextDelta(); ok && text != "" {
-			return yield(text)
+			return yield(text, false)
+		}
+		if text, ok := m.thinkingDelta(); ok && text != "" {
+			return yield(text, true)
 		}
 	case *AssistantMessage:
 		if m.ParentToolUseID != "" || t.streamed[m.MessageID] {
 			return true
 		}
 		for _, block := range m.Content {
-			if b, ok := block.(*TextBlock); ok && b.Text != "" && !yield(b.Text) {
-				return false
+			switch b := block.(type) {
+			case *TextBlock:
+				if b.Text != "" && !yield(b.Text, false) {
+					return false
+				}
+			case *ThinkingBlock:
+				if b.Thinking != "" && !yield(b.Thinking, true) {
+					return false
+				}
 			}
 		}
 	}
+	return true
+}
+
+// markStreamed records the API message that e starts when e is a
+// message_start event, and reports whether it is: the AssistantMessages of
+// that API message repeat the deltas that follow.
+func (t *TurnStream) markStreamed(e *StreamEvent) bool {
+	id, ok := e.messageStartID()
+	if !ok {
+		return false
+	}
+	if t.streamed == nil {
+		t.streamed = map[string]bool{}
+	}
+	t.streamed[id] = true
 	return true
 }
 

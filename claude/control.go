@@ -52,6 +52,9 @@ type engine struct {
 	messages *messageQueue
 	// mirror receives transcript_mirror frames; nil drops them.
 	mirror atomic.Pointer[transcriptMirrorBatcher]
+	// sessionID is the latest session_id a message carried; nil until one
+	// does.
+	sessionID atomic.Pointer[string]
 
 	// mu guards the control-request bookkeeping and the initialize state.
 	mu sync.Mutex
@@ -312,6 +315,11 @@ func (e *engine) route(ctx context.Context, frame map[string]any, raw jsontext.V
 		}
 	}
 
+	if id := jsonx.Str(frame["session_id"]); id != "" {
+		if cur := e.sessionID.Load(); cur == nil || *cur != id {
+			e.sessionID.Store(&id)
+		}
+	}
 	msg, err := parseMessageMap(frame, raw)
 	if err != nil {
 		e.failAll(err)

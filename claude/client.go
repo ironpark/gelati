@@ -38,6 +38,9 @@ type ServerInfo map[string]any
 // not mix TurnStreams with ReceiveMessages, which reads the same stream raw.
 type Client struct {
 	sess *session
+	// startID is the session id the options name, for SessionID before a
+	// message reports one.
+	startID string
 
 	// sendMu serializes Send.
 	sendMu sync.Mutex
@@ -66,7 +69,11 @@ func newClient(ctx context.Context, opts *Options, deps *sessionDeps) (*Client, 
 	if err != nil {
 		return nil, err
 	}
-	return &Client{sess: sess}, nil
+	c := &Client{sess: sess, startID: opts.SessionID}
+	if c.startID == "" && !opts.ForkSession {
+		c.startID = opts.Resume
+	}
+	return c, nil
 }
 
 // checkOpen returns an error matching ErrClosed after Close.
@@ -174,6 +181,16 @@ func (c *Client) Done() <-chan struct{} {
 // *ConnectionError when the output ended cleanly.
 func (c *Client) Err() error {
 	return c.sess.eng.end.Err()
+}
+
+// SessionID returns the session's id: the latest one the CLI's messages
+// carried, or before any did, the one the options name (Options.SessionID,
+// or Options.Resume unless ForkSession). It is empty until then.
+func (c *Client) SessionID() string {
+	if id := c.sess.eng.sessionID.Load(); id != nil {
+		return *id
+	}
+	return c.startID
 }
 
 // Close ends the session and releases its resources, including the

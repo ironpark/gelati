@@ -89,6 +89,8 @@ type Client struct {
 	info   InitializeResult
 
 	pending *pendingRequests
+	// fileChanges completes file change approval requests.
+	fileChanges fileChangeCache
 
 	accounts *broadcast[AccountUpdate]
 
@@ -198,8 +200,14 @@ func (c *Client) Info() InitializeResult {
 // was called or because the subprocess exited.
 func (c *Client) Done() <-chan struct{} { return c.tr.Done() }
 
-// Err returns the error that stopped the client, or nil while it runs.
-func (c *Client) Err() error { return c.tr.Err() }
+// Err returns the error that stopped the client: nil while it runs and after
+// a Close that stopped it. Calls on a closed client fail with ErrClosed.
+func (c *Client) Err() error {
+	if err := c.tr.Err(); err != ErrClosed {
+		return err
+	}
+	return nil
+}
 
 // Close terminates the subprocess and releases every waiting caller. It is
 // safe to call more than once.
@@ -262,6 +270,8 @@ func (c *Client) handleNotification(method string, params jsontext.Value) {
 	case MethodLoginCompleted, MethodAccountUpdated:
 		c.routeAccountNotification(method, params)
 		return
+	case MethodItemStarted, MethodItemCompleted, MethodTurnCompleted:
+		c.fileChanges.observe(method, params)
 	}
 	// Thread and turn subscribers are registered by the thread and turn APIs
 	// and dispatched from here.

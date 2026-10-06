@@ -101,6 +101,9 @@ type TurnStream struct {
 	final  *Turn             // set by turn/completed, also after Close
 	items  []ThreadItem      // completed items, for Result
 	usage  *ThreadTokenUsage // latest usage update, for Result
+	// baseline is the thread's total usage when the turn started, or nil
+	// when it was unknown.
+	baseline *TokenUsage
 }
 
 // ThreadID returns the thread the turn belongs to.
@@ -207,7 +210,7 @@ func (s *TurnStream) Cancel(ctx context.Context) error {
 	ended := s.final != nil || (s.done.Ended() && !s.closed)
 	turnID := s.turnID
 	s.mu.Unlock()
-	if ended || s.client.Err() != nil {
+	if ended || s.client.tr.Err() != nil {
 		return nil // a shut-down client has no turn left to interrupt
 	}
 	return s.client.Thread(s.threadID).Interrupt(ctx, turnID)
@@ -279,6 +282,7 @@ func (s *threadSubscription) newStream(c *Client, threadID string) *TurnStream {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	stream.baseline = s.total
 	s.streams = append(s.streams, stream)
 	return stream
 }
@@ -437,6 +441,9 @@ func (c *Client) deliverTurnEvent(sub *threadSubscription, note queuedNotificati
 	}
 	if event.TurnID == "" {
 		event.TurnID = stream.TurnID()
+	}
+	if event.Kind == EventTokenUsageUpdated {
+		sub.setTotal(event.Usage.Total, true)
 	}
 	stream.record(event)
 

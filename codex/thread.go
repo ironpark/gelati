@@ -45,6 +45,9 @@ func (c *Client) Thread(id string) *Thread {
 // ID returns the thread id.
 func (t *Thread) ID() string { return t.info.ID }
 
+// Client returns the client the thread belongs to.
+func (t *Thread) Client() *Client { return t.client }
+
 // Info returns the thread as the server reported it when the handle was
 // created. It is not refreshed; call Client.ReadThread for the current state.
 // Its Turns are set when the server returned the history, which the handle
@@ -62,10 +65,23 @@ type threadSubscription struct {
 
 	mu      sync.Mutex
 	streams []*TurnStream
+	// total is the thread's latest cumulative usage, or nil while it is
+	// unknown; a turn's own usage is measured from it.
+	total *TokenUsage
 
 	// queue holds turn notifications waiting for the pump (see enqueue).
 	queueMu sync.Mutex
 	queue   []queuedNotification
+}
+
+// setTotal records the thread's cumulative usage. Unless replace is set, it
+// keeps a total already known.
+func (s *threadSubscription) setTotal(total TokenUsage, replace bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if replace || s.total == nil {
+		s.total = &total
+	}
 }
 
 // emit delivers an event to every Events loop without ever blocking the
@@ -151,7 +167,7 @@ func (t *Thread) Events(ctx context.Context) iter.Seq2[ThreadEvent, error] {
 	return func(yield func(ThreadEvent, error) bool) {
 		sub := c.lookup(threadID)
 		if sub == nil {
-			if err := c.Err(); err != nil {
+			if err := c.tr.Err(); err != nil {
 				yield(ThreadEvent{}, err)
 			} else {
 				yield(ThreadEvent{}, fmt.Errorf("codex: thread %q is not subscribed", threadID))
@@ -167,7 +183,7 @@ func (t *Thread) Events(ctx context.Context) iter.Seq2[ThreadEvent, error] {
 func (c *Client) endErr() error {
 	select {
 	case <-c.tr.Done():
-		return c.Err()
+		return c.tr.Err()
 	default:
 		return nil
 	}
@@ -241,7 +257,11 @@ func (c *Client) openThread(ctx context.Context, method string, params any) (*Th
 	if err := c.tr.Call(ctx, method, params, &result); err != nil {
 		return nil, err
 	}
-	c.subscribe(result.Thread.ID)
+	sub := c.subscribe(result.Thread.ID)
+	if method == "thread/start" && sub != nil {
+		// A new thread has used nothing yet.
+		sub.setTotal(TokenUsage{}, false)
+	}
 	return &Thread{client: c, info: result.Thread}, nil
 }
 

@@ -463,7 +463,7 @@ type TokenUsage struct {
 // thread/tokenUsage/updated. Total accumulates over the whole thread while Last
 // is only the request that triggered the update, and a single turn triggers one
 // update per model request — so a turn's own spend is the change in Total
-// across it, not any one Last.
+// across it, not any one Last; TurnResult.TurnUsage reports it.
 type ThreadTokenUsage struct {
 	Total TokenUsage `json:"total"`
 	Last  TokenUsage `json:"last"`
@@ -909,6 +909,9 @@ type StartThreadParams struct {
 	ThreadSource string `json:"threadSource,omitempty"`
 	// SessionStartSource is "startup" or "clear".
 	SessionStartSource string `json:"sessionStartSource,omitempty"`
+	// DynamicTools are tools this client provides; the Options.Approvals
+	// handler runs them as a DynamicToolHandler.
+	DynamicTools []DynamicToolSpec `json:"dynamicTools,omitempty"`
 }
 
 // ResumeThreadParams are the parameters of thread/resume.
