@@ -315,8 +315,9 @@ func TestProviderSessionID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The id is the latest one the CLI sent, so the result goes out only
+	// once the init message has been read.
 	ft.push(map[string]any{"type": "system", "subtype": "init", "session_id": "s-init", "uuid": "u"})
-	ft.push(resultFrame())
 	for ev, err := range turn.Events(t.Context()) {
 		if err != nil {
 			t.Fatal(err)
@@ -325,6 +326,7 @@ func TestProviderSessionID(t *testing.T) {
 			if a.ID() != "s-init" {
 				t.Fatalf("id after init = %q", a.ID())
 			}
+			ft.push(resultFrame())
 		}
 	}
 	if a.ID() != "s1" {
