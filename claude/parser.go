@@ -80,6 +80,7 @@ type userWire struct {
 	Timestamp       string   `json:"timestamp"`
 	ClientComposed  bool     `json:"client_composed"`
 	InlinePastes    []string `json:"inline_pastes"`
+	AgentID         string   `json:"agent_id"`
 	SubagentType    string   `json:"subagent_type"`
 	TaskDescription string   `json:"task_description"`
 }
@@ -106,6 +107,7 @@ func parseUserMessage(data map[string]any, src []byte) Message {
 		FileAttachments: fileAttachments,
 		PastedContent:   pastedContent,
 		InlinePastes:    w.InlinePastes,
+		AgentID:         w.AgentID,
 		SubagentType:    w.SubagentType,
 		TaskDescription: w.TaskDescription,
 	}
@@ -133,6 +135,7 @@ type assistantWire struct {
 	ResumedFromIncompleteThinking bool                `json:"resumed_from_incomplete_thinking"`
 	Supersedes                    []string            `json:"supersedes"`
 	Aborted                       bool                `json:"aborted"`
+	AgentID                       string              `json:"agent_id"`
 	SubagentType                  string              `json:"subagent_type"`
 	TaskDescription               string              `json:"task_description"`
 	Timestamp                     string              `json:"timestamp"`
@@ -179,6 +182,7 @@ func parseAssistantMessage(data map[string]any, src []byte) Message {
 		ResumedFromIncompleteThinking: w.ResumedFromIncompleteThinking,
 		Supersedes:                    w.Supersedes,
 		Aborted:                       w.Aborted,
+		AgentID:                       w.AgentID,
 		SubagentType:                  w.SubagentType,
 		TaskDescription:               w.TaskDescription,
 		Timestamp:                     w.Timestamp,

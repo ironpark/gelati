@@ -15,26 +15,31 @@ type Settings map[string]any
 // pointer fields distinguish "unset" from an explicit false or zero, which
 // matters because settings tiers are merged key by key.
 //
-// Filesystem and network access themselves are governed by permission rules
-// (Read, Edit and WebFetch); these settings control the sandbox's behavior.
+// Access restrictions can be set here (Filesystem, Network, Credentials);
+// filesystem and network restrictions also come from Read, Edit and WebFetch
+// permission rules, and the CLI applies both.
 type SandboxSettings struct {
 	Enabled *bool `json:"enabled,omitzero"`
 	// FailIfUnavailable makes the run fail when the sandbox cannot start.
-	// Options.Sandbox defaults it to true whenever Enabled is true.
-	FailIfUnavailable            *bool                      `json:"failIfUnavailable,omitzero"`
-	AutoAllowBashIfSandboxed     *bool                      `json:"autoAllowBashIfSandboxed,omitzero"`
-	AllowUnsandboxedCommands     *bool                      `json:"allowUnsandboxedCommands,omitzero"`
-	Network                      *SandboxNetworkSettings    `json:"network,omitzero"`
-	Filesystem                   *SandboxFilesystemSettings `json:"filesystem,omitzero"`
-	Credentials                  map[string]any             `json:"credentials,omitempty"`
-	IgnoreViolations             map[string][]string        `json:"ignoreViolations,omitempty"`
-	EnableWeakerNestedSandbox    *bool                      `json:"enableWeakerNestedSandbox,omitzero"`
-	EnableWeakerNetworkIsolation *bool                      `json:"enableWeakerNetworkIsolation,omitzero"`
-	AllowAppleEvents             *bool                      `json:"allowAppleEvents,omitzero"`
-	ExcludedCommands             []string                   `json:"excludedCommands,omitempty"`
-	Ripgrep                      *SandboxRipgrepConfig      `json:"ripgrep,omitzero"`
-	BwrapPath                    string                     `json:"bwrapPath,omitempty"`
-	SocatPath                    string                     `json:"socatPath,omitempty"`
+	// Options.Sandbox defaults it to true whenever it sets Enabled to true
+	// and no inline Settings sandbox block sets FailIfUnavailable.
+	FailIfUnavailable        *bool                      `json:"failIfUnavailable,omitzero"`
+	AutoAllowBashIfSandboxed *bool                      `json:"autoAllowBashIfSandboxed,omitzero"`
+	AllowUnsandboxedCommands *bool                      `json:"allowUnsandboxedCommands,omitzero"`
+	Network                  *SandboxNetworkSettings    `json:"network,omitzero"`
+	Filesystem               *SandboxFilesystemSettings `json:"filesystem,omitzero"`
+	Credentials              map[string]any             `json:"credentials,omitempty"`
+	// IgnoreViolations maps a command pattern ("*" for every command) to
+	// substrings of violation text to leave unreported. Both are plain
+	// substring matches; it does not change what the sandbox blocks.
+	IgnoreViolations             map[string][]string   `json:"ignoreViolations,omitempty"`
+	EnableWeakerNestedSandbox    *bool                 `json:"enableWeakerNestedSandbox,omitzero"`
+	EnableWeakerNetworkIsolation *bool                 `json:"enableWeakerNetworkIsolation,omitzero"`
+	AllowAppleEvents             *bool                 `json:"allowAppleEvents,omitzero"`
+	ExcludedCommands             []string              `json:"excludedCommands,omitempty"`
+	Ripgrep                      *SandboxRipgrepConfig `json:"ripgrep,omitzero"`
+	BwrapPath                    string                `json:"bwrapPath,omitempty"`
+	SocatPath                    string                `json:"socatPath,omitempty"`
 
 	// Extra carries keys this struct does not model; the schema is open.
 	// Typed fields win over Extra entries with the same key.

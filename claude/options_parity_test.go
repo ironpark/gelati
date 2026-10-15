@@ -137,9 +137,37 @@ func TestBuildSettingsValue(t *testing.T) {
 			`{"sandbox":{"enabled":false}}`},
 		{"rawSandboxMergedIntoInline", Options{Settings: `{"model":"opus"}`, Sandbox: jsontext.Value(`{"enabled":true}`)},
 			`{"model":"opus","sandbox":{"enabled":true,"failIfUnavailable":true}}`},
-		{"sandboxReplacesSettingsSandbox", Options{Settings: Settings{"sandbox": map[string]any{"x": 1}},
+		{"sandboxMergedIntoSettingsSandbox", Options{Settings: Settings{"sandbox": map[string]any{"x": 1, "autoAllowBashIfSandboxed": false}},
 			Sandbox: map[string]any{"autoAllowBashIfSandboxed": true}},
-			`{"sandbox":{"autoAllowBashIfSandboxed":true}}`},
+			`{"sandbox":{"autoAllowBashIfSandboxed":true,"x":1}}`},
+		{"inlineFailOpenKept", Options{Settings: `{"sandbox":{"failIfUnavailable":false}}`, Sandbox: &SandboxSettings{Enabled: new(true)}},
+			`{"sandbox":{"enabled":true,"failIfUnavailable":false}}`},
+		{"nestedMergeAndListUnion", Options{
+			Settings: `{"sandbox":{"filesystem":{"denyRead":["~/.ssh","~/.aws"],"allowWrite":["/a"]},` +
+				`"ripgrep":{"command":"rg","args":["-x"]},"network":{"tlsTerminate":{"caCertPath":"/c","caKeyPath":"/k"}}}}`,
+			Sandbox: &SandboxSettings{
+				Filesystem: &SandboxFilesystemSettings{DenyRead: []string{"~/.aws", "~/.gnupg"}, AllowWrite: []string{"/b"}},
+				Ripgrep:    &SandboxRipgrepConfig{Command: "rg2"},
+				Network:    &SandboxNetworkSettings{TLSTerminate: &SandboxTLSTerminate{CACertPath: "/c2"}},
+			}},
+			`{"sandbox":{"filesystem":{"allowWrite":["/b"],"denyRead":["~/.ssh","~/.aws","~/.gnupg"]},` +
+				`"network":{"tlsTerminate":{"caCertPath":"/c2"}},"ripgrep":{"command":"rg2"}}}`},
+		{"filesystemDisabledDropped", Options{Settings: `{"sandbox":{"filesystem":{"disabled":true,"denyWrite":["/x"]}}}`,
+			Sandbox: &SandboxSettings{Filesystem: &SandboxFilesystemSettings{DenyWrite: []string{"/y"}}}},
+			`{"sandbox":{"filesystem":{"denyWrite":["/x","/y"]}}}`},
+		{"filesystemDisabledDroppedByCredentialDeny", Options{Settings: `{"sandbox":{"filesystem":{"disabled":true}}}`,
+			Sandbox: map[string]any{"credentials": map[string]any{"files": []any{map[string]any{"path": "~/.netrc", "mode": "deny"}}}}},
+			`{"sandbox":{"credentials":{"files":[{"mode":"deny","path":"~/.netrc"}]},"filesystem":{}}}`},
+		{"filesystemDisabledKeptForMask", Options{Settings: `{"sandbox":{"filesystem":{"disabled":true}}}`,
+			Sandbox: map[string]any{"credentials": map[string]any{"files": []any{map[string]any{"path": "~/.netrc", "mode": "mask"}}}}},
+			`{"sandbox":{"credentials":{"files":[{"mode":"mask","path":"~/.netrc"}]},"filesystem":{"disabled":true}}}`},
+		{"proxyPortsDroppedByDomainRestriction", Options{
+			Settings: `{"sandbox":{"network":{"httpProxyPort":1,"socksProxyPort":2,"deniedDomains":["a.com"]}}}`,
+			Sandbox:  &SandboxSettings{Network: &SandboxNetworkSettings{AllowedDomains: []string{"b.com"}, SOCKSProxyPort: new(3)}}},
+			`{"sandbox":{"network":{"allowedDomains":["b.com"],"deniedDomains":["a.com"],"socksProxyPort":3}}}`},
+		{"proxyPortsKeptWithoutRestriction", Options{Settings: `{"sandbox":{"network":{"httpProxyPort":1}}}`,
+			Sandbox: &SandboxSettings{Network: &SandboxNetworkSettings{AllowLocalBinding: new(true)}}},
+			`{"sandbox":{"network":{"allowLocalBinding":true,"httpProxyPort":1}}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

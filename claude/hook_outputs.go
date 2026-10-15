@@ -131,8 +131,10 @@ type HookSpecific interface {
 type PreToolUseHookSpecificOutput struct {
 	PermissionDecision       HookPermissionDecision `json:"permissionDecision,omitempty"`
 	PermissionDecisionReason string                 `json:"permissionDecisionReason,omitempty"`
-	UpdatedInput             map[string]any         `json:"updatedInput,omitempty"`
-	AdditionalContext        string                 `json:"additionalContext,omitempty"`
+	// UpdatedInput replaces the tool input. The CLI validates it like the
+	// model's own input and drops unknown keys.
+	UpdatedInput      map[string]any `json:"updatedInput,omitempty"`
+	AdditionalContext string         `json:"additionalContext,omitempty"`
 }
 
 // HookEventName reports PreToolUse.
@@ -271,7 +273,9 @@ func (*NotificationHookSpecificOutput) HookEventName() HookEvent { return HookNo
 
 // PermissionRequestHookSpecificOutput answers a PermissionRequest hook.
 // Decision is a *PermissionResultAllow or *PermissionResultDeny; nil leaves
-// the request to the normal permission flow.
+// the request to the normal permission flow. An allow's UpdatedInput is
+// validated like the model's own input, with unknown keys dropped (unlike
+// the same field returned from CanUseTool).
 type PermissionRequestHookSpecificOutput struct {
 	Decision PermissionResult
 }

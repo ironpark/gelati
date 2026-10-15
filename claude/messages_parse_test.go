@@ -234,10 +234,13 @@ func TestParseSystemSubtypes(t *testing.T) {
 				t.Fatalf("got %+v", pi)
 			}
 		}},
-		{"background_tasks_changed", `"tasks":[{"task_id":"t1","task_type":"local_bash","description":"d","ambient":true}]`,
+		{"background_tasks_changed", `"tasks":[{"task_id":"t1","run_id":"r1","task_type":"local_agent","subagent_type":"Explore",
+		  "description":"d","parent_task_id":"t0","ambient":true}]`,
 			func(t *testing.T, m Message) {
 				bt := m.(*BackgroundTasksChangedMessage)
-				if len(bt.Tasks) != 1 || bt.Tasks[0] != (BackgroundTask{TaskID: "t1", TaskType: "local_bash", Description: "d", Ambient: true}) {
+				want := BackgroundTask{TaskID: "t1", RunID: "r1", TaskType: "local_agent", SubagentType: "Explore",
+					Description: "d", ParentTaskID: "t0", Ambient: true}
+				if len(bt.Tasks) != 1 || bt.Tasks[0] != want {
 					t.Fatalf("got %+v", bt)
 				}
 			}},
@@ -300,46 +303,48 @@ func TestParseSystemSubtypes(t *testing.T) {
 					t.Fatalf("got %+v", pd)
 				}
 			}},
-		{"informational", `"content":"blocked","level":"warning","tool_use_id":"tu1","prevent_continuation":true`,
+		{"informational", `"content":"blocked","level":"warning","tool_use_id":"tu1","prevent_continuation":true,"tag":"x"`,
 			func(t *testing.T, m Message) {
 				in := m.(*InformationalMessage)
-				if in.Content != "blocked" || in.Level != InformationalWarning || in.ToolUseID != "tu1" || !in.PreventContinuation {
+				if in.Content != "blocked" || in.Level != InformationalWarning || in.ToolUseID != "tu1" || !in.PreventContinuation ||
+					in.Tag != "x" {
 					t.Fatalf("got %+v", in)
 				}
 			}},
-		{"task_started", `"task_id":"t1","tool_use_id":"tu1","description":"d","subagent_type":"Explore","is_backgrounded":true,
-		  "spawn_depth":2,"task_type":"local_workflow","workflow_name":"spec","prompt":"go","skip_transcript":true,"ambient":true`,
+		{"task_started", `"task_id":"t1","run_id":"r1","tool_use_id":"tu1","description":"d","subagent_type":"Explore","is_backgrounded":true,
+		  "spawn_depth":2,"parent_task_id":"t0","task_type":"local_workflow","workflow_name":"spec","prompt":"go","skip_transcript":true,"ambient":true`,
 			func(t *testing.T, m Message) {
 				ts := m.(*TaskStartedMessage)
-				if ts.SubagentType != "Explore" || !ts.IsBackgrounded || ts.SpawnDepth != 2 || ts.WorkflowName != "spec" ||
+				if ts.RunID != "r1" || ts.ParentTaskID != "t0" || ts.SubagentType != "Explore" || !ts.IsBackgrounded ||
+					ts.SpawnDepth != 2 || ts.WorkflowName != "spec" ||
 					ts.Prompt != "go" || !ts.SkipTranscript || !ts.Ambient || ts.TaskType != "local_workflow" {
 					t.Fatalf("got %+v", ts)
 				}
 			}},
-		{"task_progress", `"task_id":"t1","description":"d","subagent_type":"Plan","usage":{"total_tokens":1,"tool_uses":2,"duration_ms":3},
+		{"task_progress", `"task_id":"t1","run_id":"r1","description":"d","subagent_type":"Plan","usage":{"total_tokens":1,"tool_uses":2,"duration_ms":3},
 		  "last_tool_name":"Read","summary":"Reading files"`,
 			func(t *testing.T, m Message) {
 				tp := m.(*TaskProgressMessage)
-				if tp.SubagentType != "Plan" || tp.Summary != "Reading files" || tp.LastToolName != "Read" || tp.Usage.ToolUses != 2 {
+				if tp.RunID != "r1" || tp.SubagentType != "Plan" || tp.Summary != "Reading files" || tp.LastToolName != "Read" || tp.Usage.ToolUses != 2 {
 					t.Fatalf("got %+v", tp)
 				}
 			}},
-		{"task_notification", `"task_id":"t1","status":"stopped","reason":"worker_restart","output_file":"/o","summary":"s",
+		{"task_notification", `"task_id":"t1","run_id":"r1","status":"stopped","reason":"worker_restart","output_file":"/o","summary":"s",
 		  "usage":{"total_tokens":1,"tool_uses":2,"duration_ms":3},
 		  "resource_links":[{"uri":"file:///a","name":"a","mimeType":"text/plain","size":12}],"skip_transcript":true,"ambient":true`,
 			func(t *testing.T, m Message) {
 				tn := m.(*TaskNotificationMessage)
-				if tn.Reason != "worker_restart" || tn.Usage == nil || tn.Usage.DurationMS != 3 || !tn.SkipTranscript || !tn.Ambient ||
+				if tn.RunID != "r1" || tn.Reason != "worker_restart" || tn.Usage == nil || tn.Usage.DurationMS != 3 || !tn.SkipTranscript || !tn.Ambient ||
 					len(tn.ResourceLinks) != 1 || tn.ResourceLinks[0].URI != "file:///a" || tn.ResourceLinks[0].MimeType != "text/plain" ||
 					*tn.ResourceLinks[0].Size != 12 {
 					t.Fatalf("got %+v", tn)
 				}
 			}},
-		{"task_updated", `"task_id":"t1","patch":{"status":"paused","description":"d","end_time":1700000000000,"total_paused_ms":5,"error":"e","is_backgrounded":false}`,
+		{"task_updated", `"task_id":"t1","run_id":"r1","patch":{"status":"paused","description":"d","end_time":1700000000000,"total_paused_ms":5,"error":"e","is_backgrounded":false}`,
 			func(t *testing.T, m Message) {
 				tu := m.(*TaskUpdatedMessage)
 				p := tu.Patch
-				if tu.Status != "paused" || p.Description != "d" || p.EndTime != 1700000000000 || p.TotalPausedMS != 5 ||
+				if tu.RunID != "r1" || tu.Status != "paused" || p.Description != "d" || p.EndTime != 1700000000000 || p.TotalPausedMS != 5 ||
 					p.Error != "e" || p.IsBackgrounded == nil || *p.IsBackgrounded {
 					t.Fatalf("got %+v", tu)
 				}
@@ -466,13 +471,13 @@ func TestParseTopLevelTypes(t *testing.T) {
 			}},
 		{"rate_limit_event", `{"type":"rate_limit_event","uuid":"u1","session_id":"s1","rate_limit_info":{"status":"rejected",
 		  "resetsAt":1700000000,"rateLimitType":"seven_day_opus","utilization":1,"overageStatus":"rejected","overageResetsAt":1700000500,
-		  "overageDisabledReason":"out_of_credits","isUsingOverage":true,"overageInUse":true,"surpassedThreshold":0.9,
+		  "overageDisabledReason":"out_of_credits","isUsingOverage":true,"overageInUse":true,"overageEnabled":false,"surpassedThreshold":0.9,
 		  "limitScope":"group_pool","errorCode":"credits_required","canUserPurchaseCredits":true,"hasChargeableSavedPaymentMethod":true}}`,
 			func(t *testing.T, m Message) {
 				ri := m.(*RateLimitEvent).RateLimitInfo
 				if ri.Status != RateLimitRejected || *ri.ResetsAt != 1700000000 || ri.RateLimitType != RateLimitTypeSevenDayOpus ||
 					*ri.Utilization != 1 || ri.OverageStatus != RateLimitRejected || *ri.OverageResetsAt != 1700000500 ||
-					ri.OverageDisabledReason != OverageDisabledOutOfCredits || !ri.IsUsingOverage || !ri.OverageInUse ||
+					ri.OverageDisabledReason != OverageDisabledOutOfCredits || !ri.IsUsingOverage || !ri.OverageInUse || ri.OverageEnabled == nil || *ri.OverageEnabled ||
 					*ri.SurpassedThreshold != 0.9 || ri.LimitScope != "group_pool" || ri.ErrorCode != "credits_required" ||
 					!ri.CanUserPurchaseCredits || !ri.HasChargeableSavedPaymentMethod || ri.Raw["limitScope"] != "group_pool" {
 					t.Fatalf("got %+v", ri)
@@ -498,11 +503,11 @@ func TestParseUserMessageFields(t *testing.T) {
 	  "parent_tool_use_id":null,"isSynthetic":true,"priority":"next","shouldQuery":false,
 	  "timestamp":"2026-01-01T00:00:00.000Z","client_composed":true,"uuid":"u1","session_id":"s1",
 	  "isReplay":true,"file_attachments":[{"name":"f"}],"pasted_content":["p"],"inline_pastes":["i"],
-	  "subagent_type":"Explore","task_description":"look around","tool_use_result":"plain string"}`)
+	  "agent_id":"a1","subagent_type":"Explore","task_description":"look around","tool_use_result":"plain string"}`)
 	um := msg.(*UserMessage)
 	if !um.IsReplay || !um.IsSynthetic || um.Priority != MessagePriorityNext || um.ShouldQuery == nil || *um.ShouldQuery ||
 		um.Timestamp != "2026-01-01T00:00:00.000Z" || !um.ClientComposed || len(um.FileAttachments) != 1 ||
-		um.PastedContent[0] != "p" || um.InlinePastes[0] != "i" || um.SubagentType != "Explore" || um.TaskDescription != "look around" {
+		um.PastedContent[0] != "p" || um.InlinePastes[0] != "i" || um.AgentID != "a1" || um.SubagentType != "Explore" || um.TaskDescription != "look around" {
 		t.Fatalf("got %+v", um)
 	}
 	if um.ToolUseResult != "plain string" {
@@ -537,7 +542,7 @@ func TestParseAssistantMessageFields(t *testing.T) {
 	    "usage":{"input_tokens":1},"container":{"id":"c1"},"context_management":{"applied_edits":[]}},
 	  "parent_tool_use_id":null,"error":"max_output_tokens","uuid":"u1","session_id":"s1","request_id":"req_1",
 	  "user_message_uuid":"q2","user_message_uuids":["q1","q2"],"resume_reason":"host_draining",
-	  "resumed_from_incomplete_thinking":true,"supersedes":["old1"],"aborted":true,"subagent_type":"Plan",
+	  "resumed_from_incomplete_thinking":true,"supersedes":["old1"],"aborted":true,"agent_id":"a2","subagent_type":"Plan",
 	  "task_description":"plan it","timestamp":"2026-01-01T00:00:00.000Z",
 	  "context_usage":{"model":"m","total_tokens":10,"raw_max_tokens":100,"percentage":10,
 	    "over_limit":{"tokens_over":0,"kind":"hard_limit"},
@@ -550,7 +555,7 @@ func TestParseAssistantMessageFields(t *testing.T) {
 	am := msg.(*AssistantMessage)
 	if am.Error != AssistantErrorMaxOutputTokens || am.RequestID != "req_1" || am.UserMessageUUID != "q2" ||
 		len(am.UserMessageUUIDs) != 2 || am.ResumeReason != "host_draining" || !am.ResumedFromIncompleteThinking ||
-		am.Supersedes[0] != "old1" || !am.Aborted || am.SubagentType != "Plan" || am.TaskDescription != "plan it" ||
+		am.Supersedes[0] != "old1" || !am.Aborted || am.AgentID != "a2" || am.SubagentType != "Plan" || am.TaskDescription != "plan it" ||
 		am.Timestamp == "" || am.StopReason != "refusal" || am.StopSequence != "" {
 		t.Fatalf("got %+v", am)
 	}
@@ -583,6 +588,7 @@ func TestParseResultMessageFields(t *testing.T) {
 	  "fast_mode_state":"cooldown","fast_mode_disabled_reason":"pending","user_message_uuid":"q1",
 	  "user_message_uuids":["q1"],"resume_reason":"interrupted_turn","local_command":"cost",
 	  "ttft_ms":120.5,"time_to_request_ms":40,"first_stream_post_queued_behind":"hold","warm_spare_claimed":true,
+	  "first_text_post_queue_wait_ms":7,"first_text_post_queued_behind":"retry_backoff",
 	  "uuid":"u1","session_id":"s1"}`)
 	rm := msg.(*ResultMessage)
 	if *rm.QueuedTurnCount != 2 || *rm.ResultIndex != 4 || rm.TerminalReason != TerminalReasonCompleted ||
@@ -598,7 +604,8 @@ func TestParseResultMessageFields(t *testing.T) {
 	if len(pd) != 1 || pd[0].ToolName != "Bash" || pd[0].ToolUseID != "tu1" || pd[0].ToolInput["command"] != "rm -rf /" {
 		t.Fatalf("denials = %+v", pd)
 	}
-	want := ResultTiming{TTFTMS: 120.5, TimeToRequestMS: 40, FirstStreamPostQueuedBehind: "hold", WarmSpareClaimed: true}
+	want := ResultTiming{TTFTMS: 120.5, TimeToRequestMS: 40, FirstStreamPostQueuedBehind: "hold", WarmSpareClaimed: true,
+		FirstTextPostQueueWaitMS: 7, FirstTextPostQueuedBehind: "retry_backoff"}
 	if rm.Timing == nil || *rm.Timing != want {
 		t.Fatalf("timing = %+v", rm.Timing)
 	}

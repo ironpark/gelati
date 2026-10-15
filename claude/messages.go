@@ -55,6 +55,9 @@ type MessageOrigin struct {
 	VerifiedPeerPID int `json:"verifiedPeerPid,omitzero"`
 	// Subkind narrows Kind, for kinds that classify further.
 	Subkind string `json:"subkind,omitempty"`
+	// RunID is the run_id of the task events of the background task whose
+	// own notification this is ("task-notification").
+	RunID string `json:"runId,omitempty"`
 	// Extra holds origin keys this SDK version does not model, so a newer CLI
 	// loses nothing. It is merged back in on marshal; modeled fields win.
 	Extra map[string]any `json:"-"`
@@ -111,6 +114,7 @@ func originFromMap(raw map[string]any) MessageOrigin {
 		SenderTaskID: jsonx.Str(raw["senderTaskId"]),
 		Body:         jsonx.Str(raw["body"]),
 		Subkind:      jsonx.Str(raw["subkind"]),
+		RunID:        jsonx.Str(raw["runId"]),
 	}
 	// A fractional PID is truncated rather than dropped.
 	o.VerifiedPeerPID, _ = toInt(raw["verifiedPeerPid"])
@@ -174,8 +178,10 @@ type UserMessage struct {
 	// PastedContent and InlinePastes echo the pastes sent with the message.
 	PastedContent []any
 	InlinePastes  []string
-	// SubagentType and TaskDescription identify the subagent that produced
-	// the message, when one did.
+	// AgentID, SubagentType and TaskDescription identify the subagent that
+	// produced the message, when one did. AgentID equals the task_id of its
+	// task events and survives a resume.
+	AgentID         string
 	SubagentType    string
 	TaskDescription string
 }
@@ -225,8 +231,9 @@ type AssistantMessage struct {
 	// Aborted marks a message truncated by an interrupt before the stream
 	// completed.
 	Aborted bool
-	// SubagentType and TaskDescription identify the subagent that produced
-	// the message, when one did.
+	// AgentID, SubagentType and TaskDescription identify the subagent that
+	// produced the message, when one did (see UserMessage.AgentID).
+	AgentID         string
 	SubagentType    string
 	TaskDescription string
 	// Timestamp is the ISO 8601 time the block finished on the originating
@@ -446,6 +453,8 @@ type ResultTiming struct {
 	FirstStreamPostQueuedBehind string  `json:"first_stream_post_queued_behind,omitempty"`
 	FirstStreamPostWallMS       float64 `json:"first_stream_post_wall_ms,omitzero"`
 	FirstTextPostMS             float64 `json:"first_text_post_ms,omitzero"`
+	FirstTextPostQueueWaitMS    float64 `json:"first_text_post_queue_wait_ms,omitzero"`
+	FirstTextPostQueuedBehind   string  `json:"first_text_post_queued_behind,omitempty"`
 	FirstTextPostWallMS         float64 `json:"first_text_post_wall_ms,omitzero"`
 	TimeToRequestFromSpawnMS    float64 `json:"time_to_request_from_spawn_ms,omitzero"`
 	WarmSpareClaimed            bool    `json:"warm_spare_claimed,omitzero"`
@@ -520,10 +529,13 @@ type RateLimitInfo struct {
 	OverageStatus   RateLimitStatus `json:"overageStatus,omitempty"`
 	OverageResetsAt *int64          `json:"overageResetsAt,omitzero"`
 	// OverageDisabledReason is one of the OverageDisabled* constants.
-	OverageDisabledReason string   `json:"overageDisabledReason,omitempty"`
-	IsUsingOverage        bool     `json:"isUsingOverage,omitzero"`
-	OverageInUse          bool     `json:"overageInUse,omitzero"`
-	SurpassedThreshold    *float64 `json:"surpassedThreshold,omitzero"`
+	OverageDisabledReason string `json:"overageDisabledReason,omitempty"`
+	IsUsingOverage        bool   `json:"isUsingOverage,omitzero"`
+	OverageInUse          bool   `json:"overageInUse,omitzero"`
+	// OverageEnabled reports, on usage-limit warnings, whether the account
+	// has extra usage turned on; nil when not reported.
+	OverageEnabled     *bool    `json:"overageEnabled,omitzero"`
+	SurpassedThreshold *float64 `json:"surpassedThreshold,omitzero"`
 	// LimitScope says which spend limit blocked the request when it is not
 	// the member's own: service, channel or group_pool.
 	LimitScope string `json:"limitScope,omitempty"`

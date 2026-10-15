@@ -63,6 +63,8 @@ const (
 	StartupFailureWorktreeUnverified                StartupFailureReason = "worktree_unverified"
 	StartupFailureCLIVersionTooOld                  StartupFailureReason = "cli_version_too_old"
 	StartupFailureBypassRoot                        StartupFailureReason = "bypass_root"
+	StartupFailureOrgConfigRequiredUnavailable      StartupFailureReason = "org_config_required_unavailable"
+	StartupFailureOrgConfigRefused                  StartupFailureReason = "org_config_refused"
 )
 
 // FastModeState is the fast-mode state reported on init and result messages.

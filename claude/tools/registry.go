@@ -1,6 +1,6 @@
 package tools
 
-//go:generate go run ./internal/gen -sdk-version 0.3.286 -out zz_generated.go
+//go:generate go run ./internal/gen -sdk-version 0.3.300 -out zz_generated.go
 
 import (
 	"encoding/json/jsontext"
@@ -54,6 +54,7 @@ const (
 	ScheduleWakeup           = "ScheduleWakeup"
 	RemoteTrigger            = "RemoteTrigger"
 	ShowOnboardingRolePicker = "ShowOnboardingRolePicker"
+	OfferChromeSetup         = "OfferChromeSetup"
 	ReadNotifications        = "ReadNotifications"
 	Monitor                  = "Monitor"
 	ProposeSkills            = "ProposeSkills"
@@ -164,6 +165,7 @@ var registry = func() map[string]Tool {
 		tool[ScheduleWakeupInput, ScheduleWakeupOutput](ScheduleWakeup),
 		tool[RemoteTriggerInput, RemoteTriggerOutput](RemoteTrigger),
 		tool[ShowOnboardingRolePickerInput, ShowOnboardingRolePickerOutput](ShowOnboardingRolePicker),
+		tool[OfferChromeSetupInput, OfferChromeSetupOutput](OfferChromeSetup),
 		tool[ReadNotificationsInput, ReadNotificationsOutput](ReadNotifications),
 		tool[MonitorInput, MonitorOutput](Monitor),
 		tool[ProposeSkillsInput, ProposeSkillsOutput](ProposeSkills),

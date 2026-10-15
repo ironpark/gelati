@@ -257,12 +257,16 @@ type AgentDefinition struct {
 	// AgentMemoryProject or AgentMemoryLocal.
 	Memory AgentMemoryScope `json:"memory,omitempty"`
 	// MCPServers holds server names or inline {name: config} objects.
-	MCPServers     []any          `json:"mcpServers,omitempty"`
-	InitialPrompt  string         `json:"initialPrompt,omitempty"`
-	MaxTurns       *int           `json:"maxTurns,omitzero"`
-	Background     *bool          `json:"background,omitzero"`
-	Effort         any            `json:"effort,omitzero"`
-	PermissionMode PermissionMode `json:"permissionMode,omitempty"`
+	MCPServers    []any  `json:"mcpServers,omitempty"`
+	InitialPrompt string `json:"initialPrompt,omitempty"`
+	MaxTurns      *int   `json:"maxTurns,omitzero"`
+	// AutoCompactWindow is the token count at which the agent, run as a
+	// subagent, compacts its own conversation. It can only lower the
+	// window the subagent would otherwise inherit.
+	AutoCompactWindow *int           `json:"autoCompactWindow,omitzero"`
+	Background        *bool          `json:"background,omitzero"`
+	Effort            any            `json:"effort,omitzero"`
+	PermissionMode    PermissionMode `json:"permissionMode,omitempty"`
 	// OmitClaudeMD runs the agent, as a subagent, without the user,
 	// project and local CLAUDE.md files; managed policy files are kept.
 	OmitClaudeMD bool `json:"omitClaudeMd,omitzero"`
@@ -495,12 +499,20 @@ type Options struct {
 	// does not opt in to parent settings.
 	ManagedSettings Settings
 
-	// Sandbox holds sandbox settings, merged into the --settings object as
-	// its "sandbox" key: a *SandboxSettings, a map[string]any, a
-	// jsontext.Value or any value encoded as a JSON object. When it
-	// enables the sandbox without setting failIfUnavailable, the SDK sets
-	// failIfUnavailable to true so a missing sandbox fails the run instead
-	// of silently running unsandboxed.
+	// Sandbox holds sandbox settings, merged into the "sandbox" block of
+	// the --settings object: a *SandboxSettings, a map[string]any, a
+	// jsontext.Value or any value encoded as a JSON object. A value it sets
+	// replaces the one at the same path of an inline Settings sandbox
+	// block and nested objects merge key by key, except ripgrep and
+	// network.tlsTerminate, which it replaces whole; the lists
+	// filesystem.denyRead, filesystem.denyWrite, network.deniedDomains,
+	// credentials.files and credentials.envVars are combined. Setting
+	// filesystem or a credentials.files deny entry drops an inline
+	// filesystem.disabled: true, and restricting network domains drops an
+	// inline proxy port it does not set itself. When it enables the
+	// sandbox and neither side sets failIfUnavailable, the SDK sets it to
+	// true so a missing sandbox fails the run instead of silently running
+	// unsandboxed.
 	Sandbox any
 
 	// ProjectConfigRoot is the absolute path of the trusted checkout that

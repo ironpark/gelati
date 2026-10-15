@@ -50,13 +50,13 @@ var typeNames = map[string]string{
 	"ProjectsOutput<project_search>.hits[]":              "ProjectSearchHit",
 	"ProjectsOutput<project_memory_list>.files[]":        "ProjectMemoryFile",
 	"AgentInput.model":                                   "AgentModel",
+	"AgentInput.effort":                                  "EffortLevel",
 	"AgentInput.mode":                                    "AgentPermissionMode",
 	"AgentInput.isolation":                               "AgentIsolation",
 	"ExitPlanModeInput.allowedPrompts[]":                 "AllowedPrompt",
 	"GrepInput.output_mode":                              "GrepOutputMode",
 	"NotebookEditInput.cell_type":                        "NotebookCellType",
 	"NotebookEditInput.edit_mode":                        "NotebookEditMode",
-	"ReportFindingsInput.level":                          "ReviewLevel",
 	"ReportFindingsInput.findings[]":                     "Finding",
 	"TodoWriteInput.todos[]":                             "Todo",
 	"AskUserQuestionInput.questions[]":                   "Question",
@@ -92,6 +92,7 @@ var typeNames = map[string]string{
 	"WorkflowOutput.taskType":                            "WorkflowTaskType",
 	"CronListOutput.jobs[]":                              "CronJob",
 	"PushNotificationOutput.disabledReason":              "PushDisabledReason",
+	"OfferChromeSetupOutput.outcome":                     "ChromeSetupOutcome",
 }
 
 // fieldNames overrides Go field names derived from JSON property names.
@@ -122,7 +123,7 @@ var intFields = setOf(
 	"discardedCommits", "proposalCount", "clampedDelaySeconds", "searchCount",
 	"bytes", "code", "status", "size_bytes", "failures", "max_failures",
 	"files", "max_files", "max_bytes", "knowledge_size", "max_knowledge_size",
-	"publishesRemaining", "seq",
+	"publishesRemaining", "seq", "total",
 	// agent usage
 	"totalToolUseCount", "totalTokens", "input_tokens", "output_tokens",
 	"cache_creation_input_tokens", "cache_read_input_tokens",

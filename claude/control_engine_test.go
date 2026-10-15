@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -303,13 +304,15 @@ func TestEngineInboundRequests(t *testing.T) {
 			name: "elicitation handler",
 			opts: &Options{OnElicitation: func(_ context.Context, req ElicitationRequest) (*ElicitationResult, error) {
 				if req.ServerName != "s" || req.Mode != ElicitationModeForm || req.RequestID != "r1" ||
-					req.RequestedSchema["type"] != "object" || req.Title != "T" || req.DisplayName != "D" {
+					req.RequestedSchema["type"] != "object" || req.Title != "T" || req.DisplayName != "D" ||
+					!slices.Equal(req.PropertyOrder, []string{"b", "a"}) {
 					return nil, errors.New("bad request mapping")
 				}
 				return &ElicitationResult{Action: ElicitationAccept, Content: map[string]any{"name": "x"}}, nil
 			}},
 			request: map[string]any{"subtype": "elicitation", "mcp_server_name": "s", "message": "m",
-				"mode": "form", "requested_schema": map[string]any{"type": "object"}, "title": "T", "display_name": "D"},
+				"mode": "form", "requested_schema": map[string]any{"type": "object"}, "title": "T", "display_name": "D",
+				"property_order": []any{"b", "a"}},
 			want: want{true, "success", map[string]any{"action": "accept", "content": map[string]any{"name": "x"}}},
 		},
 		{
@@ -498,6 +501,7 @@ func TestEngineInitializeResultAndRedelivery(t *testing.T) {
 				"output_style":            "default",
 				"available_output_styles": []any{"default"},
 				"hooks_applied":           true,
+				"claude_code_version":     "2.1.300",
 			},
 		}})
 	}
@@ -515,7 +519,8 @@ func TestEngineInitializeResultAndRedelivery(t *testing.T) {
 	res := eng.initializeResult()
 	if res == nil || len(res.Commands) != 1 || !res.Commands[0].Builtin || res.Agents[0].Name != "Explore" ||
 		res.Models[0].SupportedEffortLevels[0] != EffortHigh || res.Account.APIProvider != "firstParty" ||
-		res.HooksApplied == nil || !*res.HooksApplied || res.Raw["output_style"] != "default" {
+		res.HooksApplied == nil || !*res.HooksApplied || res.Raw["output_style"] != "default" ||
+		res.ClaudeCodeVersion != "2.1.300" {
 		t.Fatalf("result = %#v", res)
 	}
 

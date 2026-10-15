@@ -18,14 +18,15 @@ var allNames = []string{
 	AskUserQuestion, SendFeedback, ClaudeDesign, Projects, EnterPlanMode,
 	TaskCreate, TaskGet, TaskUpdate, TaskList, Workflow, CronCreate,
 	CronDelete, CronList, ScheduleWakeup, RemoteTrigger,
-	ShowOnboardingRolePicker, ReadNotifications, Monitor, ProposeSkills,
-	ProposeGoal, Artifact, PushNotification, EnterWorktree, ExitWorktree,
+	ShowOnboardingRolePicker, OfferChromeSetup, ReadNotifications, Monitor,
+	ProposeSkills, ProposeGoal, Artifact, PushNotification, EnterWorktree,
+	ExitWorktree,
 	"mcp__github__create_issue",
 }
 
 func TestRegistryCoversSchema(t *testing.T) {
-	if len(schemaInputTypes) != 43 || len(schemaOutputTypes) != 43 {
-		t.Fatalf("schema has %d inputs and %d outputs, want 43 each", len(schemaInputTypes), len(schemaOutputTypes))
+	if len(schemaInputTypes) != 44 || len(schemaOutputTypes) != 44 {
+		t.Fatalf("schema has %d inputs and %d outputs, want 44 each", len(schemaInputTypes), len(schemaOutputTypes))
 	}
 	if len(allNames) != len(registry) {
 		t.Fatalf("%d names for %d registry entries", len(allNames), len(registry))

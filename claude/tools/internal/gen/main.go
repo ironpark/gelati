@@ -5,8 +5,8 @@
 // toolchain is needed). By default the npm tarball for -sdk-version is
 // downloaded from the public registry; pass -in to use a local copy instead:
 //
-//	go run ./internal/gen -sdk-version 0.3.286 -out zz_generated.go
-//	go run ./internal/gen -sdk-version 0.3.286 -in /path/to/package/sdk-tools.d.ts -out zz_generated.go
+//	go run ./internal/gen -sdk-version 0.3.300 -out zz_generated.go
+//	go run ./internal/gen -sdk-version 0.3.300 -in /path/to/package/sdk-tools.d.ts -out zz_generated.go
 //
 // The registry URL can be overridden with the NPM_CONFIG_REGISTRY environment
 // variable. With GEN_DEBUG=1 every nested type is listed on stderr as

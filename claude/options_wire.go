@@ -407,8 +407,9 @@ func nonNilStrings(s []string) []string {
 // ---------------------------------------------------------------------------
 
 // buildSettingsValue renders --settings: Options.Settings, with
-// Options.Sandbox merged in as its "sandbox" key. A sandbox that is enabled
-// without failIfUnavailable gets failIfUnavailable: true.
+// Options.Sandbox merged into its "sandbox" key (see mergeSandbox). A sandbox
+// the option enables gets failIfUnavailable: true unless the merged block sets
+// it.
 func buildSettingsValue(opts *Options) (string, error) {
 	var (
 		text   string
@@ -443,23 +444,129 @@ func buildSettingsValue(opts *Options) (string, error) {
 	if isPath {
 		return "", errSettingsPathWithSandbox
 	}
-	if sandbox["enabled"] == true {
-		if _, set := sandbox["failIfUnavailable"]; !set {
-			sandbox["failIfUnavailable"] = true
-		}
-	}
 	settings := map[string]any{}
 	if strings.TrimSpace(text) != "" {
 		if err := jsonx.Unmarshal([]byte(text), &settings); err != nil {
 			return "", fmt.Errorf("claude: parsing inline settings: %w", err)
 		}
 	}
-	settings["sandbox"] = sandbox
+	base, _ := settings["sandbox"].(map[string]any)
+	merged := mergeSandbox(base, sandbox, "")
+	dropSupersededSandboxKeys(merged, sandbox)
+	if sandbox["enabled"] == true {
+		if _, set := merged["failIfUnavailable"]; !set {
+			merged["failIfUnavailable"] = true
+		}
+	}
+	settings["sandbox"] = merged
 	payload, err := json.Marshal(settings, jsonx.LegacyEncode)
 	if err != nil {
 		return "", fmt.Errorf("claude: encoding settings: %w", err)
 	}
 	return string(payload), nil
+}
+
+// sandboxUnionLists are the restriction lists that mergeSandbox combines
+// instead of replacing; sandboxReplaceWhole are the objects it replaces
+// instead of merging. Paths are relative to the sandbox block.
+var (
+	sandboxUnionLists = []string{
+		"filesystem.denyRead", "filesystem.denyWrite", "network.deniedDomains",
+		"credentials.files", "credentials.envVars",
+	}
+	sandboxReplaceWhole = []string{"ripgrep", "network.tlsTerminate"}
+)
+
+// mergeSandbox merges the Options.Sandbox object over the inline settings'
+// sandbox block, as the TypeScript SDK does: a value the option sets replaces
+// the one at the same path, nested objects merge key by key (except
+// sandboxReplaceWhole), and the sandboxUnionLists of both sides are
+// concatenated with duplicate scalars removed. base may be nil.
+func mergeSandbox(base, over map[string]any, prefix string) map[string]any {
+	out := maps.Clone(base)
+	if out == nil {
+		out = map[string]any{}
+	}
+	for key, value := range over {
+		path := key
+		if prefix != "" {
+			path = prefix + "." + key
+		}
+		prev := out[key]
+		prevList, prevIsList := prev.([]any)
+		list, isList := value.([]any)
+		prevObj, prevIsObj := prev.(map[string]any)
+		obj, isObj := value.(map[string]any)
+		switch {
+		case prevIsList && isList && slices.Contains(sandboxUnionLists, path):
+			out[key] = uniqueScalars(append(slices.Clone(prevList), list...))
+		case prevIsObj && isObj && !slices.Contains(sandboxReplaceWhole, path):
+			out[key] = mergeSandbox(prevObj, obj, path)
+		default:
+			out[key] = value
+		}
+	}
+	return out
+}
+
+// uniqueScalars drops repeated scalar items, keeping the first; objects and
+// arrays are always kept.
+func uniqueScalars(items []any) []any {
+	seen := map[any]bool{}
+	return slices.DeleteFunc(items, func(v any) bool {
+		switch v.(type) {
+		case map[string]any, []any:
+			return false
+		}
+		if seen[v] {
+			return true
+		}
+		seen[v] = true
+		return false
+	})
+}
+
+// dropSupersededSandboxKeys removes merged settings that would switch off
+// restrictions the option sets: filesystem.disabled when the option sets
+// filesystem or a credentials.files deny entry, and a proxy port the option
+// does not set itself when it restricts network domains (traffic through
+// that proxy is not checked against the domain lists).
+func dropSupersededSandboxKeys(merged, option map[string]any) {
+	optFS, setsFS := option["filesystem"]
+	if fs, ok := merged["filesystem"].(map[string]any); ok && fs["disabled"] == true {
+		_, optDisabled := asObject(optFS)["disabled"]
+		if (setsFS || hasCredentialDeny(option)) && !optDisabled {
+			delete(fs, "disabled")
+		}
+	}
+	optNet := asObject(option["network"])
+	denied, _ := optNet["deniedDomains"].([]any)
+	_, setsAllowed := optNet["allowedDomains"]
+	if !setsAllowed && len(denied) == 0 && optNet["strictAllowlist"] != true {
+		return
+	}
+	if net, ok := merged["network"].(map[string]any); ok {
+		for _, port := range []string{"httpProxyPort", "socksProxyPort"} {
+			if _, set := optNet[port]; !set {
+				delete(net, port)
+			}
+		}
+	}
+}
+
+// hasCredentialDeny reports whether the sandbox object has a credentials.files
+// entry with mode "deny".
+func hasCredentialDeny(sandbox map[string]any) bool {
+	files, _ := asObject(sandbox["credentials"])["files"].([]any)
+	return slices.ContainsFunc(files, func(f any) bool {
+		return asObject(f)["mode"] == "deny"
+	})
+}
+
+// asObject returns v as a JSON object, or nil.
+func asObject(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	return m
 }
 
 // errSettingsPathWithSandbox rejects a sandbox that has no settings object to

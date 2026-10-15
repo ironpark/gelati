@@ -252,9 +252,20 @@ type BackgroundTasksChangedMessage struct {
 
 // BackgroundTask is one live background task.
 type BackgroundTask struct {
-	TaskID      string `json:"task_id"`
-	TaskType    string `json:"task_type"`
-	Description string `json:"description"`
+	TaskID string `json:"task_id"`
+	// RunID identifies one run of the task; a resumed task keeps TaskID and
+	// gets a new RunID. Run IDs of one task sort, as strings, in the order
+	// the runs opened. Empty for a task this process did not register.
+	RunID    string `json:"run_id,omitempty"`
+	TaskType string `json:"task_type"`
+	// SubagentType is the agent type of a local_agent task
+	// ("main-session" for a backgrounded main session).
+	SubagentType string `json:"subagent_type,omitempty"`
+	Description  string `json:"description"`
+	// ParentTaskID is the task_id of the subagent task whose agent launched
+	// this task; empty when the main thread launched it or the launcher is
+	// not tracked. Treat an unknown ID as no parent.
+	ParentTaskID string `json:"parent_task_id,omitempty"`
 	// Ambient marks a task that is not activity.
 	Ambient bool `json:"ambient,omitzero"`
 }
@@ -391,9 +402,12 @@ type InformationalMessage struct {
 	Level     string `json:"level"`
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	// PreventContinuation reports that execution stops after this message.
-	PreventContinuation bool   `json:"prevent_continuation,omitzero"`
-	UUID                string `json:"uuid"`
-	SessionID           string `json:"session_id"`
+	PreventContinuation bool `json:"prevent_continuation,omitzero"`
+	// Tag is an opaque feature tag a host may treat specially; ignore
+	// values you do not know.
+	Tag       string `json:"tag,omitempty"`
+	UUID      string `json:"uuid"`
+	SessionID string `json:"session_id"`
 }
 
 // MCPResourceLink is an MCP resource_link returned by a tool.
@@ -436,7 +450,9 @@ func IsTerminalTaskStatus(status string) bool {
 // type or use Data for a uniform view.
 type TaskStartedMessage struct {
 	SystemMessage
-	TaskID      string `json:"task_id"`
+	TaskID string `json:"task_id"`
+	// RunID: see BackgroundTask.RunID.
+	RunID       string `json:"run_id,omitempty"`
 	Description string `json:"description"`
 	UUID        string `json:"uuid"`
 	SessionID   string `json:"session_id"`
@@ -448,6 +464,8 @@ type TaskStartedMessage struct {
 	IsBackgrounded bool `json:"is_backgrounded,omitzero"`
 	// SpawnDepth is the nesting depth of a subagent task (1 = top level).
 	SpawnDepth int `json:"spawn_depth,omitzero"`
+	// ParentTaskID: see BackgroundTask.ParentTaskID.
+	ParentTaskID string `json:"parent_task_id,omitempty"`
 	// WorkflowName is the workflow script name ("local_workflow" tasks).
 	WorkflowName string `json:"workflow_name,omitempty"`
 	Prompt       string `json:"prompt,omitempty"`
@@ -461,7 +479,9 @@ type TaskStartedMessage struct {
 // TaskProgressMessage is emitted while a task is in progress.
 type TaskProgressMessage struct {
 	SystemMessage
-	TaskID       string    `json:"task_id"`
+	TaskID string `json:"task_id"`
+	// RunID: see BackgroundTask.RunID.
+	RunID        string    `json:"run_id,omitempty"`
 	Description  string    `json:"description"`
 	Usage        TaskUsage `json:"usage"`
 	UUID         string    `json:"uuid"`
@@ -479,7 +499,9 @@ type TaskProgressMessage struct {
 // completion only through a TaskUpdatedMessage with a terminal patch status.
 type TaskNotificationMessage struct {
 	SystemMessage
-	TaskID     string     `json:"task_id"`
+	TaskID string `json:"task_id"`
+	// RunID: see BackgroundTask.RunID.
+	RunID      string     `json:"run_id,omitempty"`
 	Status     string     `json:"status"`
 	OutputFile string     `json:"output_file"`
 	Summary    string     `json:"summary"`
@@ -501,7 +523,9 @@ type TaskNotificationMessage struct {
 // carries the changed fields; Data["patch"] holds them verbatim.
 type TaskUpdatedMessage struct {
 	SystemMessage
-	TaskID    string    `json:"task_id"`
+	TaskID string `json:"task_id"`
+	// RunID: see BackgroundTask.RunID.
+	RunID     string    `json:"run_id,omitempty"`
 	Patch     TaskPatch `json:"patch"`
 	Status    string    `json:"-"`
 	SessionID string    `json:"session_id"`

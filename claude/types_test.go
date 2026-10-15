@@ -80,6 +80,12 @@ func TestMessageOriginRoundTrip(t *testing.T) {
 	if string(out) != raw {
 		t.Fatalf("marshal = %s, want %s", out, raw)
 	}
+
+	// A task notification's runId is modeled, not left in Extra.
+	note := parseOrigin(map[string]any{"origin": map[string]any{"kind": "task-notification", "runId": "r1"}})
+	if note.RunID != "r1" || len(note.Extra) != 0 {
+		t.Fatalf("task-notification origin = %+v", note)
+	}
 }
 
 func TestMessageOriginExtraRoundTrip(t *testing.T) {
@@ -244,15 +250,16 @@ func TestOptionsBufferSize(t *testing.T) {
 func TestAgentDefinitionJSON(t *testing.T) {
 	t.Parallel()
 	got, err := jsonx.Marshal(AgentDefinition{
-		Description: "reviewer",
-		Prompt:      "review code",
-		Tools:       []string{"Read"},
-		Model:       "sonnet",
+		Description:       "reviewer",
+		Prompt:            "review code",
+		Tools:             []string{"Read"},
+		Model:             "sonnet",
+		AutoCompactWindow: new(50000),
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	const want = `{"description":"reviewer","prompt":"review code","tools":["Read"],"model":"sonnet"}`
+	const want = `{"description":"reviewer","prompt":"review code","tools":["Read"],"model":"sonnet","autoCompactWindow":50000}`
 	if string(got) != want {
 		t.Fatalf("marshal = %s, want %s", got, want)
 	}
@@ -546,7 +553,7 @@ func TestJSONMemberNames(t *testing.T) {
 	if !hookOutputFields["asyncTimeout"] || !hookOutputFields["continue"] || hookOutputFields["Specific"] || hookOutputFields["Extra"] {
 		t.Fatalf("hook output fields = %v", hookOutputFields)
 	}
-	if len(originFields) != 9 || !originFields["verifiedPeerPid"] {
+	if len(originFields) != 10 || !originFields["verifiedPeerPid"] || !originFields["runId"] {
 		t.Fatalf("origin fields = %v", originFields)
 	}
 	// Embedded structs contribute their members.

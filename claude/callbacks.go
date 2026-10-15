@@ -55,6 +55,10 @@ type ElicitationRequest struct {
 	// RequestedSchema is the JSON Schema of the input asked for in "form"
 	// mode.
 	RequestedSchema map[string]any
+	// PropertyOrder lists the top-level keys of RequestedSchema's
+	// properties in the order the server declared them, which a Go map
+	// does not keep; nil for "url" mode and from older CLIs.
+	PropertyOrder []string
 	// Title, DisplayName and Description come from the server's
 	// permission-display metadata, for prompts driven by an elicitation.
 	Title       string

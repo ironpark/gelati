@@ -80,6 +80,9 @@ type InitializeResult struct {
 	// its pre-captured MCP manifest (parked, already_connected,
 	// protocol_version_mismatch, malformed or not_honoured).
 	SDKMCPManifestsParked map[string]string `json:"sdk_mcp_manifests_parked,omitempty"`
+	// ClaudeCodeVersion is the version of the CLI that runs the session's
+	// turns; empty on CLIs that predate the field.
+	ClaudeCodeVersion string `json:"claude_code_version,omitempty"`
 	// FastModeState is off, cooldown or on.
 	FastModeState          string `json:"fast_mode_state,omitempty"`
 	FastModeDisabledReason string `json:"fast_mode_disabled_reason,omitempty"`

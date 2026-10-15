@@ -179,6 +179,9 @@ func (e *engine) handleElicitation(ctx context.Context, requestID string, reques
 		Raw:           request,
 	}
 	req.RequestedSchema, _ = request["requested_schema"].(map[string]any)
+	if order, ok := request["property_order"].([]any); ok {
+		req.PropertyOrder = stringItems(order)
+	}
 	result, err := e.cfg.onElicitation(ctx, req)
 	return callbackReply("elicitation callback", result, err)
 }
