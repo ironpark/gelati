@@ -111,7 +111,7 @@ func (r *hookRouter) preTool(ctx context.Context, turn *HookContext, req *wire.C
 func (r *hookRouter) postTool(ctx context.Context, turn *HookContext, req *wire.CallHookRequest) error {
 	result := &ToolResult{}
 	if pta := req.GetPostToolArgs(); pta != nil {
-		result.Name = sdkToolName(pta.GetToolName())
+		result.Name = normalizeToolName(pta.GetToolName(), pta.GetServerName())
 		result.ServerName = pta.GetServerName()
 		result.ID = pta.GetCallId()
 		result.StepID = stepIDOf(pta.GetTrajectoryId(), pta.GetStepIndex(), pta.HasStepIndex())
@@ -134,7 +134,7 @@ func (r *hookRouter) toolError(ctx context.Context, turn *HookContext, req *wire
 		if m := ote.GetErrorMessage(); m != "" {
 			toolErr.Message = m
 		}
-		toolErr.ToolName = sdkToolName(ote.GetToolName())
+		toolErr.ToolName = normalizeToolName(ote.GetToolName(), ote.GetServerName())
 		toolErr.ServerName = ote.GetServerName()
 		toolErr.CallID = ote.GetCallId()
 		toolErr.StepID = stepIDOf(ote.GetTrajectoryId(), ote.GetStepIndex(), ote.HasStepIndex())

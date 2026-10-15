@@ -471,7 +471,7 @@ does not wrap are available through `Client.Call`.
 ## agy
 
 `agy` is a Go port of Google's
-[Antigravity Python SDK](https://pypi.org/project/google-antigravity/) (v0.1.20).
+[Antigravity Python SDK](https://pypi.org/project/google-antigravity/) (v0.1.22).
 The agent loop runs in the SDK's `localharness` binary; the package launches it,
 configures it, streams its steps over WebSocket, and runs custom tools, hooks,
 policies and triggers in your Go process when the harness calls back.
@@ -482,7 +482,7 @@ The harness ships inside the platform wheel of the Python package. Extract it
 once and point the SDK at it:
 
 ```sh
-pip download google-antigravity==0.1.20 --no-deps --only-binary=:all: -d /tmp/ag
+pip download google-antigravity==0.1.22 --no-deps --only-binary=:all: -d /tmp/ag
 unzip -o /tmp/ag/google_antigravity-*.whl 'google/antigravity/bin/*' -d /tmp/ag
 export ANTIGRAVITY_HARNESS_PATH=/tmp/ag/google/antigravity/bin/localharness
 export GEMINI_API_KEY=...

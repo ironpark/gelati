@@ -94,8 +94,10 @@ type Policy struct {
 	kind policyKind
 }
 
-// normalized returns p with the derived fields of an auto policy filled in.
+// normalized returns p with the derived fields of an auto policy filled in
+// and a deprecated tool name (start_subagent) replaced.
 func (p Policy) normalized() Policy {
+	p.Tool = normalizeToolName(p.Tool, "")
 	if p.Auto {
 		p.Tool = WildcardTool
 		p.When = nil

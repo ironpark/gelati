@@ -1,7 +1,7 @@
 """Regenerates the golden files in this directory from the upstream protos.
 
 The goldens are produced by Python's protobuf json_format from the descriptors
-shipped in the google-antigravity v0.1.20 wheel. To regenerate, extract the
+shipped in the google-antigravity v0.1.22 wheel. To regenerate, extract the
 wheel's google/antigravity/proto package into $PBROOT/google/antigravity/proto
 (with empty __init__.py files and no google/__init__.py) and run:
 
@@ -48,7 +48,11 @@ def fill(m, variant, depth, zero):
         if o is not None and chosen[o.name] != f.name:
             continue
         if f.message_type is not None and f.message_type.GetOptions().map_entry:
-            getattr(m, f.name).update({"K_1": "v", "b": ""} if not zero else {})
+            value = f.message_type.fields_by_name["value"]
+            if value.message_type is None:
+                getattr(m, f.name).update({"K_1": "v", "b": ""} if not zero else {})
+            elif not zero and depth > 0:
+                fill(getattr(m, f.name)["K_1"], variant, depth - 1, zero)
             continue
         if f.message_type is not None:
             if depth <= 0:
@@ -88,7 +92,7 @@ for name, cls in ROOTS.items():
 # Python SDK sends: storage_directory explicitly "" and no bind_address.
 ic = lh.InputConfig(
     storage_directory="",
-    client_info=lh.ClientInfo(language="python", version="0.1.20",
+    client_info=lh.ClientInfo(language="python", version="0.1.22",
         language_version="3.12.1", os="darwin", os_version="24.6.0"),
     env={"GEMINI_API_KEY": "k"},
 )

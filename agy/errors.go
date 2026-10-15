@@ -63,8 +63,9 @@ func (e *ConnectionError) Unwrap() error { return e.Err }
 func (e *ConnectionError) agyError()     {}
 
 // ProcessError reports that the harness process exited on its own: it
-// crashed or quit during the launch or mid-session. It is found inside
-// the *ConnectionError that reports the failure.
+// crashed or quit during the launch or mid-session, or exited with a
+// non-zero status when closed. It is found inside the *ConnectionError that
+// reports the failure.
 type ProcessError struct {
 	// ExitCode is the exit status, or nil when the process was killed by a
 	// signal or its status is unknown.
@@ -165,6 +166,9 @@ func connectionErrorFrom(err error) error {
 	}
 	if se, ok := errors.AsType[*harness.StartError](err); ok {
 		return &ConnectionError{Message: se.Error(), Stderr: se.Stderr, Err: processErrorOr(se.Exit, se.Stderr, err)}
+	}
+	if ee, ok := errors.AsType[*harness.ExitError](err); ok {
+		return &ConnectionError{Message: ee.Error(), Stderr: ee.Stderr, Err: processErrorOr(ee.Exit, ee.Stderr, err)}
 	}
 	return &ConnectionError{Message: err.Error(), Err: err}
 }

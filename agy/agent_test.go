@@ -613,8 +613,9 @@ func TestAgentDoneAndErr(t *testing.T) {
 	if pe, ok := errors.AsType[*ProcessError](agent.Err()); !ok || !strings.Contains(pe.Stderr, "crashing on purpose") {
 		t.Fatalf("Err after crash = %v, want a *ProcessError", agent.Err())
 	}
-	if err := agent.Close(); err != nil {
-		t.Logf("Close after crash: %v", err)
+	// Close reports the non-zero exit status, as upstream's disconnect does.
+	if pe, ok := errors.AsType[*ProcessError](agent.Close()); !ok || pe.ExitCode == nil || *pe.ExitCode != 3 {
+		t.Fatalf("Close after crash = %v, want a *ProcessError with status 3", agent.Close())
 	}
 	if _, ok := errors.AsType[*ConnectionError](agent.Err()); !ok {
 		t.Fatalf("Err after crash and Close = %v", agent.Err())

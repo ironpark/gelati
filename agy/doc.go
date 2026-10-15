@@ -1,7 +1,7 @@
 // Package agy builds AI agents on Google's Antigravity agent runtime
 // from Go.
 //
-// It is a port of the google-antigravity Python SDK (v0.1.20). The agent
+// It is a port of the google-antigravity Python SDK (v0.1.22). The agent
 // loop runs in the localharness binary that ships with that SDK; this
 // package launches it, configures it, streams its steps, and runs custom
 // tools, hooks, policies and triggers in the Go process when the harness
@@ -116,7 +116,9 @@
 //	from_file, from_bytes              -> FromFile, FromBytes (and ImageFromFile, ...)
 //	system_instructions="..."          -> TextSystemInstructions("...")
 //	BuiltinTools.READ_ONLY ...         -> BuiltinViewFile ..., ReadOnlyTools() ...
+//	BuiltinTools.START_SUBAGENT        -> BuiltinStartSubagent (deprecated alias of BuiltinInvokeSubagent)
 //	CapabilitiesConfig.enable_subagents -> CapabilitiesConfig.DisableSubagents (inverted)
+//	SubagentConfig.skills_config       -> SubagentConfig.Skills (InheritSkills, NoSkills, OverrideSkills)
 //	RunCommandConfig.timeout_seconds   -> RunCommandConfig.Timeout (time.Duration)
 //	RetryConfig.benchmark()            -> BenchmarkRetryConfig
 //	McpStdioServer                     -> MCPStdioServer
@@ -195,4 +197,11 @@
 // place. DebugConfig is replaced by Options.Logger. Tool results containing
 // genai Content protos have no Go equivalent; media results use Image,
 // Document, Audio and Video instead.
+//
+// The beta workflow API (agent.beta.run_workflow and the workflows module)
+// is not ported: it turns Python functions into workflow scripts. The
+// run_workflow tool itself is supported (BuiltinRunWorkflow), and its steps
+// carry Step.WorkflowProgress. Nor is InteractionsAgentConfig, an
+// alternative event protocol, or inline skills on OverrideSkills, which the
+// local harness rejects upstream too.
 package agy

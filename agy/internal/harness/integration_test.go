@@ -45,7 +45,7 @@ func TestRealHarness(t *testing.T) {
 			ViewFile:   wire.ViewFileToolConfig_builder{Enabled: new(true)}.Build(),
 			RunCommand: wire.RunCommandToolConfig_builder{Enabled: new(false)}.Build(),
 		}.Build(),
-		// Upstream's default text model (models.DEFAULT_MODEL in v0.1.20).
+		// Upstream's default text model (models.DEFAULT_MODEL in v0.1.22).
 		Models: []*wire.ModelConfig{wire.ModelConfig_builder{
 			Name:              new("gemini-3.8-flash"),
 			Types:             []wire.ModelType{wire.ModelType_MODEL_TYPE_TEXT},

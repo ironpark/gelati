@@ -24,7 +24,7 @@ var subagentActive atomic.Bool
 // runs.
 var logHooks = []agy.Hook{
 	agy.PreToolCallHook(func(_ context.Context, _ *agy.HookContext, call *agy.ToolCall) (agy.HookResult, error) {
-		if call.Name == string(agy.BuiltinStartSubagent) {
+		if call.Name == string(agy.BuiltinInvokeSubagent) {
 			subagentActive.Store(true)
 			fmt.Printf("\n  --- [Hook] Spawning subagent ---\n  Arguments: %v\n\n", call.Args)
 		} else {
@@ -33,7 +33,7 @@ var logHooks = []agy.Hook{
 		return agy.HookResult{}, nil
 	}),
 	agy.PostToolCallHook(func(_ context.Context, _ *agy.HookContext, r *agy.ToolResult) error {
-		if r.Name == string(agy.BuiltinStartSubagent) {
+		if r.Name == string(agy.BuiltinInvokeSubagent) {
 			subagentActive.Store(false)
 			fmt.Printf("\n  --- [Hook] Subagent finished ---\n  Result: %v\n\n", r.Result)
 		} else {
@@ -107,7 +107,7 @@ func main() {
 		Description: "Researches a topic by reading files and delegating fact-checking to the 'fact_checker' subagent.",
 		Capabilities: &agy.SubagentCapabilities{
 			EnabledTools: []agy.BuiltinTool{
-				agy.BuiltinViewFile, agy.BuiltinFindFile, agy.BuiltinListDir, agy.BuiltinStartSubagent,
+				agy.BuiltinViewFile, agy.BuiltinFindFile, agy.BuiltinListDir, agy.BuiltinInvokeSubagent,
 			},
 			AllowedSubagents: []string{"fact_checker"},
 		},

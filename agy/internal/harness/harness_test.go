@@ -238,6 +238,10 @@ func TestCrashReportsStderr(t *testing.T) {
 	if ce.Exit == nil || ce.Exit.Code == nil || *ce.Exit.Code != 3 {
 		t.Fatalf("ConnectionError.Exit = %+v", ce.Exit)
 	}
+	err = h.Close()
+	if ee, ok := errors.AsType[*ExitError](err); !ok || *ee.Exit.Code != 3 || !strings.Contains(err.Error(), "exited with code 3") || !strings.Contains(err.Error(), "panic: halted") {
+		t.Fatalf("Close = %v, want *ExitError", err)
+	}
 }
 
 func TestDiesEarly(t *testing.T) {

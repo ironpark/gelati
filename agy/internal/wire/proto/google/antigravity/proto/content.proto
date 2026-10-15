@@ -1,4 +1,4 @@
-// Printed from the descriptors in the google-antigravity v0.1.20 wheel
+// Printed from the descriptors in the google-antigravity v0.1.22 wheel
 // (google/antigravity/proto/content_pb2.py) by testdata/protoextract.
 
 edition = "2023";
@@ -274,7 +274,7 @@ message FileCitation {
 
   string source = 3;
 
-  Struct custom_metadata = 4;
+  google.protobuf.Struct custom_metadata = 4;
 
   int32 page_number = 5;
 

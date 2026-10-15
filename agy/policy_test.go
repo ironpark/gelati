@@ -43,6 +43,10 @@ func TestPolicyConfigStaticRules(t *testing.T) {
 	if cfg.GetRules()[0].GetTool() != "a" || cfg.GetRules()[1].GetTool() != "b" || cfg.GetRules()[2].GetTool() != "c" {
 		t.Fatal("rule order not preserved")
 	}
+	cfg, _, _ = policyConfig([]Policy{{Tool: "start_subagent", Decision: DecisionDeny}, {Tool: "srv/start_subagent", Decision: DecisionDeny}})
+	if cfg.GetRules()[0].GetTool() != "invoke_subagent" || cfg.GetRules()[1].GetTool() != "start_subagent" {
+		t.Fatalf("deprecated tool name %+v", cfg.GetRules())
+	}
 }
 
 func TestPolicyConfigDynamicRules(t *testing.T) {

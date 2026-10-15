@@ -21,7 +21,7 @@ import (
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
-const header = "// Printed from the descriptors in the google-antigravity v0.1.20 wheel\n" +
+const header = "// Printed from the descriptors in the google-antigravity v0.1.22 wheel\n" +
 	"// (google/antigravity/proto/%s_pb2.py) by testdata/protoextract.\n\n"
 
 func main() {

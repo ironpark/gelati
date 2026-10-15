@@ -1,5 +1,5 @@
 """Writes the FileDescriptorSet of localharness.proto and its imports, taken
-from the descriptors in the google-antigravity v0.1.20 wheel, to the path given
+from the descriptors in the google-antigravity v0.1.22 wheel, to the path given
 as the first argument. See main.go for the whole extraction.
 """
 import os, sys

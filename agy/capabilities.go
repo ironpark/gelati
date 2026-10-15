@@ -2,6 +2,7 @@ package agy
 
 import (
 	"log/slog"
+	"maps"
 	"math"
 	"slices"
 	"time"
@@ -20,20 +21,54 @@ const (
 	BuiltinEditFile       BuiltinTool = "edit_file"
 	BuiltinRunCommand     BuiltinTool = "run_command"
 	BuiltinAskQuestion    BuiltinTool = "ask_question"
-	BuiltinStartSubagent  BuiltinTool = "start_subagent"
+	BuiltinInvokeSubagent BuiltinTool = "invoke_subagent"
+	// BuiltinRunWorkflow runs a multi-agent workflow script. It is on with
+	// subagents: CapabilitiesConfig.DisableSubagents turns it off too.
+	BuiltinRunWorkflow    BuiltinTool = "run_workflow"
 	BuiltinGenerateImage  BuiltinTool = "generate_image"
 	BuiltinSearchWeb      BuiltinTool = "search_web"
 	BuiltinReadURLContent BuiltinTool = "read_url_content"
 	BuiltinSchedule       BuiltinTool = "schedule"
 	BuiltinFinish         BuiltinTool = "finish"
+
+	// BuiltinStartSubagent is the former name of BuiltinInvokeSubagent.
+	//
+	// Deprecated: use BuiltinInvokeSubagent.
+	BuiltinStartSubagent = BuiltinInvokeSubagent
 )
+
+// deprecatedStartSubagent is the former tool name of invoke_subagent, still
+// accepted in tool lists and policies.
+const deprecatedStartSubagent = "start_subagent"
+
+// normalizeToolName maps the deprecated start_subagent name to
+// invoke_subagent, unless the tool belongs to an MCP server.
+func normalizeToolName(name, serverName string) string {
+	if name == deprecatedStartSubagent && serverName == "" {
+		return string(BuiltinInvokeSubagent)
+	}
+	return name
+}
+
+// normalizeTools returns ts with deprecated names replaced, or ts itself
+// when there are none; nil stays nil.
+func normalizeTools(ts []BuiltinTool) []BuiltinTool {
+	if !slices.Contains(ts, deprecatedStartSubagent) {
+		return ts
+	}
+	out := slices.Clone(ts)
+	for i, t := range out {
+		out[i] = BuiltinTool(normalizeToolName(string(t), ""))
+	}
+	return out
+}
 
 // AllTools returns every builtin tool, in declaration order.
 func AllTools() []BuiltinTool {
 	return []BuiltinTool{
 		BuiltinListDir, BuiltinSearchDir, BuiltinFindFile, BuiltinViewFile,
 		BuiltinCreateFile, BuiltinEditFile, BuiltinRunCommand, BuiltinAskQuestion,
-		BuiltinStartSubagent, BuiltinGenerateImage, BuiltinSearchWeb,
+		BuiltinInvokeSubagent, BuiltinRunWorkflow, BuiltinGenerateImage, BuiltinSearchWeb,
 		BuiltinReadURLContent, BuiltinSchedule, BuiltinFinish,
 	}
 }
@@ -49,7 +84,7 @@ func ReadOnlyTools() []BuiltinTool {
 func NondestructiveTools() []BuiltinTool {
 	return []BuiltinTool{
 		BuiltinViewFile, BuiltinCreateFile, BuiltinEditFile, BuiltinAskQuestion,
-		BuiltinStartSubagent, BuiltinGenerateImage, BuiltinSearchWeb,
+		BuiltinInvokeSubagent, BuiltinRunWorkflow, BuiltinGenerateImage, BuiltinSearchWeb,
 		BuiltinReadURLContent, BuiltinSchedule, BuiltinFinish,
 	}
 }
@@ -164,6 +199,10 @@ type CapabilitiesConfig struct {
 	RunCommand *RunCommandConfig
 	// ToolOutputTruncation truncates large tool outputs.
 	ToolOutputTruncation *ToolOutputTruncationConfig
+	// MCPMaxOutputBytes is the size above which an MCP tool output or
+	// resource read is spilled to a file instead of inlined in the model
+	// context. Zero uses the runtime default (4096 bytes).
+	MCPMaxOutputBytes int
 }
 
 func (c *CapabilitiesConfig) clone() *CapabilitiesConfig {
@@ -205,9 +244,12 @@ func (c *CapabilitiesConfig) validate(logger *slog.Logger) error {
 	if t := c.ToolOutputTruncation; t != nil && (t.MaxTokens < 0 || t.MaxTokens > math.MaxInt32) {
 		return validationErrorf("tool_output_truncation max_tokens must be in [0, %d], got %d", math.MaxInt32, t.MaxTokens)
 	}
-	if c.DisableSubagents || toolListedOff(c.EnabledTools, c.DisabledTools, BuiltinStartSubagent) {
+	if c.MCPMaxOutputBytes < 0 || c.MCPMaxOutputBytes > math.MaxInt32 {
+		return validationErrorf("mcp_max_output_bytes must be in [1, %d], got %d", math.MaxInt32, c.MCPMaxOutputBytes)
+	}
+	if c.DisableSubagents || subagentToolsOff(c.EnabledTools, c.DisabledTools) {
 		if c.MaxSubagentDepth != 0 {
-			return validationErrorf("max_subagent_depth cannot be configured when subagents are disabled (enable_subagents=False or START_SUBAGENT not enabled).")
+			return validationErrorf("max_subagent_depth cannot be configured when subagents are disabled (enable_subagents=False or INVOKE_SUBAGENT not enabled).")
 		}
 		if c.AllowedSubagents != nil {
 			return validationErrorf("allowed_subagents cannot be specified when subagents are disabled.")
@@ -235,7 +277,14 @@ func validateToolSet(enabled, disabled []BuiltinTool, rc *RunCommandConfig) erro
 // toolListedOff reports whether the tool lists turn t off: it is disabled,
 // or missing from an allowlist.
 func toolListedOff(enabled, disabled []BuiltinTool, t BuiltinTool) bool {
+	enabled, disabled = normalizeTools(enabled), normalizeTools(disabled)
 	return slices.Contains(disabled, t) || (enabled != nil && !slices.Contains(enabled, t))
+}
+
+// subagentToolsOff reports whether the tool lists turn off both tools that
+// spawn subagents, invoke_subagent and run_workflow.
+func subagentToolsOff(enabled, disabled []BuiltinTool) bool {
+	return toolListedOff(enabled, disabled, BuiltinInvokeSubagent) && toolListedOff(enabled, disabled, BuiltinRunWorkflow)
 }
 
 // SubagentCapabilities configures what a subagent may do. The fields mean
@@ -274,8 +323,8 @@ func (c *SubagentCapabilities) validate(logger *slog.Logger) error {
 	if err := validateToolSet(c.EnabledTools, c.DisabledTools, c.RunCommand); err != nil {
 		return err
 	}
-	if toolListedOff(c.EnabledTools, c.DisabledTools, BuiltinStartSubagent) && c.AllowedSubagents != nil {
-		return validationErrorf("allowed_subagents cannot be specified when START_SUBAGENT is disabled or omitted from enabled_tools.")
+	if subagentToolsOff(c.EnabledTools, c.DisabledTools) && c.AllowedSubagents != nil {
+		return validationErrorf("allowed_subagents cannot be specified when INVOKE_SUBAGENT is disabled or omitted from enabled_tools.")
 	}
 	if slices.Contains(c.EnabledTools, BuiltinAskQuestion) && c.behavior() != AgentBehaviorInteractive {
 		logger.Warn("BuiltinAskQuestion is enabled on subagent, but its AgentBehavior is not interactive. " +
@@ -303,11 +352,106 @@ type SubagentConfig struct {
 	// Model pins the subagent to a model name; it always runs against the
 	// agent-level endpoint.
 	Model string
+	// Skills says which skills the subagent sees; nil inherits all of the
+	// parent's.
+	Skills SubagentSkills
+}
+
+// InlineSkill is a skill defined in memory rather than loaded from a
+// SKILL.md file.
+type InlineSkill struct {
+	// Name uniquely identifies the skill (e.g. "emoji-summarizer").
+	Name string
+	// Description tells the model when to select the skill.
+	Description string
+	// Content is the skill's instructions (Markdown or text).
+	Content string
+	// AllowedTools lists the tools the skill may use.
+	AllowedTools []string
+	// DependentTools are loaded when the skill is looked up.
+	DependentTools []string
+	// DependentSkills are skills this skill depends on.
+	DependentSkills []string
+	// Metadata is free-form key-value metadata (e.g. "visibility":
+	// "hidden").
+	Metadata map[string]string
+}
+
+func (s InlineSkill) clone() InlineSkill {
+	s.AllowedTools = slices.Clone(s.AllowedTools)
+	s.DependentTools = slices.Clone(s.DependentTools)
+	s.DependentSkills = slices.Clone(s.DependentSkills)
+	s.Metadata = maps.Clone(s.Metadata)
+	return s
+}
+
+// SubagentSkills configures how a subagent discovers skills (upstream
+// SubagentSkillsConfig): InheritSkills, NoSkills or OverrideSkills.
+type SubagentSkills interface{ subagentSkills() }
+
+// InheritSkills inherits the parent's skills.
+type InheritSkills struct {
+	// SkillNames, when set, restricts the inherited skills to these names.
+	SkillNames []string
+	// ExtraSkillsPaths are additional directories of SKILL.md files.
+	ExtraSkillsPaths []string
+}
+
+// NoSkills disables skills, and skill lookup, for the subagent.
+type NoSkills struct{}
+
+// OverrideSkills replaces the parent's skills with those found in
+// SkillsPaths, which must not be empty. Upstream's inline skills for
+// subagents are not supported by the local harness.
+type OverrideSkills struct {
+	SkillsPaths []string
+}
+
+func (InheritSkills) subagentSkills()  {}
+func (NoSkills) subagentSkills()       {}
+func (OverrideSkills) subagentSkills() {}
+
+func validateSubagentSkills(s SubagentSkills) error {
+	var paths []string
+	switch v := s.(type) {
+	case OverrideSkills:
+		paths = v.SkillsPaths
+	case *OverrideSkills:
+		if v == nil {
+			return nil
+		}
+		paths = v.SkillsPaths
+	default:
+		return nil
+	}
+	if len(paths) == 0 {
+		return validationErrorf("OverrideSkills requires non-empty SkillsPaths; use NoSkills to disable all skills.")
+	}
+	return nil
+}
+
+func cloneSubagentSkills(s SubagentSkills) SubagentSkills {
+	switch v := s.(type) {
+	case InheritSkills:
+		return InheritSkills{slices.Clone(v.SkillNames), slices.Clone(v.ExtraSkillsPaths)}
+	case *InheritSkills:
+		if v != nil {
+			return &InheritSkills{slices.Clone(v.SkillNames), slices.Clone(v.ExtraSkillsPaths)}
+		}
+	case OverrideSkills:
+		return OverrideSkills{slices.Clone(v.SkillsPaths)}
+	case *OverrideSkills:
+		if v != nil {
+			return &OverrideSkills{slices.Clone(v.SkillsPaths)}
+		}
+	}
+	return s
 }
 
 // resolveActiveTools resolves the set of active builtin tools: enabled when
 // set, else DefaultTools minus disabled.
 func resolveActiveTools(enabled, disabled []BuiltinTool) map[BuiltinTool]bool {
+	enabled, disabled = normalizeTools(enabled), normalizeTools(disabled)
 	if enabled == nil {
 		enabled = slices.DeleteFunc(DefaultTools(), func(t BuiltinTool) bool { return slices.Contains(disabled, t) })
 	}
@@ -495,6 +639,7 @@ type mcpCommon struct {
 	timeoutSeconds int
 	enabledTools   []string
 	disabledTools  []string
+	eager          bool
 }
 
 // MCPStdioServer is an MCP server the harness launches and talks to over
@@ -513,12 +658,15 @@ type MCPStdioServer struct {
 	// mutually exclusive; nil means all tools.
 	EnabledTools  []string
 	DisabledTools []string
+	// ForceAllToolsEager loads all the server's tools into the prompt
+	// up front instead of lazily through tool search.
+	ForceAllToolsEager bool
 }
 
 // ServerName returns Name.
 func (s *MCPStdioServer) ServerName() string { return s.Name }
 func (s *MCPStdioServer) mcpServer() *mcpCommon {
-	return &mcpCommon{s.Name, s.TimeoutSeconds, s.EnabledTools, s.DisabledTools}
+	return &mcpCommon{s.Name, s.TimeoutSeconds, s.EnabledTools, s.DisabledTools, s.ForceAllToolsEager}
 }
 
 // MCPStreamableHTTPServer is an MCP server reached over Streamable HTTP.
@@ -529,15 +677,16 @@ type MCPStreamableHTTPServer struct {
 	Headers map[string]string
 	// TimeoutSeconds bounds connecting and listing tools; zero uses the
 	// harness default.
-	TimeoutSeconds int
-	EnabledTools   []string
-	DisabledTools  []string
+	TimeoutSeconds     int
+	EnabledTools       []string
+	DisabledTools      []string
+	ForceAllToolsEager bool
 }
 
 // ServerName returns Name.
 func (s *MCPStreamableHTTPServer) ServerName() string { return s.Name }
 func (s *MCPStreamableHTTPServer) mcpServer() *mcpCommon {
-	return &mcpCommon{s.Name, s.TimeoutSeconds, s.EnabledTools, s.DisabledTools}
+	return &mcpCommon{s.Name, s.TimeoutSeconds, s.EnabledTools, s.DisabledTools, s.ForceAllToolsEager}
 }
 
 func validMCPName(name string) bool { return name != "" && onlyChars(name, "_-") }

@@ -884,8 +884,9 @@ func (c *Connection) answerQuestions(ctx context.Context, turn *HookContext, que
 // waits for it to finish; then it stops
 // in-flight tool calls and hook handlers, closes the WebSocket and stdin,
 // and waits for the harness to exit (terminating it after a grace period).
-// It returns an error when the session end request could not be completed.
-// Close is idempotent.
+// It returns an error when the session end request could not be completed,
+// or a *ConnectionError wrapping a *ProcessError when the harness exited
+// with a non-zero status. Close is idempotent.
 func (c *Connection) Close() error {
 	c.closeOnce.Do(func() { c.closeErr = c.close() })
 	return c.closeErr

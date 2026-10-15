@@ -272,11 +272,29 @@ type Step struct {
 	IsCompleteResponse bool
 	// StructuredOutput is the parsed JSON output of a finish step.
 	StructuredOutput any
+	// WorkflowProgress is set on run_workflow tool-call steps.
+	WorkflowProgress *WorkflowProgress
+}
+
+// WorkflowProgress describes a run_workflow step: the workflow script and
+// the output it has produced so far.
+type WorkflowProgress struct {
+	// ScriptPath is the workflow script's path, when the model passed one.
+	ScriptPath string
+	// Script is the inline script source, when the model passed one.
+	Script      string
+	Description string
+	// Output is the formatted workflow log and result text.
+	Output string
 }
 
 func (s *Step) clone() *Step {
 	o := *s
 	o.ToolCalls = slices.Clone(s.ToolCalls)
+	if s.WorkflowProgress != nil {
+		w := *s.WorkflowProgress
+		o.WorkflowProgress = &w
+	}
 	return &o
 }
 

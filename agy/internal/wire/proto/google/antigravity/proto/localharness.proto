@@ -1,4 +1,4 @@
-// Printed from the descriptors in the google-antigravity v0.1.20 wheel
+// Printed from the descriptors in the google-antigravity v0.1.22 wheel
 // (google/antigravity/proto/localharness_pb2.py) by testdata/protoextract.
 
 edition = "2024";
@@ -6,6 +6,7 @@ edition = "2024";
 package antigravity.localharness;
 
 import "google/antigravity/proto/content.proto";
+import "google/antigravity/proto/skill.proto";
 
 message InputConfig {
   string storage_directory = 1;
@@ -86,6 +87,8 @@ message HarnessConfig {
 
   RulesConfig rules_config = 28;
 
+  int32 mcp_max_output_bytes = 29;
+
   enum SessionContinuationMode {
     SESSION_CONTINUATION_MODE_UNSPECIFIED = 0;
 
@@ -135,6 +138,8 @@ message GeminiModelOptions {
   string thinking_level = 1;
 
   string service_tier = 2;
+
+  int32 max_output_tokens = 3;
 }
 
 message GeminiAPIEndpoint {
@@ -193,6 +198,18 @@ message SystemInstructions {
 
     AppendedSystemInstructions appended = 2;
   }
+
+  repeated TemplateOverride overrides = 3;
+}
+
+message TemplateOverride {
+  string title = 1;
+
+  string text = 2;
+
+  bool remove = 3;
+
+  repeated SystemInstructionTemplate si_template = 4;
 }
 
 message CustomSystemInstructions {
@@ -281,6 +298,8 @@ message HarnessSideTools {
   ManageTaskToolConfig manage_task = 16;
 
   ScheduleToolConfig schedule = 17;
+
+  RunWorkflowToolConfig run_workflow = 20;
 }
 
 message FindToolConfig {
@@ -354,9 +373,11 @@ message ToolSearchConfig {
 }
 
 message SkillSource {
-  reserved 1;
+  oneof source {
+    genai.skills.Skill skill = 1;
 
-  string directory_path = 2;
+    string directory_path = 2;
+  }
 }
 
 message SkillsConfig {
@@ -371,6 +392,12 @@ message ManageTaskToolConfig {
 
 message ScheduleToolConfig {
   bool enabled = 1;
+}
+
+message RunWorkflowToolConfig {
+  bool enabled = 1;
+
+  ToolExecutionMode execution_mode = 2;
 }
 
 message PermissionsConfig {
@@ -483,6 +510,8 @@ message StepUpdate {
   ActionCustomTool custom_tool = 36;
 
   ActionSkillLookup skill_lookup = 37;
+
+  ActionRunWorkflow run_workflow = 38;
 
   string request_text = 50;
 
@@ -756,6 +785,8 @@ message TrajectoryStateUpdate {
     STATE_CANCELLED = 3;
 
     STATE_WAITING_FOR_TASKS = 4;
+
+    STATE_WAITING_FOR_SUBAGENTS = 5;
   }
 
   enum StopReason {
@@ -898,6 +929,8 @@ message McpServerConfig {
 
   int32 timeout_seconds = 7;
 
+  bool force_all_tools_eager = 10;
+
   enum AuthProviderType {
     AUTH_PROVIDER_TYPE_UNSPECIFIED = 0;
 
@@ -951,6 +984,16 @@ message ActionSkillLookup {
 
     OPERATION_GET_SKILL_RESOURCES = 3;
   }
+}
+
+message ActionRunWorkflow {
+  string script_path = 1;
+
+  string description = 2;
+
+  string output = 3;
+
+  string script = 4;
 }
 
 message CallHookRequest {
@@ -1142,6 +1185,8 @@ message SubagentSkillsConfig {
 
   message OverrideConfig {
     repeated string skills_paths = 1;
+
+    repeated SkillSource skill_sources = 2;
   }
 }
 
@@ -1174,6 +1219,8 @@ message ToolOutputTruncation {
 
   message TruncateStrategy {
     int32 max_tokens = 1;
+
+    bool save_full_output = 2;
   }
 
   message ErrorStrategy {
@@ -1267,6 +1314,10 @@ message CompactionConfig {
   uint32 checkpoint_interval_tokens = 2;
 
   uint32 max_context_tokens = 3;
+
+  string summary_prompt_override = 4;
+
+  bool use_model_reported_token_count = 5;
 }
 
 enum LifecycleHook {

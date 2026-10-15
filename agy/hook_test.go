@@ -134,7 +134,7 @@ func TestHookRouterPostToolStructuredResult(t *testing.T) {
 	route(t, r, wire.LifecycleHook_LIFECYCLE_HOOK_POST_TOOL, func(req *wire.CallHookRequest) {
 		req.SetPostToolArgs(wire.PostToolArgs_builder{ToolName: new("invoke_subagent"), Result: new("")}.Build())
 	})
-	if got.Name != "start_subagent" || got.Result != "" {
+	if got.Name != "invoke_subagent" || got.Result != "" {
 		t.Fatalf("subagent result %+v", got)
 	}
 	route(t, r, wire.LifecycleHook_LIFECYCLE_HOOK_POST_TOOL, func(req *wire.CallHookRequest) {
@@ -198,9 +198,13 @@ func TestHookRouterPreTool(t *testing.T) {
 		t.Fatalf("call %+v", got)
 	}
 
-	pre(wire.PreToolArgs_builder{ToolName: new("invoke_subagent"), ArgumentsJson: new("{}")}.Build())
-	if got.Name != "start_subagent" {
+	pre(wire.PreToolArgs_builder{ToolName: new("start_subagent"), ArgumentsJson: new("{}")}.Build())
+	if got.Name != "invoke_subagent" {
 		t.Fatalf("name translation %q", got.Name)
+	}
+	pre(wire.PreToolArgs_builder{ToolName: new("start_subagent"), ServerName: new("srv"), ArgumentsJson: new("{}")}.Build())
+	if got.Name != "start_subagent" {
+		t.Fatalf("MCP tool renamed to %q", got.Name)
 	}
 	pre(wire.PreToolArgs_builder{ToolName: new("view_file"), ArgumentsJson: new(`{"file_path": "file:///home/user/foo.py"}`)}.Build())
 	if got.Args["file_path"] != "/home/user/foo.py" || got.CanonicalPath != "/home/user/foo.py" {

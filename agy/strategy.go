@@ -166,6 +166,9 @@ func buildHarnessConfig(cc *compiledOptions, resolvedModels []ModelTarget) (*wir
 		if sub.Model != "" {
 			ca.SetModel(wire.ModelConfig_builder{Name: new(sub.Model)}.Build())
 		}
+		if sc := subagentSkillsProto(sub.Skills); sc != nil {
+			ca.SetSkillsConfig(sc)
+		}
 		subagents = append(subagents, ca)
 	}
 
@@ -195,10 +198,78 @@ func buildHarnessConfig(cc *compiledOptions, resolvedModels []ModelTarget) (*wir
 		BudgetConfig:            budgetProto(opts.Budget),
 		PolicyConfig:            cc.policy,
 	}.Build()
+	if len(opts.InlineSkills) > 0 {
+		sc, err := inlineSkillsProto(opts.InlineSkills)
+		if err != nil {
+			return nil, err
+		}
+		hc.SetSkillsConfig(sc)
+	}
 	if t := caps.ToolOutputTruncation; t != nil {
 		hc.SetToolOutputTruncation(wire.ToolOutputTruncation_builder{Truncate: wire.ToolOutputTruncation_TruncateStrategy_builder{MaxTokens: new(int32(t.MaxTokens))}.Build()}.Build())
 	}
+	if caps.MCPMaxOutputBytes > 0 {
+		hc.SetMcpMaxOutputBytes(int32(caps.MCPMaxOutputBytes))
+	}
 	return hc, nil
+}
+
+// inlineSkillsProto declares in-memory skills. The harness reads a skill's
+// dependencies from its metadata, as JSON lists.
+func inlineSkillsProto(skills []InlineSkill) (*wire.SkillsConfig, error) {
+	sc := wire.SkillsConfig_builder{Enabled: new(true)}.Build()
+	for _, s := range skills {
+		md := maps.Clone(s.Metadata)
+		for key, deps := range map[string][]string{"dependent_tools": s.DependentTools, "dependent_skills": s.DependentSkills} {
+			if _, ok := md[key]; ok || len(deps) == 0 {
+				continue
+			}
+			b, err := jsonx.Marshal(deps)
+			if err != nil {
+				return nil, err
+			}
+			if md == nil {
+				md = map[string]string{}
+			}
+			md[key] = string(b)
+		}
+		skill := wire.Skill_builder{
+			Name:         new(s.Name),
+			Description:  new(s.Description),
+			Content:      new(s.Content),
+			AllowedTools: slices.Clone(s.AllowedTools),
+			Metadata:     md,
+		}.Build()
+		sc.SetSkills(append(sc.GetSkills(), wire.SkillSource_builder{Skill: skill}.Build()))
+	}
+	return sc, nil
+}
+
+// subagentSkillsProto converts a subagent's skill configuration; nil keeps
+// the harness default of inheriting every parent skill.
+func subagentSkillsProto(s SubagentSkills) *wire.SubagentSkillsConfig {
+	switch v := s.(type) {
+	case *InheritSkills:
+		if v != nil {
+			return subagentSkillsProto(*v)
+		}
+	case *OverrideSkills:
+		if v != nil {
+			return subagentSkillsProto(*v)
+		}
+	case NoSkills, *NoSkills:
+		return wire.SubagentSkillsConfig_builder{NoneConfig: &wire.SubagentSkillsConfig_NoneConfig{}}.Build()
+	case InheritSkills:
+		return wire.SubagentSkillsConfig_builder{InheritConfig: wire.SubagentSkillsConfig_InheritConfig_builder{
+			SkillNames:       slices.Clone(v.SkillNames),
+			ExtraSkillsPaths: slices.Clone(v.ExtraSkillsPaths),
+		}.Build()}.Build()
+	case OverrideSkills:
+		return wire.SubagentSkillsConfig_builder{OverrideConfig: wire.SubagentSkillsConfig_OverrideConfig_builder{
+			SkillsPaths: slices.Clone(v.SkillsPaths),
+		}.Build()}.Build()
+	}
+	return nil
 }
 
 // toolProto declares a custom tool to the harness.
@@ -319,9 +390,10 @@ func runCommandProto(active map[BuiltinTool]bool, rc *RunCommandConfig) *wire.Ru
 }
 
 // sideToolsProto builds the toggles of the builtin tools.
-func sideToolsProto(active map[BuiltinTool]bool, subagents *wire.SubagentsConfig, rc *RunCommandConfig) *wire.HarnessSideTools {
+func sideToolsProto(active map[BuiltinTool]bool, subagents *wire.SubagentsConfig, runWorkflow bool, rc *RunCommandConfig) *wire.HarnessSideTools {
 	return wire.HarnessSideTools_builder{
 		Subagents:      subagents,
+		RunWorkflow:    wire.RunWorkflowToolConfig_builder{Enabled: new(runWorkflow)}.Build(),
 		Find:           wire.FindToolConfig_builder{Enabled: enabled(active, BuiltinFindFile)}.Build(),
 		UserQuestions:  wire.UserQuestionsConfig_builder{Enabled: enabled(active, BuiltinAskQuestion)}.Build(),
 		RunCommand:     runCommandProto(active, rc),
@@ -341,22 +413,22 @@ func sideToolsProto(active map[BuiltinTool]bool, subagents *wire.SubagentsConfig
 func rootToolsProto(caps *CapabilitiesConfig) *wire.HarnessSideTools {
 	active := resolveActiveTools(caps.EnabledTools, caps.DisabledTools)
 	sub := wire.SubagentsConfig_builder{
-		Enabled:          new(!caps.DisableSubagents && active[BuiltinStartSubagent]),
+		Enabled:          new(!caps.DisableSubagents && active[BuiltinInvokeSubagent]),
 		AllowedSubagents: slices.Clone(caps.AllowedSubagents),
 	}.Build()
 	if caps.MaxSubagentDepth > 0 {
 		sub.SetMaxNestingDepth(int32(caps.MaxSubagentDepth))
 	}
-	return sideToolsProto(active, sub, caps.RunCommand)
+	return sideToolsProto(active, sub, !caps.DisableSubagents && active[BuiltinRunWorkflow], caps.RunCommand)
 }
 
 func subagentToolsProto(caps *SubagentCapabilities) *wire.HarnessSideTools {
 	active := resolveActiveTools(caps.EnabledTools, caps.DisabledTools)
 	sub := wire.SubagentsConfig_builder{
-		Enabled:          new(active[BuiltinStartSubagent]),
+		Enabled:          new(active[BuiltinInvokeSubagent]),
 		AllowedSubagents: slices.Clone(caps.AllowedSubagents),
 	}.Build()
-	return sideToolsProto(active, sub, caps.RunCommand)
+	return sideToolsProto(active, sub, active[BuiltinRunWorkflow], caps.RunCommand)
 }
 
 // compactionProto returns the compaction config and the legacy threshold
@@ -386,6 +458,9 @@ func geminiOptionsProto(o *GeminiModelOptions) *wire.GeminiModelOptions {
 	}
 	if o.ServiceTier != "" {
 		p.SetServiceTier(string(o.ServiceTier))
+	}
+	if o.MaxOutputTokens > 0 {
+		p.SetMaxOutputTokens(int32(o.MaxOutputTokens))
 	}
 	return p
 }
@@ -440,6 +515,7 @@ func mcpServerProto(s MCPServer) *wire.McpServerConfig {
 		DisabledTools:  slices.Clone(c.disabledTools),
 		TimeoutSeconds: new(int32(c.timeoutSeconds)),
 	}.Build()
+	out.SetForceAllToolsEager(c.eager)
 	switch s := s.(type) {
 	case *MCPStdioServer:
 		out.SetStdio(wire.McpStdioTransport_builder{Command: new(s.Command), Args: slices.Clone(s.Args), Env: maps.Clone(s.Env)}.Build())

@@ -116,10 +116,25 @@ func TestStepBuiltinToolCalls(t *testing.T) {
 		t.Fatalf("end_line = %#v", got)
 	}
 
-	// invoke_subagent is the start_subagent tool.
 	s = stepFromUpdate(wire.StepUpdate_builder{Text: new("Invoking subagent"), InvokeSubagent: &wire.ActionInvokeSubagent{}}.Build())
-	if s.Type != StepTypeToolCall || s.ToolCalls[0].Name != "start_subagent" || len(s.ToolCalls[0].Args) != 0 {
+	if s.Type != StepTypeToolCall || s.ToolCalls[0].Name != string(BuiltinInvokeSubagent) || len(s.ToolCalls[0].Args) != 0 || s.WorkflowProgress != nil {
 		t.Fatalf("subagent step %+v", s)
+	}
+
+	s = stepFromUpdate(wire.StepUpdate_builder{TrajectoryId: new("t"), StepIndex: new(uint32(3)), RunWorkflow: wire.ActionRunWorkflow_builder{
+		ScriptPath: new("file:///tmp/wf.py"), Description: new("build"), Output: new("phase 1 done"),
+	}.Build()}.Build())
+	if s.Type != StepTypeToolCall || s.ToolCalls[0].Name != string(BuiltinRunWorkflow) || s.ToolCalls[0].CanonicalPath != "/tmp/wf.py" ||
+		!reflect.DeepEqual(s.ToolCalls[0].Args, map[string]any{"script_path": "/tmp/wf.py", "description": "build"}) {
+		t.Fatalf("workflow step %+v %v", s, s.ToolCalls[0].Args)
+	}
+	if want := (WorkflowProgress{ScriptPath: "/tmp/wf.py", Description: "build", Output: "phase 1 done"}); s.WorkflowProgress == nil || *s.WorkflowProgress != want {
+		t.Fatalf("workflow progress %+v", s.WorkflowProgress)
+	}
+
+	s = stepFromUpdate(wire.StepUpdate_builder{SkillLookup: wire.ActionSkillLookup_builder{RequestedSkillNames: []string{"pdf"}}.Build()}.Build())
+	if s.Type != StepTypeToolCall || s.ToolCalls[0].Name != "skill_lookup" || !reflect.DeepEqual(s.ToolCalls[0].Args["requested_skill_names"], []any{"pdf"}) {
+		t.Fatalf("skill lookup step %+v", s)
 	}
 }
 

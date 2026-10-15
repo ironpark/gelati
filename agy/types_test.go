@@ -116,7 +116,7 @@ func TestBuiltinToolPresets(t *testing.T) {
 	if got := ReadOnlyTools(); !reflect.DeepEqual(got, []BuiltinTool{BuiltinViewFile, BuiltinReadURLContent, BuiltinSchedule, BuiltinFinish}) {
 		t.Fatalf("read-only %v", got)
 	}
-	if len(AllTools()) != 14 || len(NoTools()) != 0 || NoTools() == nil {
+	if len(AllTools()) != 15 || len(NoTools()) != 0 || NoTools() == nil {
 		t.Fatal("all/none")
 	}
 	if got := MinimalTools(); !reflect.DeepEqual(got, []BuiltinTool{BuiltinRunCommand, BuiltinViewFile, BuiltinCreateFile, BuiltinEditFile}) {
@@ -128,7 +128,7 @@ func TestBuiltinToolPresets(t *testing.T) {
 			t.Errorf("default includes %s", excluded)
 		}
 	}
-	if len(def) != 10 {
+	if len(def) != 11 {
 		t.Errorf("default %v", def)
 	}
 	// Every tool is classified as read-only, deprecated, or not.
@@ -175,10 +175,15 @@ func TestCapabilitiesValidation(t *testing.T) {
 		"negative depth":               {CapabilitiesConfig{MaxSubagentDepth: -1}, false},
 		"depth with subagents off":     {CapabilitiesConfig{DisableSubagents: true, MaxSubagentDepth: 1}, false},
 		"allowed with subagents off":   {CapabilitiesConfig{DisableSubagents: true, AllowedSubagents: []string{}}, false},
-		"depth with start disabled":    {CapabilitiesConfig{DisabledTools: []BuiltinTool{BuiltinStartSubagent}, MaxSubagentDepth: 2}, false},
-		"allowed with start disabled":  {CapabilitiesConfig{DisabledTools: []BuiltinTool{BuiltinStartSubagent}, AllowedSubagents: []string{"x"}}, false},
+		"depth with start disabled":    {CapabilitiesConfig{DisabledTools: []BuiltinTool{BuiltinInvokeSubagent, BuiltinRunWorkflow}, MaxSubagentDepth: 2}, false},
+		"allowed with start disabled":  {CapabilitiesConfig{DisabledTools: []BuiltinTool{BuiltinInvokeSubagent, BuiltinRunWorkflow}, AllowedSubagents: []string{"x"}}, false},
+		"depth with workflow enabled":  {CapabilitiesConfig{DisabledTools: []BuiltinTool{BuiltinInvokeSubagent}, MaxSubagentDepth: 2}, true},
+		"deprecated name disabled":     {CapabilitiesConfig{DisabledTools: []BuiltinTool{"start_subagent", BuiltinRunWorkflow}, MaxSubagentDepth: 2}, false},
+		"mcp max output":               {CapabilitiesConfig{MCPMaxOutputBytes: 8192}, true},
+		"mcp max output negative":      {CapabilitiesConfig{MCPMaxOutputBytes: -1}, false},
+		"mcp max output overflow":      {CapabilitiesConfig{MCPMaxOutputBytes: math.MaxInt32 + 1}, false},
 		"depth without start enabled":  {CapabilitiesConfig{EnabledTools: []BuiltinTool{BuiltinViewFile}, MaxSubagentDepth: 2}, false},
-		"allowed with start enabled":   {CapabilitiesConfig{EnabledTools: []BuiltinTool{BuiltinStartSubagent}, AllowedSubagents: []string{"x"}}, true},
+		"allowed with start enabled":   {CapabilitiesConfig{EnabledTools: []BuiltinTool{BuiltinInvokeSubagent}, AllowedSubagents: []string{"x"}}, true},
 		"negative timeout":             {CapabilitiesConfig{RunCommand: &RunCommandConfig{Timeout: -1}}, false},
 		"truncation zero":              {CapabilitiesConfig{ToolOutputTruncation: &ToolOutputTruncationConfig{}}, true},
 		"truncation negative":          {CapabilitiesConfig{ToolOutputTruncation: &ToolOutputTruncationConfig{MaxTokens: -1}}, false},
@@ -202,9 +207,10 @@ func TestCapabilitiesValidation(t *testing.T) {
 	}{
 		"defaults":                    {SubagentCapabilities{}, true},
 		"exclusive":                   {SubagentCapabilities{EnabledTools: []BuiltinTool{}, DisabledTools: []BuiltinTool{}}, false},
-		"allowed with start enabled":  {SubagentCapabilities{EnabledTools: []BuiltinTool{BuiltinStartSubagent}, AllowedSubagents: []string{"x"}}, true},
+		"allowed with start enabled":  {SubagentCapabilities{EnabledTools: []BuiltinTool{BuiltinInvokeSubagent}, AllowedSubagents: []string{"x"}}, true},
 		"allowed without start":       {SubagentCapabilities{EnabledTools: []BuiltinTool{BuiltinViewFile}, AllowedSubagents: []string{"x"}}, false},
-		"allowed with start disabled": {SubagentCapabilities{DisabledTools: []BuiltinTool{BuiltinStartSubagent}, AllowedSubagents: []string{"x"}}, false},
+		"allowed with start disabled": {SubagentCapabilities{DisabledTools: []BuiltinTool{BuiltinInvokeSubagent, BuiltinRunWorkflow}, AllowedSubagents: []string{"x"}}, false},
+		"allowed with workflow":       {SubagentCapabilities{EnabledTools: []BuiltinTool{BuiltinRunWorkflow}, AllowedSubagents: []string{"x"}}, true},
 	} {
 		if err := tc.caps.validate(logger); (err == nil) != tc.ok {
 			t.Errorf("subagent %s: validate = %v", name, err)

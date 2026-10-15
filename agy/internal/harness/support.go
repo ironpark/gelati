@@ -93,6 +93,24 @@ type ConnectionError struct {
 	Err  error
 }
 
+// ExitError reports that the harness process exited with a non-zero
+// status, found when it is closed (upstream raises it from disconnect).
+type ExitError struct {
+	Exit *ProcessExit
+	// Stderr is the tail of the harness's stderr output.
+	Stderr string
+}
+
+func (e *ExitError) Error() string {
+	stderr := e.Stderr
+	if stderr == "" {
+		stderr = "(no stderr output)"
+	}
+	return fmt.Sprintf("agy harness: process exited with code %d.\nHarness stderr:\n%s", *e.Exit.Code, stderr)
+}
+
+func (e *ExitError) Unwrap() error { return e.Exit.Err }
+
 // ProcessExit describes how the harness process exited.
 type ProcessExit struct {
 	// Code is the exit status, or nil when the process was killed by a

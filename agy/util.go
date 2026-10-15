@@ -70,7 +70,7 @@ func makeStepID(trajectoryID string, stepIndex int) string {
 // wirePathArgumentKeys are the tool argument keys that carry wire-format
 // URIs (file:///..., cns://...) and are normalized to filesystem paths, in
 // the order canonical paths are taken from.
-var wirePathArgumentKeys = []string{"path", "file_path", "directory_path", "TargetFile", "output_path"}
+var wirePathArgumentKeys = []string{"path", "file_path", "directory_path", "TargetFile", "output_path", "script_path", "ScriptPath"}
 
 // normalizeWirePath translates a file:// or cns:// URI to an absolute path;
 // other strings are returned unchanged.

@@ -15,7 +15,8 @@ import (
 // Conversions between wire messages and the SDK types.
 
 // builtinToolFields lists the StepUpdate action fields of the builtin tools
-// with the SDK tool name, in upstream's lookup order.
+// and harness-internal actions (skill_lookup) with the SDK tool name, in
+// upstream's lookup order.
 var builtinToolFields = []struct {
 	tool BuiltinTool
 	get  func(*wire.StepUpdate) (proto.Message, bool)
@@ -27,22 +28,13 @@ var builtinToolFields = []struct {
 	{BuiltinRunCommand, func(s *wire.StepUpdate) (proto.Message, bool) { return s.GetRunCommand(), s.HasRunCommand() }},
 	{BuiltinSearchDir, func(s *wire.StepUpdate) (proto.Message, bool) { return s.GetSearchDirectory(), s.HasSearchDirectory() }},
 	{BuiltinViewFile, func(s *wire.StepUpdate) (proto.Message, bool) { return s.GetViewFile(), s.HasViewFile() }},
-	{BuiltinStartSubagent, func(s *wire.StepUpdate) (proto.Message, bool) { return s.GetInvokeSubagent(), s.HasInvokeSubagent() }},
+	{BuiltinInvokeSubagent, func(s *wire.StepUpdate) (proto.Message, bool) { return s.GetInvokeSubagent(), s.HasInvokeSubagent() }},
+	{BuiltinRunWorkflow, func(s *wire.StepUpdate) (proto.Message, bool) { return s.GetRunWorkflow(), s.HasRunWorkflow() }},
 	{BuiltinGenerateImage, func(s *wire.StepUpdate) (proto.Message, bool) { return s.GetGenerateImage(), s.HasGenerateImage() }},
 	{BuiltinSearchWeb, func(s *wire.StepUpdate) (proto.Message, bool) { return s.GetSearchWeb(), s.HasSearchWeb() }},
 	{BuiltinReadURLContent, func(s *wire.StepUpdate) (proto.Message, bool) { return s.GetReadUrlContent(), s.HasReadUrlContent() }},
 	{BuiltinFinish, func(s *wire.StepUpdate) (proto.Message, bool) { return s.GetFinish(), s.HasFinish() }},
-}
-
-// protoToolNames maps the harness's builtin tool names (the StepUpdate
-// field names) to the SDK names where they differ.
-var protoToolNames = map[string]string{"invoke_subagent": string(BuiltinStartSubagent)}
-
-func sdkToolName(protoName string) string {
-	if n, ok := protoToolNames[protoName]; ok {
-		return n
-	}
-	return protoName
+	{"skill_lookup", func(s *wire.StepUpdate) (proto.Message, bool) { return s.GetSkillLookup(), s.HasSkillLookup() }},
 }
 
 // toolCallFromWire builds the ToolCall of a tool the harness reports (a
@@ -55,7 +47,7 @@ func toolCallFromWire(name string, args map[string]any, id, stepID, serverName s
 		args = map[string]any{}
 	}
 	return &ToolCall{
-		Name:          sdkToolName(name),
+		Name:          normalizeToolName(name, serverName),
 		Args:          args,
 		ID:            id,
 		StepID:        stepID,
@@ -120,17 +112,23 @@ func stepFromUpdate(su *wire.StepUpdate) *Step {
 
 	var toolName, toolID, serverName string
 	var args map[string]any
-	builtinPresent := false
 	for _, f := range builtinToolFields {
-		msg, ok := f.get(su)
-		if !ok {
-			continue
-		}
-		builtinPresent = true
-		if toolName == "" {
+		if msg, ok := f.get(su); ok {
 			toolName = string(f.tool)
 			args, _ = wire.ProtoMap(msg)
+			break
 		}
+	}
+	var workflow *WorkflowProgress
+	if rw := su.GetRunWorkflow(); toolName == string(BuiltinRunWorkflow) && rw != nil {
+		workflow = &WorkflowProgress{
+			ScriptPath:  normalizeWirePath(rw.GetScriptPath()),
+			Script:      rw.GetScript(),
+			Description: rw.GetDescription(),
+			Output:      rw.GetOutput(),
+		}
+		// The output is reported in WorkflowProgress, not as an argument.
+		delete(args, "output")
 	}
 	if toolName == "" && su.GetMcpTool() != nil {
 		serverName = su.GetMcpTool().GetServerName()
@@ -179,7 +177,7 @@ func stepFromUpdate(su *wire.StepUpdate) *Step {
 		step.Type = StepTypeCompaction
 	case su.GetFinish() != nil:
 		step.Type = StepTypeFinish
-	case toolName != "" || builtinPresent:
+	case toolName != "":
 		step.Type = StepTypeToolCall
 	case su.GetText() != "":
 		step.Type = StepTypeTextResponse
@@ -198,6 +196,8 @@ func stepFromUpdate(su *wire.StepUpdate) *Step {
 			}
 		}
 	}
+
+	step.WorkflowProgress = workflow
 
 	step.Error = su.GetError().GetErrorMessage()
 	if step.Error == "" {

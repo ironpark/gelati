@@ -132,3 +132,45 @@ func TestRealHarnessTurnAfterFatalError(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 }
+
+// TestRealHarnessAcceptsV022Config checks that the harness initializes with
+// the configuration added in upstream v0.1.22: inline skills, subagent
+// skill modes, run_workflow, the MCP output limit and max output tokens.
+func TestRealHarnessAcceptsV022Config(t *testing.T) {
+	bin := os.Getenv("GELATI_AGY_HARNESS")
+	if bin == "" {
+		t.Skip("set GELATI_AGY_HARNESS=/path/to/localharness to run")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	stderr := &syncBuffer{}
+	agent, err := agy.New(ctx, agy.Options{
+		CLIPath:    bin,
+		APIKey:     "invalid-key",
+		Workspaces: []string{t.TempDir()},
+		SaveDir:    t.TempDir(),
+		AppDataDir: t.TempDir(),
+		Models: []agy.ModelTarget{{Name: agy.DefaultModel, Endpoint: &agy.GeminiAPIEndpoint{
+			APIKey: "invalid-key", Options: &agy.GeminiModelOptions{MaxOutputTokens: 1024},
+		}}},
+		Capabilities: &agy.CapabilitiesConfig{
+			EnabledTools:      append(agy.ReadOnlyTools(), agy.BuiltinInvokeSubagent, agy.BuiltinRunWorkflow),
+			MCPMaxOutputBytes: 8192,
+		},
+		Policies: []agy.Policy{agy.AllowAllPolicy()},
+		InlineSkills: []agy.InlineSkill{{
+			Name: "greeter", Description: "Use to greet.", Content: "Say hello.", DependentTools: []string{"view_file"},
+		}},
+		Subagents: []agy.SubagentConfig{
+			{Name: "inheritor", Description: "Inherits.", Skills: agy.InheritSkills{SkillNames: []string{"greeter"}}},
+			{Name: "skill_free", Description: "No skills.", Skills: agy.NoSkills{}},
+		},
+		Stderr: stderr,
+	})
+	if err != nil {
+		t.Fatalf("New: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if err := agent.Close(); err != nil {
+		t.Fatalf("Close: %v\nstderr:\n%s", err, stderr.String())
+	}
+}

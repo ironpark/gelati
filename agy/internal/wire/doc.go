@@ -1,8 +1,8 @@
 // Package wire holds the messages exchanged with the Antigravity localharness
 // binary: the generated Go code for the proto definitions shipped with the
-// upstream google-antigravity Python SDK v0.1.20 (google/antigravity/proto),
-// that is localharness.proto, the genai content.proto it reaches, and their
-// JSON annotation options.
+// upstream google-antigravity Python SDK v0.1.22 (google/antigravity/proto),
+// that is localharness.proto, the genai content.proto and genai skill.proto
+// it reaches, and their JSON annotation options.
 //
 // The .proto files under proto/ were printed from the descriptors in the
 // upstream wheel (see testdata/protoextract). The Go code is generated from

@@ -73,6 +73,9 @@ type Options struct {
 	ResponseSchema any
 	// SkillsPaths are directories to load skills from.
 	SkillsPaths []string
+	// InlineSkills are skills defined in memory. The harness does not
+	// combine them with SkillsPaths: set one or the other.
+	InlineSkills []InlineSkill
 	// Subagents are static subagents the agent can delegate to.
 	Subagents []SubagentConfig
 	Retry     *RetryConfig
@@ -141,12 +144,17 @@ func (o Options) clone() Options {
 	o.MCPServers = slices.Clone(o.MCPServers)
 	o.Workspaces = slices.Clone(o.Workspaces)
 	o.SkillsPaths = slices.Clone(o.SkillsPaths)
+	o.InlineSkills = slices.Clone(o.InlineSkills)
+	for i := range o.InlineSkills {
+		o.InlineSkills[i] = o.InlineSkills[i].clone()
+	}
 	o.Subagents = slices.Clone(o.Subagents)
 	for i := range o.Subagents {
 		s := &o.Subagents[i]
 		s.Tools = slices.Clone(s.Tools)
 		s.ToolNames = slices.Clone(s.ToolNames)
 		s.Capabilities = s.Capabilities.clone()
+		s.Skills = cloneSubagentSkills(s.Skills)
 	}
 	if o.Retry != nil {
 		r := *o.Retry
@@ -337,6 +345,9 @@ func (o Options) Validate() error {
 	if err := o.capabilities().validate(logger); err != nil {
 		return err
 	}
+	if len(o.SkillsPaths) > 0 && len(o.InlineSkills) > 0 {
+		return validationErrorf("combining inline_skills and skills_paths is not supported by LocalHarness; provide either inline_skills or skills_paths, not both.")
+	}
 	if o.Compaction != nil && o.Compaction.TokenThreshold < 0 {
 		return validationErrorf("compaction token_threshold must be positive, got %d", o.Compaction.TokenThreshold)
 	}
@@ -360,6 +371,9 @@ func (o Options) Validate() error {
 			if err := s.Capabilities.validate(logger); err != nil {
 				return err
 			}
+		}
+		if err := validateSubagentSkills(s.Skills); err != nil {
+			return err
 		}
 	}
 	valid := slices.Sorted(maps.Keys(names))
@@ -399,6 +413,20 @@ func (o Options) Validate() error {
 		case nil, *GeminiAPIEndpoint, *VertexEndpoint, *OpenAIEndpoint:
 		default:
 			return validationErrorf("model %d: unrecognized endpoint type %T", i, m.Endpoint)
+		}
+		var gopts *GeminiModelOptions
+		switch e := m.Endpoint.(type) {
+		case *GeminiAPIEndpoint:
+			if e != nil {
+				gopts = e.Options
+			}
+		case *VertexEndpoint:
+			if e != nil {
+				gopts = e.Options
+			}
+		}
+		if err := gopts.validate(); err != nil {
+			return err
 		}
 	}
 	return nil

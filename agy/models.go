@@ -2,6 +2,7 @@ package agy
 
 import (
 	"maps"
+	"math"
 	"os"
 	"slices"
 )
@@ -59,6 +60,16 @@ const (
 type GeminiModelOptions struct {
 	ThinkingLevel ThinkingLevel
 	ServiceTier   ServiceTier
+	// MaxOutputTokens caps the tokens of each model response; zero leaves
+	// the model's default.
+	MaxOutputTokens int
+}
+
+func (o *GeminiModelOptions) validate() error {
+	if o != nil && (o.MaxOutputTokens < 0 || o.MaxOutputTokens > math.MaxInt32) {
+		return validationErrorf("max_output_tokens must be in [1, %d], got %d", math.MaxInt32, o.MaxOutputTokens)
+	}
+	return nil
 }
 
 func (o *GeminiModelOptions) clone() *GeminiModelOptions {
@@ -70,7 +81,7 @@ func (o *GeminiModelOptions) clone() *GeminiModelOptions {
 }
 
 func (o *GeminiModelOptions) isEmpty() bool {
-	return o == nil || (o.ThinkingLevel == "" && o.ServiceTier == "")
+	return o == nil || (o.ThinkingLevel == "" && o.ServiceTier == "" && o.MaxOutputTokens == 0)
 }
 
 // ModelEndpoint is the authentication and routing of a model target:

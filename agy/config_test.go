@@ -65,13 +65,17 @@ func TestConfigValidation(t *testing.T) {
 		"schema type":         {Options{ResponseSchema: struct{ A int }{}}, ""},
 		"allowed known":       {Options{Subagents: []SubagentConfig{sub}, Capabilities: &CapabilitiesConfig{AllowedSubagents: []string{"researcher"}}}, ""},
 		"allowed unknown":     {Options{Subagents: []SubagentConfig{sub}, Capabilities: &CapabilitiesConfig{AllowedSubagents: []string{"non_existent"}}}, "Unknown subagent name(s)"},
-		"sub allowed unknown": {Options{Subagents: []SubagentConfig{{Name: "researcher", Capabilities: &SubagentCapabilities{EnabledTools: []BuiltinTool{BuiltinStartSubagent}, AllowedSubagents: []string{"ghost_agent"}}}}}, "ghost_agent"},
+		"sub allowed unknown": {Options{Subagents: []SubagentConfig{{Name: "researcher", Capabilities: &SubagentCapabilities{EnabledTools: []BuiltinTool{BuiltinInvokeSubagent}, AllowedSubagents: []string{"ghost_agent"}}}}}, "ghost_agent"},
 		"bad mcp":             {Options{MCPServers: []MCPServer{&MCPStdioServer{Name: "bad name"}}}, "must match"},
 		"multiple auto":       {Options{Policies: []Policy{{Auto: true}, {Auto: true}}}, "Multiple AutoPolicy"},
 		"nil hook":            {Options{Hooks: []Hook{nil}}, "nil hook"},
 		"nil trigger":         {Options{Triggers: []Trigger{nil}}, "trigger 0 is nil"},
 		"negative compaction": {Options{Compaction: &CompactionConfig{TokenThreshold: -1}}, "must be positive"},
 		"bad budget":          {Options{Budget: &BudgetConfig{MaxModelCalls: -1}}, "max_model_calls"},
+		"inline and paths":    {Options{SkillsPaths: []string{"/s"}, InlineSkills: []InlineSkill{{Name: "x"}}}, "combining inline_skills and skills_paths"},
+		"inline skills":       {Options{InlineSkills: []InlineSkill{{Name: "x"}}}, ""},
+		"empty override":      {Options{Subagents: []SubagentConfig{{Name: "s", Skills: OverrideSkills{}}}}, "OverrideSkills requires"},
+		"bad max output":      {Options{Models: []ModelTarget{{Name: "m", Endpoint: &GeminiAPIEndpoint{Options: &GeminiModelOptions{MaxOutputTokens: -1}}}}}, "max_output_tokens"},
 	} {
 		err := tc.cfg.Validate()
 		switch {
@@ -286,6 +290,7 @@ func TestHarnessConfigCapabilities(t *testing.T) {
 		ListDir:        wire.ListDirToolConfig_builder{Enabled: new(false)}.Build(),
 		SearchWeb:      wire.SearchWebToolConfig_builder{Enabled: new(false)}.Build(),
 		ReadUrlContent: wire.ReadUrlContentToolConfig_builder{Enabled: new(false)}.Build(),
+		RunWorkflow:    wire.RunWorkflowToolConfig_builder{Enabled: new(false)}.Build(),
 	}.Build()
 	gb, _ := wire.Marshal(hc.GetHarnessSideTools())
 	wb, _ := wire.Marshal(want)
@@ -312,9 +317,16 @@ func TestHarnessConfigCapabilities(t *testing.T) {
 	if !sc.GetEnabled() || sc.GetMaxNestingDepth() != 3 || !reflect.DeepEqual(sc.GetAllowedSubagents(), []string{"researcher", "reviewer"}) {
 		t.Fatalf("subagents %+v", sc)
 	}
-	for _, caps := range []*CapabilitiesConfig{{DisabledTools: []BuiltinTool{BuiltinStartSubagent}}, {DisableSubagents: true}} {
-		if harnessConfig(t, Options{Capabilities: caps}).GetHarnessSideTools().GetSubagents().GetEnabled() {
+	if !harnessConfig(t, Options{}).GetHarnessSideTools().GetRunWorkflow().GetEnabled() {
+		t.Error("run_workflow disabled by default")
+	}
+	for _, caps := range []*CapabilitiesConfig{{DisabledTools: []BuiltinTool{BuiltinInvokeSubagent}}, {DisabledTools: []BuiltinTool{"start_subagent"}}, {DisableSubagents: true}} {
+		tools := harnessConfig(t, Options{Capabilities: caps}).GetHarnessSideTools()
+		if tools.GetSubagents().GetEnabled() {
 			t.Errorf("subagents enabled with %+v", caps)
+		}
+		if tools.GetRunWorkflow().GetEnabled() != !caps.DisableSubagents {
+			t.Errorf("run_workflow = %v with %+v", tools.GetRunWorkflow().GetEnabled(), caps)
 		}
 	}
 	hc = harnessConfig(t, Options{Capabilities: &CapabilitiesConfig{AgentBehavior: AgentBehaviorInteractive, EnabledTools: []BuiltinTool{BuiltinViewFile, BuiltinAskQuestion}}})
@@ -490,7 +502,7 @@ func TestHarnessConfigToolsAndSubagents(t *testing.T) {
 				ToolNames:          []string{"grep_search"},
 				Capabilities: &SubagentCapabilities{
 					AgentBehavior: AgentBehaviorMinimal,
-					EnabledTools:  []BuiltinTool{BuiltinStartSubagent},
+					EnabledTools:  []BuiltinTool{BuiltinInvokeSubagent},
 				},
 			},
 			{Name: "plain", Description: "Plain."},
@@ -525,6 +537,64 @@ func TestHarnessConfigToolsAndSubagents(t *testing.T) {
 	if !pt.GetViewFile().GetEnabled() || pt.GetRunCommand().GetEnabled() || pt.GetSubagents().GetEnabled() || plain.GetModel() != nil ||
 		plain.GetAgentBehavior() != wire.AgentBehavior_AGENT_BEHAVIOR_AUTONOMOUS {
 		t.Fatalf("plain subagent %+v", plain)
+	}
+}
+
+func TestHarnessConfigSkillsAndLimits(t *testing.T) {
+	hc := harnessConfig(t, Options{
+		InlineSkills: []InlineSkill{
+			{Name: "emoji", Description: "Adds emoji.", Content: "Use emoji.", AllowedTools: []string{"view_file"}, DependentTools: []string{"a", "b"}, Metadata: map[string]string{"visibility": "hidden"}},
+			{Name: "plain", Description: "d", Content: "c", DependentSkills: []string{"emoji"}, Metadata: map[string]string{"dependent_skills": "[]"}},
+		},
+		Capabilities: &CapabilitiesConfig{MCPMaxOutputBytes: 8192},
+		MCPServers:   []MCPServer{&MCPStdioServer{Name: "eager", Command: "x", ForceAllToolsEager: true}, &MCPStreamableHTTPServer{Name: "lazy", URL: "http://x"}},
+		Models:       []ModelTarget{{Name: "m", Endpoint: &GeminiAPIEndpoint{APIKey: "k", Options: &GeminiModelOptions{MaxOutputTokens: 1024}}}},
+		Policies:     []Policy{AllowAllPolicy()},
+		Subagents: []SubagentConfig{
+			{Name: "none", Skills: NoSkills{}},
+			{Name: "inherit", Skills: &InheritSkills{SkillNames: []string{"emoji"}, ExtraSkillsPaths: []string{"/extra"}}},
+			{Name: "override", Skills: OverrideSkills{SkillsPaths: []string{"/only"}}},
+			{Name: "default"},
+		},
+	})
+	sc := hc.GetSkillsConfig()
+	if !sc.GetEnabled() || len(sc.GetSkills()) != 2 {
+		t.Fatalf("skills config %+v", sc)
+	}
+	emoji, plain := sc.GetSkills()[0].GetSkill(), sc.GetSkills()[1].GetSkill()
+	if emoji.GetName() != "emoji" || emoji.GetDescription() != "Adds emoji." || emoji.GetContent() != "Use emoji." ||
+		!reflect.DeepEqual(emoji.GetAllowedTools(), []string{"view_file"}) ||
+		!reflect.DeepEqual(emoji.GetMetadata(), map[string]string{"visibility": "hidden", "dependent_tools": `["a","b"]`}) {
+		t.Fatalf("emoji skill %+v", emoji)
+	}
+	// Explicit metadata wins over the dependency lists.
+	if !reflect.DeepEqual(plain.GetMetadata(), map[string]string{"dependent_skills": "[]"}) {
+		t.Fatalf("plain skill %+v", plain)
+	}
+	if harnessConfig(t, Options{}).HasSkillsConfig() {
+		t.Fatal("skills config without inline skills")
+	}
+	if hc.GetMcpMaxOutputBytes() != 8192 || !hc.HasMcpMaxOutputBytes() || harnessConfig(t, Options{}).HasMcpMaxOutputBytes() {
+		t.Fatalf("mcp max output bytes %d", hc.GetMcpMaxOutputBytes())
+	}
+	if !hc.GetMcpServers()[0].GetForceAllToolsEager() || hc.GetMcpServers()[1].GetForceAllToolsEager() {
+		t.Fatalf("force eager %+v", hc.GetMcpServers())
+	}
+	if got := hc.GetModels()[0].GetGeminiApiEndpoint().GetOptions().GetMaxOutputTokens(); got != 1024 {
+		t.Fatalf("max output tokens %d", got)
+	}
+	subs := hc.GetCustomSubagents()
+	if !subs[0].GetSkillsConfig().HasNoneConfig() {
+		t.Fatalf("none skills %+v", subs[0].GetSkillsConfig())
+	}
+	if ic := subs[1].GetSkillsConfig().GetInheritConfig(); !reflect.DeepEqual(ic.GetSkillNames(), []string{"emoji"}) || !reflect.DeepEqual(ic.GetExtraSkillsPaths(), []string{"/extra"}) {
+		t.Fatalf("inherit skills %+v", subs[1].GetSkillsConfig())
+	}
+	if oc := subs[2].GetSkillsConfig().GetOverrideConfig(); !reflect.DeepEqual(oc.GetSkillsPaths(), []string{"/only"}) {
+		t.Fatalf("override skills %+v", subs[2].GetSkillsConfig())
+	}
+	if subs[3].HasSkillsConfig() {
+		t.Fatalf("default skills %+v", subs[3].GetSkillsConfig())
 	}
 }
 

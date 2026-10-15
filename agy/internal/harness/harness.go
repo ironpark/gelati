@@ -1,7 +1,7 @@
 // Package harness launches the Antigravity localharness binary and carries
 // wire events to and from it.
 //
-// The protocol, mirrored from the upstream Python SDK (v0.1.20,
+// The protocol, mirrored from the upstream Python SDK (v0.1.22,
 // connections/local/local_connection.py):
 //
 //  1. Spawn the binary with stdin, stdout and stderr piped. When extra
@@ -468,7 +468,8 @@ func (h *Harness) connErr(err error) error {
 
 // Close shuts the harness down: it closes the WebSocket, closes stdin to
 // tell the harness to exit, and waits up to Options.ShutdownTimeout before
-// terminating and then killing the process. It is safe to call more than
+// terminating and then killing the process. It returns an *ExitError when
+// the process exited with a non-zero status. It is safe to call more than
 // once.
 func (h *Harness) Close() error { return h.closeFn() }
 
@@ -487,7 +488,13 @@ func (h *Harness) shutdown() error {
 	_ = h.stdin.Close()
 	err := h.waitOrKill()
 	_ = h.stdout.Close()
-	return err
+	if err != nil {
+		return err
+	}
+	if exit := h.processExit(); exit.Code != nil && *exit.Code != 0 {
+		return &ExitError{Exit: exit, Stderr: h.StderrTail()}
+	}
+	return nil
 }
 
 func (h *Harness) waitOrKill() error {

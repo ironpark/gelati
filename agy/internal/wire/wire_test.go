@@ -258,7 +258,7 @@ func TestHandshakeBinary(t *testing.T) {
 		"inputconfig_python.hex": InputConfig_builder{
 			StorageDirectory: new(""),
 			ClientInfo: ClientInfo_builder{
-				Language: new("python"), Version: new("0.1.20"), LanguageVersion: new("3.12.1"),
+				Language: new("python"), Version: new("0.1.22"), LanguageVersion: new("3.12.1"),
 				Os: new("darwin"), OsVersion: new("24.6.0"),
 			}.Build(),
 			Env: map[string]string{"GEMINI_API_KEY": "k"},

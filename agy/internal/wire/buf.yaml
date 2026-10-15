@@ -1,4 +1,4 @@
-# The .proto files under proto/ are the google-antigravity v0.1.20 wire
+# The .proto files under proto/ are the google-antigravity v0.1.22 wire
 # definitions, printed from the descriptors shipped in its wheel; see
 # testdata/protoextract. Regenerate the Go code with `go generate`.
 version: v2
