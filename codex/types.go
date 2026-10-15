@@ -366,6 +366,10 @@ type Turn struct {
 	CompletedAt *int64 `json:"completedAt,omitzero"`
 	// DurationMs is the time between start and completion, when known.
 	DurationMs *int64 `json:"durationMs,omitzero"`
+	// RootTurnID is the first turn in the chain of work that led to this one.
+	// Pass it as TurnOptions.RootTurnID when starting work on its behalf. It
+	// is empty in older history and review/start responses.
+	RootTurnID string `json:"rootTurnId,omitempty"`
 }
 
 // IsTerminal reports whether the turn has reached a final status.
@@ -525,14 +529,17 @@ type UserMessageItem struct {
 type AgentMessageItem struct {
 	ID   string `json:"id"`
 	Text string `json:"text"`
-	// Phase is PhaseCommentary, PhaseFinalAnswer, or empty.
+	// Phase is PhaseCommentary, PhasePartialAnswer, PhaseFinalAnswer, or
+	// empty when the model does not report one.
 	Phase string `json:"phase,omitempty"`
 }
 
 // Agent message phases, in Responses API wire form.
 const (
-	PhaseCommentary  = "commentary"
-	PhaseFinalAnswer = "final_answer"
+	PhaseCommentary = "commentary"
+	// PhasePartialAnswer is stable answer text that more output may follow.
+	PhasePartialAnswer = "partial_answer"
+	PhaseFinalAnswer   = "final_answer"
 )
 
 // ReasoningItem holds streamed reasoning summaries and raw reasoning blocks.
@@ -989,8 +996,8 @@ type UnsubscribeResult struct {
 }
 
 // TurnOptions are the per-turn overrides accepted by turn/start. When set they
-// become the defaults for later turns on the same thread, except OutputSchema
-// which applies only to the current turn.
+// become the defaults for later turns on the same thread, except OutputSchema,
+// ParentTurnID, and RootTurnID which apply only to the current turn.
 type TurnOptions struct {
 	Model             string            `json:"model,omitempty"`
 	Cwd               string            `json:"cwd,omitempty"`
@@ -1015,6 +1022,13 @@ type TurnOptions struct {
 	OutputSchema map[string]any `json:"outputSchema,omitempty"`
 	// TurnTrigger labels what started the turn; it grants no authority.
 	TurnTrigger string `json:"turnTrigger,omitempty"`
+	// ParentTurnID is the turn this one works on behalf of, such as the
+	// delegating turn in another thread; leave it empty for user-started
+	// work. RootTurnID is the first turn of that chain, the parent's
+	// Turn.RootTurnID when known; empty makes this turn its own root. Both
+	// are ignored when the request adds input to an active turn.
+	ParentTurnID string `json:"parentTurnId,omitempty"`
+	RootTurnID   string `json:"rootTurnId,omitempty"`
 }
 
 // ExternalMessage is untrusted content delivered by another agent, tool, or

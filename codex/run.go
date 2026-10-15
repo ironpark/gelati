@@ -127,7 +127,8 @@ func (s *TurnStream) Result(ctx context.Context) (*TurnResult, error) {
 }
 
 // finalResponse picks the assistant's answer the way upstream does: the last
-// final_answer message, else the last message without a phase.
+// final_answer message, else the last message without a phase. Commentary and
+// partial_answer messages are never the answer.
 func finalResponse(items []ThreadItem) string {
 	fallback, haveFallback := "", false
 	for i := len(items) - 1; i >= 0; i-- {

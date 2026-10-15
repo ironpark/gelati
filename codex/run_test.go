@@ -67,6 +67,8 @@ func TestTurnResultText(t *testing.T) {
 		{[]ThreadItem{item("a", ""), item("b", "")}, "b"},
 		{[]ThreadItem{item("a", ""), item("b", PhaseCommentary)}, "a"},
 		{[]ThreadItem{item("only commentary", PhaseCommentary)}, ""},
+		{[]ThreadItem{item("a", ""), item("partial", PhasePartialAnswer)}, "a"},
+		{[]ThreadItem{item("final", PhaseFinalAnswer), item("partial", PhasePartialAnswer)}, "final"},
 		{[]ThreadItem{item("final", PhaseFinalAnswer), item("x", "")}, "final"},
 	}
 	for _, tc := range cases {
@@ -232,7 +234,7 @@ func TestSendTurnExternal(t *testing.T) {
 	}
 	done := serve(t, func() {
 		req := server.expect("turn/start")
-		const want = `{"threadId":"thr_1","input":[],"toolOutput":{"name":"inbox","output":"mail body"},"turnTrigger":"cron"}`
+		const want = `{"threadId":"thr_1","input":[],"toolOutput":{"name":"inbox","output":"mail body"},"turnTrigger":"cron","parentTurnId":"turn_p","rootTurnId":"turn_r"}`
 		if string(req.Params) != want {
 			t.Errorf("params = %s\nwant     %s", req.Params, want)
 		}
@@ -240,7 +242,7 @@ func TestSendTurnExternal(t *testing.T) {
 	})
 	stream, err := thread.SendTurn(context.Background(), TurnRequest{
 		External:    &ExternalMessage{ToolName: "inbox", Output: "mail body"},
-		TurnOptions: TurnOptions{TurnTrigger: "cron"},
+		TurnOptions: TurnOptions{TurnTrigger: "cron", ParentTurnID: "turn_p", RootTurnID: "turn_r"},
 	})
 	<-done
 	if err != nil {

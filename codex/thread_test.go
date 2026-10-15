@@ -613,7 +613,7 @@ func TestThreadGoal(t *testing.T) {
 
 	done := serve(t, func() {
 		req := server.expect("thread/goal/set")
-		if string(req.Params) != `{"threadId":"thr_1","objective":"ship it","status":"active"}` {
+		if string(req.Params) != `{"threadId":"thr_1","objective":"ship it","status":"active","origin":"user"}` {
 			t.Errorf("set params = %s", req.Params)
 		}
 		server.respond(req, map[string]any{"goal": map[string]any{
@@ -631,7 +631,7 @@ func TestThreadGoal(t *testing.T) {
 		}
 		server.respond(req, map[string]any{"cleared": true})
 	})
-	goal, err := thread.SetGoal(context.Background(), SetGoalParams{Objective: "ship it", Status: GoalActive})
+	goal, err := thread.SetGoal(context.Background(), SetGoalParams{Objective: "ship it", Status: GoalActive, Origin: GoalOriginUser})
 	if err != nil || goal.Objective != "ship it" || goal.Status != GoalActive {
 		t.Fatalf("SetGoal = %+v, %v", goal, err)
 	}

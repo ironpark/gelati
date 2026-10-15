@@ -80,13 +80,13 @@ func TestDecodeThreadStatusChanged(t *testing.T) {
 }
 
 func TestDecodeTurnStartResult(t *testing.T) {
-	const payload = `{"turn":{"id":"turn_456","status":"inProgress","items":[],"error":null}}`
+	const payload = `{"turn":{"id":"turn_456","status":"inProgress","items":[],"error":null,"rootTurnId":"turn_1"}}`
 
 	var res StartTurnResult
 	if err := json.Unmarshal([]byte(payload), &res); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if res.Turn.ID != "turn_456" || res.Turn.Status != TurnInProgress {
+	if res.Turn.ID != "turn_456" || res.Turn.Status != TurnInProgress || res.Turn.RootTurnID != "turn_1" {
 		t.Fatalf("turn = %+v", res.Turn)
 	}
 	if res.Turn.IsTerminal() {

@@ -26,12 +26,21 @@ type ThreadGoal struct {
 	UpdatedAt       int64  `json:"updatedAt"`
 }
 
+// Goal mutation origins for SetGoalParams.Origin.
+const (
+	GoalOriginUser      = "user"
+	GoalOriginAutomatic = "automatic"
+)
+
 // SetGoalParams are the parameters of Thread.SetGoal (thread/goal/set). Zero
 // fields keep the stored value.
 type SetGoalParams struct {
 	Objective   string `json:"objective,omitempty"`
 	Status      string `json:"status,omitempty"`
 	TokenBudget *int64 `json:"tokenBudget,omitzero"`
+	// Origin is GoalOriginUser for an explicit user action or
+	// GoalOriginAutomatic. Empty supplies no user authorization.
+	Origin string `json:"origin,omitempty"`
 }
 
 // SetGoal creates or updates the thread's goal and returns it. Setting an
