@@ -23,6 +23,8 @@ type ThreadEvent struct {
 	Status *ThreadStatus
 	// Name is set for thread/name/updated.
 	Name string
+	// ReadState is set for thread/readState/changed.
+	ReadState *ThreadReadState
 	// Params is the raw notification payload.
 	Params jsontext.Value
 }
@@ -195,7 +197,7 @@ func isThreadMethod(method string) bool {
 	switch method {
 	case MethodThreadStarted, MethodThreadStatusChanged, MethodThreadArchived,
 		MethodThreadUnarchived, MethodThreadDeleted, MethodThreadClosed,
-		MethodThreadNameUpdated, MethodServerRequestResolved:
+		MethodThreadNameUpdated, MethodThreadReadStateChanged, MethodServerRequestResolved:
 		return true
 	default:
 		return false
@@ -230,6 +232,11 @@ func (c *Client) routeThreadNotification(method string, params jsontext.Value, t
 		var payload ThreadNameUpdatedParams
 		if err := jsonx.Unmarshal(params, &payload); err == nil {
 			event.Name = payload.Name
+		}
+	case MethodThreadReadStateChanged:
+		var payload ThreadReadStateChangedParams
+		if err := jsonx.Unmarshal(params, &payload); err == nil {
+			event.ReadState = &payload.ReadState
 		}
 	}
 	sub.emit(c, event)

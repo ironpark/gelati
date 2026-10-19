@@ -942,6 +942,11 @@ type ForkThreadParams struct {
 	ExcludeTurns bool `json:"excludeTurns,omitzero"`
 	// ThreadSource is a client-supplied source classification.
 	ThreadSource string `json:"threadSource,omitempty"`
+	// ExperimentalPredictionMode starts from the loaded parent's effective
+	// config, tools, and history to maximize prompt-cache reuse. It requires
+	// a loaded, persisted parent and Ephemeral, and cannot be combined with
+	// ThreadSettings overrides or LastTurnID.
+	ExperimentalPredictionMode bool `json:"experimentalPredictionMode,omitzero"`
 }
 
 // ThreadResult is the common `{ "thread": ... }` response body.
@@ -980,6 +985,9 @@ type ListThreadsParams struct {
 	Cwd            []string `json:"cwd,omitempty"`
 	UseStateDBOnly bool     `json:"useStateDbOnly,omitzero"`
 	SearchTerm     string   `json:"searchTerm,omitempty"`
+	// ExcludedThreadIDs are left out before the limit applies; send the same
+	// list on every page. The server rejects more than 100 entries.
+	ExcludedThreadIDs []string `json:"excludedThreadIds,omitempty"`
 }
 
 // ListThreadsResult is one page of thread/list results.
@@ -987,6 +995,36 @@ type ListThreadsResult struct {
 	Data []ThreadInfo `json:"data"`
 	// NextCursor is empty on the final page.
 	NextCursor string `json:"nextCursor,omitempty"`
+	// ReadStates are the durable read receipts of eligible threads on this
+	// page, keyed by thread id. It is nil when the server has no durable
+	// read state; a missing key means that thread is ineligible.
+	ReadStates map[string]ThreadReadState `json:"readStates,omitempty"`
+}
+
+// Thread unread position types.
+const (
+	// UnreadThreadStart marks a thread explicitly unread, including one
+	// without turns.
+	UnreadThreadStart = "threadStart"
+	// UnreadTurn points at the earliest completed turn needing attention.
+	UnreadTurn = "turn"
+)
+
+// ThreadUnreadPosition is the first unread position of a thread.
+type ThreadUnreadPosition struct {
+	// Type is UnreadThreadStart or UnreadTurn.
+	Type string `json:"type"`
+	// TurnID is set for UnreadTurn.
+	TurnID string `json:"turnId,omitempty"`
+}
+
+// ThreadReadState is a durable local read receipt for a thread.
+type ThreadReadState struct {
+	// FirstUnread is nil when the thread is read.
+	FirstUnread *ThreadUnreadPosition `json:"firstUnread,omitzero"`
+	// Revision is opaque; it guards read-state updates against activity the
+	// caller has not seen.
+	Revision string `json:"revision"`
 }
 
 // UnsubscribeResult reports the outcome of thread/unsubscribe.
@@ -1042,6 +1080,9 @@ type ExternalMessage struct {
 	// Output is a string or a list of Responses-compatible function output
 	// content items.
 	Output any `json:"output"`
+	// Retain asks the server to keep this output in the thread's model
+	// history, including across compaction.
+	Retain bool `json:"retain,omitzero"`
 }
 
 // TurnRequest is a turn for Thread.SendTurn or Thread.RunTurn: its input and
@@ -1089,14 +1130,15 @@ type interruptTurnParams struct {
 
 // Notification method names this client handles.
 const (
-	MethodThreadStarted       = "thread/started"
-	MethodThreadStatusChanged = "thread/status/changed"
-	MethodThreadArchived      = "thread/archived"
-	MethodThreadUnarchived    = "thread/unarchived"
-	MethodThreadDeleted       = "thread/deleted"
-	MethodThreadClosed        = "thread/closed"
-	MethodThreadNameUpdated   = "thread/name/updated"
-	MethodTokenUsageUpdated   = "thread/tokenUsage/updated"
+	MethodThreadStarted          = "thread/started"
+	MethodThreadStatusChanged    = "thread/status/changed"
+	MethodThreadArchived         = "thread/archived"
+	MethodThreadUnarchived       = "thread/unarchived"
+	MethodThreadDeleted          = "thread/deleted"
+	MethodThreadClosed           = "thread/closed"
+	MethodThreadNameUpdated      = "thread/name/updated"
+	MethodThreadReadStateChanged = "thread/readState/changed"
+	MethodTokenUsageUpdated      = "thread/tokenUsage/updated"
 
 	MethodTurnStarted   = "turn/started"
 	MethodTurnCompleted = "turn/completed"
@@ -1141,6 +1183,12 @@ type ThreadNameUpdatedParams struct {
 	ThreadID string `json:"threadId"`
 	// Name is empty when the name was cleared.
 	Name string `json:"threadName,omitempty"`
+}
+
+// ThreadReadStateChangedParams is the payload of thread/readState/changed.
+type ThreadReadStateChangedParams struct {
+	ThreadID  string          `json:"threadId"`
+	ReadState ThreadReadState `json:"readState"`
 }
 
 // TurnParams is the payload of turn/started and turn/completed.

@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"iter"
+	"strings"
 	"testing"
 	"time"
 )
@@ -85,7 +86,7 @@ func TestResumeAndForkThread(t *testing.T) {
 		if err := json.Unmarshal(req.Params, &fork); err != nil {
 			t.Errorf("params: %v", err)
 		}
-		if fork.ThreadID != "thr_123" || fork.LastTurnID != "turn_456" {
+		if fork.ThreadID != "thr_123" || fork.LastTurnID != "turn_456" || !fork.ExperimentalPredictionMode {
 			t.Errorf("fork params = %+v", fork)
 		}
 		server.respond(req, map[string]any{"thread": map[string]any{
@@ -104,7 +105,7 @@ func TestResumeAndForkThread(t *testing.T) {
 	}
 
 	forked, err := client.ForkThread(context.Background(), ForkThreadParams{
-		ThreadID: "thr_123", LastTurnID: "turn_456",
+		ThreadID: "thr_123", LastTurnID: "turn_456", ExperimentalPredictionMode: true,
 	})
 	<-done
 	if err != nil {
@@ -162,6 +163,9 @@ func TestListThreadsPagination(t *testing.T) {
 		if params.Cursor != "" || params.Limit != 2 || params.SortKey != SortKeyCreatedAt {
 			t.Errorf("first page params = %+v", params)
 		}
+		if !strings.Contains(string(first.Params), `"excludedThreadIds":["thr_x"]`) {
+			t.Errorf("first page params = %s", first.Params)
+		}
 		server.respond(first, map[string]any{
 			"data":       []any{map[string]any{"id": "thr_a"}, map[string]any{"id": "thr_b"}},
 			"nextCursor": "page-2",
@@ -171,8 +175,8 @@ func TestListThreadsPagination(t *testing.T) {
 		if err := json.Unmarshal(second.Params, &params); err != nil {
 			t.Errorf("params: %v", err)
 		}
-		if params.Cursor != "page-2" {
-			t.Errorf("second page cursor = %q", params.Cursor)
+		if params.Cursor != "page-2" || len(params.ExcludedThreadIDs) != 1 {
+			t.Errorf("second page params = %+v", params)
 		}
 		server.respond(second, map[string]any{
 			"data":       []any{map[string]any{"id": "thr_c"}},
@@ -182,7 +186,7 @@ func TestListThreadsPagination(t *testing.T) {
 
 	var ids []string
 	for thread, err := range client.AllThreads(context.Background(), ListThreadsParams{
-		Limit: 2, SortKey: SortKeyCreatedAt,
+		Limit: 2, SortKey: SortKeyCreatedAt, ExcludedThreadIDs: []string{"thr_x"},
 	}) {
 		if err != nil {
 			t.Fatalf("AllThreads: %v", err)
@@ -215,6 +219,33 @@ func TestListThreadsIterationStop(t *testing.T) {
 	<-done
 	if count != 1 {
 		t.Fatalf("count = %d", count)
+	}
+}
+
+func TestListThreadsReadStates(t *testing.T) {
+	client, server := connect(t, Options{})
+
+	done := serve(t, func() {
+		req := server.expect("thread/list")
+		server.respond(req, map[string]any{
+			"data": []any{map[string]any{"id": "thr_a"}, map[string]any{"id": "thr_b"}},
+			"readStates": map[string]any{
+				"thr_a": map[string]any{"revision": "r1", "firstUnread": nil},
+				"thr_b": map[string]any{"revision": "r2", "firstUnread": map[string]any{"type": "threadStart"}},
+			},
+		})
+	})
+	result, err := client.ListThreads(context.Background(), ListThreadsParams{})
+	<-done
+	if err != nil {
+		t.Fatalf("ListThreads: %v", err)
+	}
+	a, b := result.ReadStates["thr_a"], result.ReadStates["thr_b"]
+	if a.Revision != "r1" || a.FirstUnread != nil {
+		t.Fatalf("thr_a read state = %+v", a)
+	}
+	if b.FirstUnread == nil || b.FirstUnread.Type != UnreadThreadStart {
+		t.Fatalf("thr_b read state = %+v", b)
 	}
 }
 
@@ -360,6 +391,9 @@ func TestThreadNotificationRouting(t *testing.T) {
 	})
 	server.notify(MethodThreadArchived, map[string]any{"threadId": "thr_1"})
 	server.notify(MethodThreadNameUpdated, map[string]any{"threadId": "thr_1", "threadName": "Renamed"})
+	server.notify(MethodThreadReadStateChanged, map[string]any{"threadId": "thr_1", "readState": map[string]any{
+		"revision": "rev_2", "firstUnread": map[string]any{"type": "turn", "turnId": "turn_9"},
+	}})
 	// An event for a thread nobody subscribed to must be dropped silently.
 	server.notify(MethodThreadClosed, map[string]any{"threadId": "thr_unknown"})
 
@@ -375,6 +409,11 @@ func TestThreadNotificationRouting(t *testing.T) {
 	}
 	if got := recvThreadEvent(t, first); got.Name != "Renamed" {
 		t.Fatalf("event = %+v", got)
+	}
+	readEvent := recvThreadEvent(t, first)
+	if rs := readEvent.ReadState; rs == nil || rs.Revision != "rev_2" || rs.FirstUnread == nil ||
+		rs.FirstUnread.Type != UnreadTurn || rs.FirstUnread.TurnID != "turn_9" {
+		t.Fatalf("read state event = %+v", readEvent)
 	}
 
 	select {

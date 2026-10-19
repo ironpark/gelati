@@ -234,14 +234,14 @@ func TestSendTurnExternal(t *testing.T) {
 	}
 	done := serve(t, func() {
 		req := server.expect("turn/start")
-		const want = `{"threadId":"thr_1","input":[],"toolOutput":{"name":"inbox","output":"mail body"},"turnTrigger":"cron","parentTurnId":"turn_p","rootTurnId":"turn_r"}`
+		const want = `{"threadId":"thr_1","input":[],"toolOutput":{"name":"inbox","output":"mail body","retain":true},"turnTrigger":"cron","parentTurnId":"turn_p","rootTurnId":"turn_r"}`
 		if string(req.Params) != want {
 			t.Errorf("params = %s\nwant     %s", req.Params, want)
 		}
 		server.respond(req, map[string]any{"turn": map[string]any{"id": "turn_1", "status": "inProgress", "items": []any{}}})
 	})
 	stream, err := thread.SendTurn(context.Background(), TurnRequest{
-		External:    &ExternalMessage{ToolName: "inbox", Output: "mail body"},
+		External:    &ExternalMessage{ToolName: "inbox", Output: "mail body", Retain: true},
 		TurnOptions: TurnOptions{TurnTrigger: "cron", ParentTurnID: "turn_p", RootTurnID: "turn_r"},
 	})
 	<-done
