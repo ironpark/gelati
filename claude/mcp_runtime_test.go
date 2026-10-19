@@ -115,6 +115,13 @@ func TestMCPServerConfigJSONTSFields(t *testing.T) {
 			`{"type":"http","url":"https://x/mcp","timeout":2000,"alwaysLoad":true}`},
 		{"sdkTimeout", &MCPSDKServerConfig{Name: "calc", Instance: &MCPServer{}, Timeout: 9000},
 			`{"name":"calc","timeout":9000,"type":"sdk"}`},
+		{"sdkTools", &MCPSDKServerConfig{Name: "calc", Instance: &MCPServer{}, Tools: []MCPServerToolPolicy{
+			{Name: "a", PermissionPolicy: MCPToolPolicyAlwaysAsk, OrgMaxPermission: MCPToolOrgMaxAsk},
+			{Name: "b", PermissionPolicy: "sometimes"},
+			{Name: "c"}}},
+			`{"name":"calc","tools":[{"name":"a","permission_policy":"always_ask"},{"name":"b","permission_policy":"always_ask"},{"name":"c"}],"type":"sdk"}`},
+		{"sdkToolsCleared", &MCPSDKServerConfig{Name: "calc", Tools: []MCPServerToolPolicy{}},
+			`{"name":"calc","tools":[],"type":"sdk"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -194,9 +201,10 @@ func TestSDKMCPInitializeFields(t *testing.T) {
 		"calc":    calc,
 		"slow":    &MCPSDKServerConfig{Name: "slow", Instance: slow},
 		"failing": &MCPSDKServerConfig{Name: "failing", Instance: failing, Timeout: -1},
-		"noTools": &MCPSDKServerConfig{Name: "noTools", Instance: noTools},
-		"fs":      &MCPStdioServerConfig{Command: "node"},
-		"bare":    &MCPSDKServerConfig{Name: "bare"},
+		"noTools": &MCPSDKServerConfig{Name: "noTools", Instance: noTools,
+			Tools: []MCPServerToolPolicy{{Name: "rm", PermissionPolicy: MCPToolPolicyAlwaysDeny}}},
+		"fs":   &MCPStdioServerConfig{Command: "node"},
+		"bare": &MCPSDKServerConfig{Name: "bare"},
 	}}
 	fields := sdkMCPInitializeFields(sdkMCPServers(opts))
 
@@ -205,7 +213,7 @@ func TestSDKMCPInitializeFields(t *testing.T) {
 		t.Fatalf("sdkMcpServers = %s", names)
 	}
 	configs, _ := jsonx.Marshal(fields["sdkMcpServerConfigs"])
-	if string(configs) != `{"calc":{"timeout":5000}}` {
+	if string(configs) != `{"calc":{"timeout":5000},"noTools":{"tools":[{"name":"rm","permission_policy":"always_deny"}]}}` {
 		t.Fatalf("sdkMcpServerConfigs = %s", configs)
 	}
 	manifests, _ := jsonx.Marshal(fields["sdkMcpServerManifests"])

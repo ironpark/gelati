@@ -122,9 +122,12 @@ func TestClientControlRequestShapes(t *testing.T) {
 				"mcpServers":   []any{map[string]any{"name": "fs", "status": "connected", "source": "plugin"}},
 				"cache_impact": map[string]any{"mcp_servers_added": []any{"x"}, "mcp_servers_removed": []any{}, "lsp_tool_change": nil}},
 			call: func(ctx context.Context, c *Client) (any, error) {
-				return c.ReloadPlugins(ctx, &ReloadPluginsOptions{HoldOnCacheImpact: true})
+				return c.ReloadPlugins(ctx, &ReloadPluginsOptions{HoldOnCacheImpact: true,
+					AddPlugins: []PluginConfig{{Path: "/a"}, {Path: "/b", SkipMCPDiscovery: true}}})
 			},
-			want: map[string]any{"subtype": "reload_plugins", "hold_on_cache_impact": true},
+			want: map[string]any{"subtype": "reload_plugins", "hold_on_cache_impact": true,
+				"add_plugins": []any{map[string]any{"type": "local", "path": "/a"},
+					map[string]any{"type": "local", "path": "/b", "skipMcpDiscovery": true}}},
 			check: func(t *testing.T, r any) {
 				res := r.(*ReloadPluginsResult)
 				if res.ErrorCount != 1 || res.Held == nil || !*res.Held || res.Plugins[0].Version != "1.0" ||

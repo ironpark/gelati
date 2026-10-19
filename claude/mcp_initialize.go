@@ -30,7 +30,8 @@ const mcpManifestIDPrefix = "sdk-manifest-capture:"
 // the in-process SDK MCP servers, keyed by name, matching the TypeScript SDK:
 //
 //   - sdkMcpServers: the server names;
-//   - sdkMcpServerConfigs: {name: {timeout}} for servers with a timeout;
+//   - sdkMcpServerConfigs: {name: {timeout, tools}} for servers with a
+//     timeout or a per-tool policy;
 //   - sdkMcpServerManifests: {name: {initializeResult, toolsListResult?}},
 //     each server's own handshake output, so the CLI connects to them
 //     without mcp_message round trips. Setting
@@ -46,8 +47,15 @@ func sdkMCPInitializeFields(servers map[string]*MCPSDKServerConfig) map[string]a
 
 	configs := map[string]any{}
 	for _, name := range names {
+		config := map[string]any{}
 		if timeout := servers[name].Timeout; timeout > 0 {
-			configs[name] = map[string]any{"timeout": timeout}
+			config["timeout"] = timeout
+		}
+		if tools := sdkMCPToolPolicies(servers[name].Tools); tools != nil {
+			config["tools"] = tools
+		}
+		if len(config) > 0 {
+			configs[name] = config
 		}
 	}
 	if len(configs) > 0 {

@@ -102,6 +102,8 @@
 //
 // Tool names are not part of sdk-tools.d.ts; the constants in this package
 // (Bash, Read, Edit, ...) were derived from the schema type names, the
-// TypeScript SDK's legacy-alias table and the Claude Code CLI. Canonical
-// resolves legacy names such as Task (Agent) and KillShell (TaskStop).
+// TypeScript SDK's BUILTIN_TOOL_NAMES and LEGACY_TOOL_NAME_ALIASES and the
+// Claude Code CLI. Canonical resolves legacy names such as Task (Agent) and
+// KillShell (TaskStop); BuiltinNames and LegacyAliases return the upstream
+// lists themselves.
 package tools

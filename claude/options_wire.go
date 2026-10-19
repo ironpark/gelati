@@ -271,15 +271,21 @@ func (l *launchConfig) addPluginFields(opts *Options) {
 	if len(opts.Plugins) == 0 || opts.PluginDelivery != PluginDeliveryInitialize {
 		return
 	}
-	plugins := make([]map[string]any, 0, len(opts.Plugins))
-	for _, p := range opts.Plugins {
+	l.initFields["plugins"] = pluginsWire(opts.Plugins)
+}
+
+// pluginsWire encodes plugins in the SDK plugin config shape the initialize
+// request and reload_plugins' add_plugins take.
+func pluginsWire(list []PluginConfig) []map[string]any {
+	plugins := make([]map[string]any, 0, len(list))
+	for _, p := range list {
 		plugin := map[string]any{"type": "local", "path": p.Path}
 		if p.SkipMCPDiscovery {
 			plugin["skipMcpDiscovery"] = true
 		}
 		plugins = append(plugins, plugin)
 	}
-	l.initFields["plugins"] = plugins
+	return plugins
 }
 
 // addPluginFlags renders the flag half of Options.Plugins: one --plugin-dir

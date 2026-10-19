@@ -211,6 +211,9 @@ func (c *Client) ReloadPlugins(ctx context.Context, opts *ReloadPluginsOptions) 
 	if opts != nil && opts.HoldOnCacheImpact {
 		fields["hold_on_cache_impact"] = true
 	}
+	if opts != nil && len(opts.AddPlugins) > 0 {
+		fields["add_plugins"] = pluginsWire(opts.AddPlugins)
+	}
 	return decodeControl[ReloadPluginsResult](c.call(ctx, "reload_plugins", fields))
 }
 

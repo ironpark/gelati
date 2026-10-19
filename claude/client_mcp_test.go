@@ -99,6 +99,27 @@ func TestClientSetMCPServers(t *testing.T) {
 		t.Fatalf("servers = %s", got)
 	}
 
+	// A non-nil Tools replaces the registered per-tool policy; nil re-sends
+	// the registered one.
+	policy := []MCPServerToolPolicy{{Name: "x", PermissionPolicy: MCPToolPolicyAlwaysAsk}}
+	for _, tools := range [][]MCPServerToolPolicy{policy, nil} {
+		if _, err := client.SetMCPServers(t.Context(), map[string]MCPServerConfig{
+			"added": &MCPSDKServerConfig{Name: "added", Instance: added.Instance, Tools: tools},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mu.Lock()
+	for _, req := range requests[2:4] {
+		got, _ = jsonx.Marshal(req["servers"])
+		if string(got) != `{"added":{"name":"added","timeout":5000,"tools":[{"name":"x","permission_policy":"always_ask"}],"type":"sdk"}}` {
+			mu.Unlock()
+			t.Fatalf("servers = %s", got)
+		}
+	}
+	requests = requests[:2]
+	mu.Unlock()
+
 	// Clearing everything sends an empty map.
 	if _, err := client.SetMCPServers(t.Context(), nil); err != nil {
 		t.Fatal(err)

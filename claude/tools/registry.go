@@ -1,13 +1,15 @@
 package tools
 
-//go:generate go run ./internal/gen -sdk-version 0.3.300 -out zz_generated.go
+//go:generate go run ./internal/gen -sdk-version 0.3.303 -out zz_generated.go
 
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/ironpark/gelati/internal/jsonx"
@@ -17,8 +19,9 @@ import (
 // toolName and hook tool_name fields.
 //
 // sdk-tools.d.ts does not carry tool names; this mapping was derived from the
-// schema type names, the legacy-name alias table in the TypeScript SDK
-// (sdk.mjs) and the tool-name constants of the Claude Code CLI.
+// schema type names, the TypeScript SDK's BUILTIN_TOOL_NAMES and
+// LEGACY_TOOL_NAME_ALIASES and the tool-name constants of the Claude Code
+// CLI.
 const (
 	Agent                    = "Agent"
 	Bash                     = "Bash"
@@ -57,7 +60,7 @@ const (
 	OfferChromeSetup         = "OfferChromeSetup"
 	ReadNotifications        = "ReadNotifications"
 	Monitor                  = "Monitor"
-	ProposeSkills            = "ProposeSkills"
+	ProposeSkills            = "propose_skills"
 	ProposeGoal              = "ProposeGoal"
 	Artifact                 = "Artifact"
 	PushNotification         = "PushNotification"
@@ -73,7 +76,42 @@ const (
 	// KillShell and KillBash are former names of the TaskStop tool.
 	KillShell = "KillShell"
 	KillBash  = "KillBash"
+	// ListPeers is the former name of the ListAgents tool.
+	ListPeers = "ListPeers"
+	// Brief is the former name of the SendUserMessage tool.
+	Brief = "Brief"
 )
+
+// builtinNames mirrors BUILTIN_TOOL_NAMES of the TypeScript SDK 0.3.303.
+var builtinNames = []string{
+	"Agent", "Artifact", "AskUserQuestion", "Bash", "ClaudeDesign", "CronCreate", "CronDelete", "CronList",
+	"Edit", "EndConversation", "EnterPlanMode", "EnterWorktree", "ExitPlanMode", "ExitWorktree", "Glob", "Grep",
+	"ListAgents", "ListMcpResourcesTool", "LSP", "Monitor", "NotebookEdit", "OfferChromeSetup", "PowerShell",
+	"Projects", "propose_skills", "ProposeGoal", "PushNotification", "Read", "ReadMcpResourceDirTool",
+	"ReadMcpResourceTool", "ReadNotifications", "RemoteTrigger", "ReportFindings", "ScheduleWakeup",
+	"SendFeedback", "SendMessage", "SendUserFile", "SendUserMessage", "ShareOnboardingGuide",
+	"ShowOnboardingRolePicker", "Skill", "SubagentHandback", "TaskCreate", "TaskGet", "TaskList", "TaskStop",
+	"TaskUpdate", "TodoWrite", "ToolSearch", "WaitForMcpServers", "WebFetch", "WebSearch", "Workflow", "Write",
+}
+
+// BuiltinNames returns the names of the CLI's built-in tools as permission
+// rules, hook matchers, Options.Tools and Options.DisallowedTools spell
+// them, mirroring BUILTIN_TOOL_NAMES of the TypeScript SDK. A name is listed
+// even where a platform or setting turns its tool off. The list is not
+// complete and many of its tools have no typed schema here: what a session
+// actually has is the Tools field of its system/init message. The slice is
+// a fresh copy.
+func BuiltinNames() []string {
+	return slices.Clone(builtinNames)
+}
+
+// LegacyAliases returns the former tool names the CLI still accepts in
+// permission rules, hook matchers, Options.Tools and Options.DisallowedTools,
+// each mapped to the tool's current name, mirroring LEGACY_TOOL_NAME_ALIASES
+// of the TypeScript SDK. The map is a fresh copy.
+func LegacyAliases() map[string]string {
+	return maps.Clone(aliases)
+}
 
 // McpPrefix prefixes the names of MCP server tools ("mcp__<server>__<tool>"),
 // whose input and output use McpInput and McpOutput.
@@ -83,11 +121,13 @@ const McpPrefix = "mcp__"
 // tool names without a typed schema.
 var ErrUnknownTool = errors.New("tools: unknown tool")
 
-// aliases mirrors the legacy-name table of the TypeScript SDK.
+// aliases mirrors LEGACY_TOOL_NAME_ALIASES of the TypeScript SDK.
 var aliases = map[string]string{
 	Task:                 Agent,
 	KillShell:            TaskStop,
 	KillBash:             TaskStop,
+	ListPeers:            "ListAgents",
+	Brief:                "SendUserMessage",
 	"ListMcpResources":   ListMcpResources,
 	"ReadMcpResource":    ReadMcpResource,
 	"ReadMcpResourceDir": ReadMcpResourceDir,

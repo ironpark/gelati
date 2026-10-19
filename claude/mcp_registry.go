@@ -69,8 +69,11 @@ type sdkMCPRegistry struct {
 // sdkMCPEntry is one registered server.
 type sdkMCPEntry struct {
 	// config is the server as registered: named after its registry key,
-	// with the timeout normalized.
-	config     *MCPSDKServerConfig
+	// with the timeout normalized. It is never modified; its Tools is unset.
+	config *MCPSDKServerConfig
+	// tools is the server's normalized per-tool policy, nil when none was
+	// stated. Guarded by the registry's mu: SetMCPServers may replace it.
+	tools      []MCPServerToolPolicy
 	disconnect func()
 
 	mu       sync.Mutex
@@ -89,11 +92,14 @@ func newSDKMCPRegistry(send func(ctx context.Context, frame map[string]any) erro
 	return &sdkMCPRegistry{send: send, servers: map[string]*sdkMCPEntry{}}
 }
 
-// connect registers a server under name. A name already registered is left
-// alone; the caller decides whether that is a replacement.
+// connect registers a server under name. A name already registered keeps
+// its instance and timeout, but a non-nil cfg.Tools replaces its per-tool
+// policy, as in the TypeScript SDK.
 func (r *sdkMCPRegistry) connect(name string, cfg *MCPSDKServerConfig) {
+	tools := sdkMCPToolPolicies(cfg.Tools)
 	entry := &sdkMCPEntry{
 		config:   &MCPSDKServerConfig{Name: name, Instance: cfg.Instance, Timeout: positiveTimeout(cfg.Timeout)},
+		tools:    tools,
 		inflight: map[string]*mcpInflight{},
 	}
 	r.mu.Lock()
@@ -101,7 +107,10 @@ func (r *sdkMCPRegistry) connect(name string, cfg *MCPSDKServerConfig) {
 		r.mu.Unlock()
 		return
 	}
-	if _, exists := r.servers[name]; exists {
+	if existing, exists := r.servers[name]; exists {
+		if tools != nil {
+			existing.tools = tools
+		}
 		r.mu.Unlock()
 		return
 	}
@@ -174,9 +183,28 @@ func (r *sdkMCPRegistry) configs() map[string]*MCPSDKServerConfig {
 	defer r.mu.Unlock()
 	out := make(map[string]*MCPSDKServerConfig, len(r.servers))
 	for name, entry := range r.servers {
-		out[name] = entry.config
+		out[name] = entry.declaration()
 	}
 	return out
+}
+
+// declared returns the named server's config as it is declared to the CLI,
+// with its current per-tool policy, or nil when it is not registered.
+func (r *sdkMCPRegistry) declared(name string) *MCPSDKServerConfig {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if entry := r.servers[name]; entry != nil {
+		return entry.declaration()
+	}
+	return nil
+}
+
+// declaration copies the registered config with the current per-tool
+// policy. The caller holds the registry's mu.
+func (e *sdkMCPEntry) declaration() *MCPSDKServerConfig {
+	config := *e.config
+	config.Tools = e.tools
+	return &config
 }
 
 // hasServers reports whether any server is registered.

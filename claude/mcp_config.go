@@ -106,6 +106,17 @@ type MCPSDKServerConfig struct {
 	// ignores values below 1000. It applies when the server is first
 	// registered.
 	Timeout int
+	// Tools is the per-tool permission policy for the server's tools (not
+	// their definitions). Only MCPToolPolicyAlwaysAsk and
+	// MCPToolPolicyAlwaysDeny take effect on an SDK server:
+	// always_ask makes the CLI ask the host (CanUseTool or the permission
+	// prompt tool) before each call, even where an allow rule covers the
+	// tool; always_deny denies every call. MCPToolPolicyAlwaysAllow and
+	// OrgMaxPermission are ignored; grant access with AllowedTools or
+	// CanUseTool. An unknown policy is sent as always_ask. Unlike Timeout, a
+	// non-nil Tools passed to Client.SetMCPServers replaces the policy of an
+	// already registered server; an empty non-nil slice clears it.
+	Tools []MCPServerToolPolicy
 }
 
 func (*MCPSDKServerConfig) isMCPServerConfig() {}
@@ -126,11 +137,36 @@ func (c *MCPSDKServerConfig) MarshalJSON() ([]byte, error) {
 	if c.Timeout > 0 {
 		out["timeout"] = c.Timeout
 	}
+	if tools := sdkMCPToolPolicies(c.Tools); tools != nil {
+		out["tools"] = tools
+	}
 	return json.Marshal(out, jsonx.LegacyEncode)
 }
 
-// MCPServerToolPolicy sets the permission policy of one tool of an SSE or HTTP
-// MCP server.
+// sdkMCPToolPolicies normalizes an SDK server's per-tool policy the way the
+// TypeScript SDK does: each entry keeps its name and permission_policy only,
+// and a policy other than always_allow, always_ask or always_deny becomes
+// always_ask. nil stays nil (no policy stated); an empty list stays empty.
+func sdkMCPToolPolicies(tools []MCPServerToolPolicy) []MCPServerToolPolicy {
+	if tools == nil {
+		return nil
+	}
+	out := make([]MCPServerToolPolicy, 0, len(tools))
+	for _, t := range tools {
+		policy := MCPServerToolPolicy{Name: t.Name, PermissionPolicy: t.PermissionPolicy}
+		switch policy.PermissionPolicy {
+		case "", MCPToolPolicyAlwaysAllow, MCPToolPolicyAlwaysAsk, MCPToolPolicyAlwaysDeny:
+		default:
+			policy.PermissionPolicy = MCPToolPolicyAlwaysAsk
+		}
+		out = append(out, policy)
+	}
+	return out
+}
+
+// MCPServerToolPolicy sets the permission policy of one tool of an MCP
+// server: an SSE or HTTP server, or an in-process SDK server (see
+// MCPSDKServerConfig.Tools).
 type MCPServerToolPolicy struct {
 	// Name is the tool name as the server lists it.
 	Name string `json:"name"`

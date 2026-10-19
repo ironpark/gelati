@@ -27,7 +27,9 @@ type MCPSetServersResult struct {
 // with this client before the request is sent, and removed ones stop
 // receiving traffic. As in the TypeScript SDK, a name that is already
 // registered keeps its original instance and Timeout until it is removed and
-// added again. Every other configuration is passed to the CLI as is.
+// added again, while a non-nil Tools replaces its per-tool policy (nil keeps
+// the registered one, which is sent again). Every other configuration is
+// passed to the CLI as is.
 func (c *Client) SetMCPServers(ctx context.Context, servers map[string]MCPServerConfig) (*MCPSetServersResult, error) {
 	if err := c.checkOpen(); err != nil {
 		return nil, err
@@ -53,10 +55,10 @@ func (c *Client) SetMCPServers(ctx context.Context, servers map[string]MCPServer
 	}
 	for _, name := range slices.Sorted(maps.Keys(sdk)) {
 		registry.connect(name, sdk[name])
-		if entry := registry.get(name); entry != nil {
+		if config := registry.declared(name); config != nil {
 			// The registered config, which encodes as the CLI's
 			// {"type":"sdk",...} declaration.
-			wire[name] = entry.config
+			wire[name] = config
 		}
 	}
 

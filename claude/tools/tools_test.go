@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ironpark/gelati/internal/jsonx"
@@ -70,6 +71,8 @@ func TestCanonical(t *testing.T) {
 		"Task":              Agent,
 		"KillShell":         TaskStop,
 		"KillBash":          TaskStop,
+		"ListPeers":         "ListAgents",
+		"Brief":             "SendUserMessage",
 		"ListMcpResources":  ListMcpResources,
 		"ReadMcpResource":   ReadMcpResource,
 		"mcp__srv__do_this": McpPrefix,
@@ -79,6 +82,36 @@ func TestCanonical(t *testing.T) {
 		if got := Canonical(in); got != want {
 			t.Errorf("Canonical(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestBuiltinNamesAndLegacyAliases(t *testing.T) {
+	names := BuiltinNames()
+	known := map[string]bool{}
+	for _, name := range names {
+		if known[name] {
+			t.Errorf("BuiltinNames lists %q twice", name)
+		}
+		known[name] = true
+	}
+	// Every typed tool upstream lists is spelled as upstream spells it.
+	for _, name := range allNames {
+		if name == RefreshMcpTools || strings.HasPrefix(name, McpPrefix) {
+			continue // not in BUILTIN_TOOL_NAMES
+		}
+		if !known[name] {
+			t.Errorf("tool %q is not in BuiltinNames", name)
+		}
+	}
+	for legacy, current := range LegacyAliases() {
+		if known[legacy] || !known[current] {
+			t.Errorf("alias %q -> %q", legacy, current)
+		}
+	}
+	names[0] = "mutated"
+	delete(LegacyAliases(), Task)
+	if BuiltinNames()[0] != Agent || Canonical(Task) != Agent {
+		t.Error("BuiltinNames and LegacyAliases must return copies")
 	}
 }
 

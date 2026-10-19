@@ -187,6 +187,10 @@ type ReloadPluginsOptions struct {
 	// the conversation's prompt cache depends on; the result then has
 	// Held set and describes the impact.
 	HoldOnCacheImpact bool
+	// AddPlugins are loaded by the reload as well, as if each had been in
+	// Options.Plugins at launch; plugins already loaded stay. Each Path
+	// must be absolute. A held or failed reload adds none of them.
+	AddPlugins []PluginConfig
 }
 
 // PluginInfo describes one loaded plugin.
